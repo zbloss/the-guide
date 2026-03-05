@@ -1,0 +1,19 @@
+use axum::{routing::get, Json, Router};
+use serde_json::{json, Value};
+
+pub fn router() -> Router<crate::state::AppState> {
+    Router::new()
+        .route("/health", get(health))
+        .route("/version", get(version))
+}
+
+async fn health() -> Json<Value> {
+    Json(json!({ "status": "ok" }))
+}
+
+async fn version() -> Json<Value> {
+    Json(json!({
+        "version": env!("CARGO_PKG_VERSION"),
+        "name": env!("CARGO_PKG_NAME"),
+    }))
+}

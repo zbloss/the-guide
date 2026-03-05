@@ -1,0 +1,209 @@
+use axum::{
+    extract::{Path, State},
+    http::StatusCode,
+    response::IntoResponse,
+    routing::post,
+    Json, Router,
+};
+use guide_core::models::Perspective;
+use guide_llm::client::{CompletionRequest, EmbeddingRequest, LlmTask, Message, MessageRole};
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+use crate::state::AppState;
+
+pub fn router() -> Router<AppState> {
+    Router::new().route("/campaigns/{campaign_id}/chat", post(chat))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ChatRequest {
+    pub message: String,
+    /// Who is asking — controls spoiler filtering
+    pub perspective: Option<Perspective>,
+    /// Max number of Qdrant lore chunks to inject as context
+    pub context_limit: Option<usize>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ChatResponse {
+    pub answer: String,
+    pub context_chunks_used: usize,
+    pub model: String,
+    pub provider: String,
+}
+
+async fn chat(
+    State(state): State<AppState>,
+    Path(campaign_id): Path<Uuid>,
+    Json(req): Json<ChatRequest>,
+) -> impl IntoResponse {
+    let perspective = req.perspective.unwrap_or(Perspective::Dm);
+    let context_limit = req.context_limit.unwrap_or(5);
+
+    // ── Step 1: Embed the query ───────────────────────────────────────────────
+    let query_embedding = match state
+        .llm
+        .embed(EmbeddingRequest {
+            text: req.message.clone(),
+            model_override: None,
+        })
+        .await
+    {
+        Ok(v) => Some(v),
+        Err(e) => {
+            tracing::warn!("Embedding failed (proceeding without RAG context): {e}");
+            None
+        }
+    };
+
+    // ── Step 2: Retrieve lore from Qdrant ─────────────────────────────────────
+    let lore_chunks = if let (Some(embedding), Some(qdrant)) = (query_embedding, &state.qdrant) {
+        retrieve_lore(
+            qdrant,
+            &campaign_id.to_string(),
+            embedding,
+            &perspective,
+            context_limit,
+        )
+        .await
+        .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+
+    let context_chunks_used = lore_chunks.len();
+
+    // ── Step 3: Build prompt with injected context ────────────────────────────
+    let system_prompt = build_system_prompt(&perspective, &lore_chunks);
+
+    let messages = vec![
+        Message {
+            role: MessageRole::System,
+            content: system_prompt,
+        },
+        Message {
+            role: MessageRole::User,
+            content: req.message,
+        },
+    ];
+
+    // ── Step 4: LLM completion ────────────────────────────────────────────────
+    match state
+        .llm
+        .complete(CompletionRequest {
+            task: LlmTask::CampaignAssistant,
+            messages,
+            model_override: None,
+            temperature: Some(0.7),
+            max_tokens: Some(1024),
+        })
+        .await
+    {
+        Ok(resp) => (
+            StatusCode::OK,
+            Json(ChatResponse {
+                answer: resp.content,
+                context_chunks_used,
+                model: resp.model,
+                provider: resp.provider,
+            }),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({
+                "error": format!("LLM unavailable: {}", e)
+            })),
+        )
+            .into_response(),
+    }
+}
+
+fn build_system_prompt(perspective: &Perspective, lore_chunks: &[String]) -> String {
+    let role_instruction = match perspective {
+        Perspective::Dm => {
+            "You are The Guide, an AI assistant for a Dungeon Master running a D&D campaign. \
+             You have access to full campaign lore including DM-only information. \
+             Be concise, accurate, and helpful."
+        }
+        Perspective::Player => {
+            "You are The Guide, an AI assistant for players in a D&D campaign. \
+             You MUST NOT reveal DM-only information, secret plot points, or unrevealed lore. \
+             Only share what the players have discovered in-game. \
+             If you are unsure whether something is player-visible, do not share it."
+        }
+    };
+
+    if lore_chunks.is_empty() {
+        return format!(
+            "{role_instruction}\n\n\
+             No campaign-specific lore is available yet. \
+             Answer using your general D&D knowledge where appropriate."
+        );
+    }
+
+    let context_block = lore_chunks
+        .iter()
+        .enumerate()
+        .map(|(i, chunk)| format!("[{}] {}", i + 1, chunk))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+
+    format!(
+        "{role_instruction}\n\n\
+         ## Campaign Context\n\
+         The following lore has been retrieved from the campaign knowledge base. \
+         Use it to answer accurately:\n\n\
+         {context_block}"
+    )
+}
+
+/// Query Qdrant for relevant lore chunks, filtered by player visibility if needed.
+async fn retrieve_lore(
+    qdrant: &qdrant_client::Qdrant,
+    campaign_id: &str,
+    embedding: Vec<f32>,
+    perspective: &Perspective,
+    limit: usize,
+) -> guide_core::Result<Vec<String>> {
+    use guide_db::qdrant::campaign_collection_name;
+    use qdrant_client::qdrant::{Condition, Filter, SearchParamsBuilder, SearchPointsBuilder};
+
+    let collection = campaign_collection_name(campaign_id);
+
+    let mut builder = SearchPointsBuilder::new(
+        &collection,
+        embedding,
+        limit as u64,
+    )
+    .with_payload(true)
+    .params(SearchParamsBuilder::default().hnsw_ef(128).exact(false));
+
+    // Spoiler filter: players only see visible lore
+    if matches!(perspective, Perspective::Player) {
+        builder = builder.filter(Filter::must([Condition::matches(
+            "is_player_visible",
+            true,
+        )]));
+    }
+
+    let results = qdrant
+        .search_points(builder)
+        .await
+        .map_err(|e| guide_core::GuideError::Qdrant(e.to_string()))?;
+
+    let chunks = results
+        .result
+        .into_iter()
+        .filter_map(|scored| {
+            scored
+                .payload
+                .get("content")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+        })
+        .collect();
+
+    Ok(chunks)
+}

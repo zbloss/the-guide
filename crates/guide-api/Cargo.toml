@@ -1,0 +1,30 @@
+[package]
+name = "guide-api"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "guide-api"
+path = "src/main.rs"
+
+[dependencies]
+guide-core    = { workspace = true }
+guide-llm     = { workspace = true }
+guide-db      = { workspace = true }
+guide-pdf     = { workspace = true }
+guide-combat  = { workspace = true }
+
+axum          = { workspace = true }
+tower         = { workspace = true }
+tower-http    = { workspace = true }
+tokio         = { workspace = true }
+serde         = { workspace = true }
+serde_json    = { workspace = true }
+anyhow        = { workspace = true }
+tracing       = { workspace = true }
+tracing-subscriber = { workspace = true }
+uuid          = { workspace = true }
+chrono        = { workspace = true }
+
+# Qdrant (optional — service degrades gracefully if unavailable)
+qdrant-client = { workspace = true }
