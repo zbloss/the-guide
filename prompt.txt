@@ -4,8 +4,12 @@ Tasks:
 1. Review the current state of the codebase.
 2. Update the TODO.md file with all of the most recent information.
 3. Create a new TODO file at PYTHON_MIGRATION_TODO.md which you will use to track all of the migration todo tasks.
-4. Convert the subagents within .claude/agents to python from rust.
-5. Refactor the current RAG pipeline to use PageIndex (https://github.com/VectifyAI/PageIndex) instead.
+5. Use `uv` for all dependency management, write all tests using pytest.
+    1. Store all configuration files next to dependencies within pyproject.toml. The entire project should be managed from here.
+6. Use Pydantic BaseModel classes for all model objects. Use the openai sdk as well.
+7. Use Docling for OCR instead of GLM-OCR.
+8. Convert the subagents within .claude/agents to python from rust.
+9. Refactor the current RAG pipeline to use PageIndex (https://github.com/VectifyAI/PageIndex) instead.
     1. This is brand new technology that will drastically outperform our current RAG pipeline.
     2. Consider using Nanbeige/Nanbeige4.1-3B as the core reasoning model.
 

@@ -4,42 +4,75 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**The Guide** is an AI-powered assistant for Dungeon Masters running D&D campaigns. It is currently in the **requirements and planning phase** — no source code exists yet.
+**The Guide** is an AI-powered assistant for Dungeon Masters running D&D campaigns. The backend has been fully migrated from Rust to Python (Phases 0–7 archived; Python implementation complete with 33 passing tests).
 
 ## Tech Stack & Architectural Decisions
 
-- **Language:** Rust (core backend)
-- **Vector Database:** Qdrant (per-campaign collections)
-- **LLM Integration:**
-  - Default: Ollama (local inference)
-  - All LLM calls use the **OpenAI Rust SDK** pointed at the Ollama OpenAI-compatible endpoint
-  - Configurable cloud fallbacks: Anthropic, OpenAI, Gemini
-- **PDF Processing:** Vision-based pipeline using GLM-OCR via Ollama; all extraction/reasoning goes through the OpenAI-compatible API (no traditional PDF parsing libraries)
-- **Deployment Target:** Single binary or set of binaries; Docker image; packaged executables (.app, .exe)
+- **Language:** Python 3.12+
+- **Dependency management:** `uv` + `pyproject.toml`
+- **HTTP framework:** FastAPI + uvicorn
+- **Models:** Pydantic v2 `BaseModel`
+- **Config:** `pydantic-settings` `BaseSettings` (`GUIDE__` prefix)
+- **Database:** `aiosqlite` (SQLite, same schema as Rust era)
+- **LLM SDK:** `openai.AsyncOpenAI` pointed at Ollama `/v1` endpoint
+- **Default model:** `nanbeige4.1:3b` via Ollama
+- **PDF Processing:** Docling (`DocumentConverter`) — no vision model required for well-formatted PDFs
+- **RAG:** PageIndex (vectorless, LLM-reasoning retrieval) — disk-based JSON indexes at `data/indexes/`
+- **No Qdrant** — replaced by PageIndex
 
 ## Key Constraints
 
-- Use the **OpenAI Rust SDK** for all LLM interactions (including Ollama, GLM-OCR, and vision models) — do not use provider-specific SDKs for inference.
-- PDF ingestion must go through the image-to-context pipeline (PDF page → image → GLM-OCR via Ollama), not direct text extraction libraries.
-- Qdrant collections should be scoped per campaign to allow cross-campaign switching.
+- Use `openai.AsyncOpenAI` for all LLM interactions (including Ollama) — no provider-specific SDKs.
+- PDF ingestion uses Docling, not vision models or pdfium.
+- PageIndex indexes stored at `data/indexes/{campaign_id}/{doc_id}.json` (campaign) or `data/indexes/global/{doc_id}.json` (rulebooks).
+- All DB access via `aiosqlite` repositories — no SQLAlchemy ORM.
 
 ## Commands
 
-> This section will be updated once the Rust project is initialized. Standard commands will follow Cargo conventions:
-> - `cargo build` — compile
-> - `cargo test` — run all tests
-> - `cargo test <test_name>` — run a single test
-> - `cargo clippy` — lint
-> - `cargo fmt` — format
+```bash
+uv sync --extra dev       # install all dependencies
+uv run pytest             # run all 33 tests
+uv run pytest tests/test_combat.py -v    # run single test file
+uv run uvicorn guide.api.main:app --reload  # start dev server (port 8000)
+uv run ruff check src/    # lint
+```
 
-## Feature Areas (from TASKS.md)
+## Source Structure
 
-1. Combat Management (initiative, action, state tracking)
-2. Campaign Intelligent Assistant (context-aware Q&A, spoiler prevention)
-3. Backstory & Character Integration
-4. Meaningful Encounter Generation
+```
+src/guide/
+  config.py          AppConfig (pydantic-settings, GUIDE__ prefix)
+  errors.py          GuideError, NotFoundError, InvalidInputError, LlmError
+  models/            Pydantic domain models (campaign, character, session, encounter, document, playstyle, shared)
+  db/                aiosqlite repositories + migrations/001_initial.sql, 002_document_kind.sql
+  llm/               LlmClient ABC, OllamaProvider, CloudProvider, LlmRouter, prompts
+  pdf/               Docling extractor + PageIndex pipeline
+  combat/            CombatEngine, initiative helpers
+  api/               FastAPI app factory (main.py), AppState (state.py), routes/
+tests/
+  conftest.py        in-memory SQLite, mock LLM, AsyncClient fixture
+  test_combat.py     11 combat unit tests
+  test_repositories.py  12 DB integration tests
+  test_api.py        HTTP layer tests
+```
+
+## Feature Areas
+
+1. Combat Management (initiative, action economy, state tracking)
+2. Campaign Intelligent Assistant (context-aware Q&A, spoiler prevention via PageIndex)
+3. Backstory & Character Integration (LLM-extracted plot hooks)
+4. Meaningful Encounter Generation (RAG-grounded, party-aware)
 5. Rulebook & Mechanics Reference (D&D 5e core)
-6. PDF Parsing & Campaign Portability
-7. Playstyle Personalization
+6. PDF Parsing & Campaign Portability (Docling → PageIndex)
+7. Playstyle Personalization (PlaystyleProfile)
 8. World Building & Narrative Tools
 9. Session Summaries (tiered: player recaps vs. DM master logs)
+
+## Agent Files
+
+- `.claude/agents/python-backend-architect.md` — infrastructure, DB, LLM routing
+- `.claude/agents/dnd-pipeline-engineer.md` — Docling + PageIndex pipeline
+- `.claude/agents/dnd5e-systems-engineer.md` — combat engine, D&D mechanics
+- `.claude/agents/partner-dm-narrator.md` — RAG Q&A, narrative generation, session summaries
+
+The old Rust `crates/` directory remains as reference — delete once fully validated.
