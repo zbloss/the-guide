@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cargo build:*)",
+      "Bash(cargo test:*)",
+      "Bash(cargo check:*)",
+      "Bash(curl:*)",
+      "Bash(docker pull:*)",
+      "Bash(docker run:*)",
+      "Bash(PDF_PATH=\"C:\\\\\\\\Users\\\\\\\\altoz\\\\\\\\Documents\\\\\\\\dnd\\\\\\\\Land of Vampires\\\\\\\\Adventurer's Guide to Azuria_LoV.pdf\"\nls -la \"/c/Users/altoz/Documents/dnd/Land of Vampires/Adventurer's Guide to Azuria_LoV.pdf\")",
+      "Read(//tmp/**)",
+      "Bash(cargo doc --package async-openai --no-deps)",
+      "Read(//home/zbloss/.cargo/registry/src/**)",
+      "Read(//usr/**)",
+      "Bash(ls /mnt/c/Users/altoz/Projects/the-guide/*.dll /mnt/c/Users/altoz/Projects/the-guide/*.so)",
+      "Bash(LD_LIBRARY_PATH=/mnt/c/Users/altoz/Projects/the-guide cargo test:*)",
+      "Bash(ldconfig:*)",
+      "Bash(python3:*)",
+      "Bash(pdfinfo:*)",
+      "Bash(cargo run:*)",
+      "Bash(pkill:*)"
+    ]
+  }
+}
