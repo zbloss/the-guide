@@ -69,9 +69,7 @@ class CampaignRepository:
         return await self.get_by_id(id_)
 
     async def delete(self, id_: UUID) -> None:
-        cursor = await self._db.execute(
-            "DELETE FROM campaigns WHERE id = ?", (str(id_),)
-        )
+        cursor = await self._db.execute("DELETE FROM campaigns WHERE id = ?", (str(id_),))
         await self._db.commit()
         if cursor.rowcount == 0:
             raise NotFoundError(f"Campaign {id_}")
@@ -84,7 +82,9 @@ def _row_to_campaign(row: aiosqlite.Row) -> Campaign:
         id=UUID(row["id"]),
         name=row["name"],
         description=row["description"],
-        game_system=GameSystem(row["game_system"]) if row["game_system"] in GameSystem._value2member_map_ else GameSystem.dnd5e,
+        game_system=GameSystem(row["game_system"])
+        if row["game_system"] in GameSystem._value2member_map_
+        else GameSystem.dnd5e,
         world_state=world_state,
         created_at=datetime.fromisoformat(row["created_at"]),
         updated_at=datetime.fromisoformat(row["updated_at"]),

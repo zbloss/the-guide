@@ -36,11 +36,23 @@ class CharacterRepository:
             "  created_at, updated_at)"
             " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
-                str(id_), str(campaign_id), req.name, char_type,
-                req.class_, req.race, level, req.max_hp, req.max_hp,
-                req.armor_class, speed,
-                ability_scores.model_dump_json(), "[]", None, 1,
-                now, now,
+                str(id_),
+                str(campaign_id),
+                req.name,
+                char_type,
+                req.class_,
+                req.race,
+                level,
+                req.max_hp,
+                req.max_hp,
+                req.armor_class,
+                speed,
+                ability_scores.model_dump_json(),
+                "[]",
+                None,
+                1,
+                now,
+                now,
             ),
         )
         await self._db.commit()
@@ -93,9 +105,7 @@ class CharacterRepository:
         return await self.get_by_id(id_)
 
     async def delete(self, id_: UUID) -> None:
-        cursor = await self._db.execute(
-            "DELETE FROM characters WHERE id = ?", (str(id_),)
-        )
+        cursor = await self._db.execute("DELETE FROM characters WHERE id = ?", (str(id_),))
         await self._db.commit()
         if cursor.rowcount == 0:
             raise NotFoundError(f"Character {id_}")

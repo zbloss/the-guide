@@ -7,8 +7,8 @@ from fastapi import APIRouter, HTTPException, Query, Request
 
 from guide.db.sessions import SessionEventRepository, SessionRepository
 from guide.errors import NotFoundError
-from guide.llm.client import CompletionRequest, LlmTask, Message
 from guide.llm import prompts
+from guide.llm.client import CompletionRequest, LlmTask, Message
 from guide.models.session import (
     CreateSessionEventRequest,
     CreateSessionRequest,
@@ -115,26 +115,29 @@ async def session_summary(
         raise HTTPException(status_code=422, detail="No events recorded for this session yet")
 
     event_list = "\n".join(
-        f"{i+1}. [{e.event_type.value}] {e.description} (significance: {e.significance.value})"
+        f"{i + 1}. [{e.event_type.value}] {e.description} (significance: {e.significance.value})"
         for i, e in enumerate(events)
     )
 
     system_prompt = (
-        prompts.session_summary_dm_system() if persp == Perspective.dm
+        prompts.session_summary_dm_system()
+        if persp == Perspective.dm
         else prompts.session_summary_player_system()
     )
 
     llm = _llm(request)
     try:
-        resp = await llm.complete(CompletionRequest(
-            task=LlmTask.session_summary,
-            messages=[
-                Message(role="system", content=system_prompt),
-                Message(role="user", content=f"Session events:\n\n{event_list}"),
-            ],
-            temperature=0.7,
-            max_tokens=1500,
-        ))
+        resp = await llm.complete(
+            CompletionRequest(
+                task=LlmTask.session_summary,
+                messages=[
+                    Message(role="system", content=system_prompt),
+                    Message(role="user", content=f"Session events:\n\n{event_list}"),
+                ],
+                temperature=0.7,
+                max_tokens=1500,
+            )
+        )
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"LLM unavailable: {e}")
 

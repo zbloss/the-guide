@@ -4,18 +4,18 @@ Tracks completion status of the Rust → Python rewrite.
 
 ## Phase Status
 
-| Phase | Description | Status |
-|-------|-------------|--------|
-| 1 | Project scaffolding (pyproject.toml, UV, directory structure) | ✅ Done |
-| 2 | Core models (Pydantic v2) | ✅ Done |
-| 3 | Config (pydantic-settings) | ✅ Done |
-| 4 | Database layer (aiosqlite repositories) | ✅ Done |
-| 5 | LLM layer (OllamaProvider, CloudProvider, LlmRouter, prompts) | ✅ Done |
-| 6 | PDF ingestion (Docling + PageIndex) | ✅ Done |
-| 7 | Combat engine (CombatEngine, initiative) | ✅ Done |
-| 8 | FastAPI routes (all endpoints) | ✅ Done |
-| 9 | Tests (combat, repositories, API layer) | ✅ Done |
-| 10 | Agent file updates | ✅ Done |
+| Phase | Description                                                   | Status  |
+| ----- | ------------------------------------------------------------- | ------- |
+| 1     | Project scaffolding (pyproject.toml, UV, directory structure) | ✅ Done |
+| 2     | Core models (Pydantic v2)                                     | ✅ Done |
+| 3     | Config (pydantic-settings)                                    | ✅ Done |
+| 4     | Database layer (aiosqlite repositories)                       | ✅ Done |
+| 5     | LLM layer (OllamaProvider, CloudProvider, LlmRouter, prompts) | ✅ Done |
+| 6     | PDF ingestion (Docling + PageIndex)                           | ✅ Done |
+| 7     | Combat engine (CombatEngine, initiative)                      | ✅ Done |
+| 8     | FastAPI routes (all endpoints)                                | ✅ Done |
+| 9     | Tests (combat, repositories, API layer)                       | ✅ Done |
+| 10    | Agent file updates                                            | ✅ Done |
 
 ## To Do Before Production
 
@@ -29,14 +29,14 @@ Tracks completion status of the Rust → Python rewrite.
 
 ## Key Decisions
 
-| Decision | Rationale |
-|---|---|
-| PageIndex replaces Qdrant | Vectorless reasoning-based retrieval, no embedding overhead |
-| Docling replaces GLM-OCR | Native Python, structured output, no vision model required |
-| Nanbeige4.1-3B as default | Strong reasoning in 3B params, Ollama-deployable |
-| aiosqlite over SQLAlchemy | Minimal overhead, same SQL as Rust migration files |
-| FastAPI over Flask/Django | Native async, Pydantic v2 native, automatic OpenAPI |
-| PageIndex indexes on disk | No external vector DB dependency |
+| Decision                        | Rationale                                                   |
+| ------------------------------- | ----------------------------------------------------------- |
+| PageIndex replaces Qdrant       | Vectorless reasoning-based retrieval, no embedding overhead |
+| Docling replaces GLM-OCR        | Native Python, structured output, no vision model required  |
+| tomng/nanbeige4.1:3b as default | Strong reasoning in 3B params, Ollama-deployable            |
+| aiosqlite over SQLAlchemy       | Minimal overhead, same SQL as Rust migration files          |
+| FastAPI over Flask/Django       | Native async, Pydantic v2 native, automatic OpenAPI         |
+| PageIndex indexes on disk       | No external vector DB dependency                            |
 
 ## File Map (Python)
 

@@ -11,6 +11,7 @@ dependencies = [
     "aiosqlite>=0.20",
     "docling>=2.0",
     "python-multipart>=0.0.9",
+    "torch>=2.10.0",
 ]
 
 [dependency-groups]
@@ -27,7 +28,7 @@ testpaths = ["tests"]
 
 [tool.ruff]
 target-version = "py312"
-line-length = 100
+line-length = 120
 
 [tool.ruff.lint]
 select = ["E", "F", "I"]

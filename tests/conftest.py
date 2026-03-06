@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import asyncio
 from typing import AsyncGenerator
 
 import aiosqlite
-import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
@@ -29,6 +27,7 @@ class _MockLlm:
 
     async def complete(self, req):
         from guide.llm.client import CompletionResponse
+
         return CompletionResponse(
             content='{"motivations":[],"key_relationships":[],"secrets":[],"plot_hooks":[]}',
             model="mock",
@@ -40,6 +39,7 @@ class _MockLlm:
 
     async def complete_with_vision(self, req):
         from guide.llm.client import CompletionResponse
+
         return CompletionResponse(content="mock vision", model="mock", provider="mock")
 
 
@@ -56,7 +56,5 @@ async def client(db) -> AsyncGenerator[AsyncClient, None]:
     # Prevent lifespan from re-running
     application.router.lifespan_context = None
 
-    async with AsyncClient(
-        transport=ASGITransport(app=application), base_url="http://test"
-    ) as ac:
+    async with AsyncClient(transport=ASGITransport(app=application), base_url="http://test") as ac:
         yield ac

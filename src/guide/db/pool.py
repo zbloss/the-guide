@@ -48,9 +48,7 @@ async def _run_migrations(db: aiosqlite.Connection) -> None:
     migrations_dir = Path(__file__).parent / "migrations"
     for sql_file in sorted(migrations_dir.glob("*.sql")):
         name = sql_file.name
-        async with db.execute(
-            "SELECT 1 FROM schema_migrations WHERE name = ?", (name,)
-        ) as cursor:
+        async with db.execute("SELECT 1 FROM schema_migrations WHERE name = ?", (name,)) as cursor:
             if await cursor.fetchone() is not None:
                 continue  # already applied
 

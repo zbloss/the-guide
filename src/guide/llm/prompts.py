@@ -6,15 +6,15 @@ def backstory_analysis_system() -> str:
         "You are a narrative assistant for a Dungeon Master.\n"
         "Analyze the character backstory provided and extract structured information.\n"
         "Return ONLY valid JSON matching this schema (no explanation, no markdown):\n\n"
-        '{\n'
+        "{\n"
         '  "motivations": ["<string>", ...],\n'
         '  "key_relationships": ["<string>", ...],\n'
         '  "secrets": ["<string>", ...],\n'
         '  "plot_hooks": [\n'
-        '    {\n'
+        "    {\n"
         '      "description": "<1-2 sentence hook the DM can use>",\n'
         '      "priority": "low|medium|high|critical"\n'
-        '    },\n'
+        "    },\n"
         "    ...\n"
         "  ]\n"
         "}\n\n"
@@ -57,7 +57,7 @@ def session_summary_player_system() -> str:
 def ocr_campaign_page_prompt() -> str:
     return (
         "Extract text from this PDF page exactly as written. Return ONLY valid JSON (no markdown):\n\n"
-        '{\n'
+        "{\n"
         '  "raw_text": "<full extracted text for this page>",\n'
         '  "headings": ["## Major Section", "### Sub-section"],\n'
         '  "is_dm_only": false\n'
@@ -73,7 +73,7 @@ def ocr_campaign_page_prompt() -> str:
 def ocr_rulebook_page_prompt() -> str:
     return (
         "Extract text from this rulebook PDF page exactly as written. Return ONLY valid JSON (no markdown):\n\n"
-        '{\n'
+        "{\n"
         '  "raw_text": "<full extracted text for this page>",\n'
         '  "headings": ["## Major Section", "### Sub-section"],\n'
         '  "is_dm_only": false\n'

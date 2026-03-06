@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import aiosqlite
 
@@ -21,9 +21,15 @@ class DocumentRepository:
             "  document_kind, ingestion_status, ingestion_error, uploaded_at, ingested_at)"
             " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
-                str(doc.id), str(doc.campaign_id), doc.filename, doc.file_size_bytes,
-                doc.stored_path, doc.page_count, doc.document_kind.value,
-                doc.ingestion_status.value, doc.ingestion_error,
+                str(doc.id),
+                str(doc.campaign_id),
+                doc.filename,
+                doc.file_size_bytes,
+                doc.stored_path,
+                doc.page_count,
+                doc.document_kind.value,
+                doc.ingestion_status.value,
+                doc.ingestion_error,
                 doc.uploaded_at.isoformat(),
                 doc.ingested_at.isoformat() if doc.ingested_at else None,
             ),
@@ -87,9 +93,15 @@ class GlobalDocumentRepository:
             "  ingestion_status, ingestion_error, uploaded_at, ingested_at)"
             " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
-                str(doc.id), doc.title, doc.filename, doc.file_size_bytes,
-                doc.stored_path, doc.page_count, doc.ingestion_status.value,
-                doc.ingestion_error, doc.uploaded_at.isoformat(),
+                str(doc.id),
+                doc.title,
+                doc.filename,
+                doc.file_size_bytes,
+                doc.stored_path,
+                doc.page_count,
+                doc.ingestion_status.value,
+                doc.ingestion_error,
+                doc.uploaded_at.isoformat(),
                 doc.ingested_at.isoformat() if doc.ingested_at else None,
             ),
         )
@@ -117,7 +129,9 @@ class GlobalDocumentRepository:
             rows = await cursor.fetchall()
         return [_row_to_global_doc(r) for r in rows]
 
-    async def update_status(self, id_: UUID, status: IngestionStatus, error: str | None = None) -> None:
+    async def update_status(
+        self, id_: UUID, status: IngestionStatus, error: str | None = None
+    ) -> None:
         await self._db.execute(
             "UPDATE global_documents SET ingestion_status = ?, ingestion_error = ? WHERE id = ?",
             (status.value, error, str(id_)),
@@ -134,7 +148,9 @@ def _row_to_doc(row: aiosqlite.Row) -> CampaignDocument:
         file_size_bytes=row["file_size_bytes"],
         stored_path=row["stored_path"],
         page_count=row["page_count"],
-        document_kind=DocumentKind(kind_val) if kind_val in DocumentKind._value2member_map_ else DocumentKind.campaign,
+        document_kind=DocumentKind(kind_val)
+        if kind_val in DocumentKind._value2member_map_
+        else DocumentKind.campaign,
         ingestion_status=IngestionStatus(row["ingestion_status"]),
         ingestion_error=row["ingestion_error"],
         uploaded_at=datetime.fromisoformat(row["uploaded_at"]),

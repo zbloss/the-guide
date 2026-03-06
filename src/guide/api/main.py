@@ -19,6 +19,7 @@ from guide.api.routes import (
 from guide.api.state import AppState
 from guide.config import AppConfig
 from guide.db.pool import close_db, init_db
+from guide.hardware import detect_device, log_hardware_summary, resolve_num_threads
 from guide.llm.router import LlmRouter
 
 logger = logging.getLogger(__name__)
@@ -27,6 +28,15 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     config: AppConfig = app.state.guide_config  # type: ignore[attr-defined]
+
+    device = detect_device(config.device)
+    num_threads = resolve_num_threads(config.num_threads)
+    log_hardware_summary(device, num_threads)
+
+    # Store resolved values back into config so routes can read them without
+    # re-running detection on every request.
+    config.device = device
+    config.num_threads = num_threads
 
     db = await init_db(config.database_url)
     llm = LlmRouter.from_config(config)

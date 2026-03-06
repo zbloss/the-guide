@@ -1,7 +1,6 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, HTTPException, Request
 
 from guide.db.campaigns import CampaignRepository
 from guide.errors import NotFoundError

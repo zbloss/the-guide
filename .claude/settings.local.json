@@ -27,7 +27,11 @@
       "Bash(INDEX_FILE=\"data/indexes/$CAMPAIGN_ID/$DOC_ID.json\")",
       "Bash(__NEW_LINE_37e463d8b764b22a__ echo \"=== Index file size ===\")",
       "Read(//mnt/c/Users/altoz/Projects/the-guide/**)",
-      "Bash(__NEW_LINE_b63b2c5bac0812d8__ echo:*)"
+      "Bash(__NEW_LINE_b63b2c5bac0812d8__ echo:*)",
+      "WebFetch(domain:docs.pageindex.ai)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:pypi.org)"
     ]
   }
 }

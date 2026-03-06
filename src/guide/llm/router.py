@@ -4,7 +4,6 @@ import logging
 from enum import Enum
 
 from guide.config import AppConfig
-from guide.errors import LlmError
 
 from .client import (
     CompletionRequest,
@@ -65,7 +64,9 @@ class LlmRouter(LlmClient):
                 base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
                 model, label = "gemini-1.5-flash", "gemini"
             else:
-                logger.warning("Unknown cloud_fallback '%s', using always_local", config.cloud_fallback)
+                logger.warning(
+                    "Unknown cloud_fallback '%s', using always_local", config.cloud_fallback
+                )
                 return cls(RoutingStrategy.always_local, local)
 
             cloud = CloudProvider(

@@ -8,7 +8,7 @@ class AppConfig(BaseSettings):
     port: int = 8000
     database_url: str = "data/guide.db"
     ollama_base_url: str = "http://localhost:11434/v1"
-    default_model: str = "nanbeige4.1:3b"
+    default_model: str = "tomng/nanbeige4.1:3b"
     embedding_model: str = "nomic-embed-text"
     ocr_model: str = "glm-ocr"
     vision_model: str = "glm4v"
@@ -17,6 +17,12 @@ class AppConfig(BaseSettings):
     max_upload_bytes: int = 50 * 1024 * 1024
     chunk_max_tokens: int = 512
     chunk_overlap_chars: int = 64
+
+    # Hardware acceleration
+    # device: "auto" | "cpu" | "cuda" | "cuda:N" | "mps" | "xpu"
+    device: str = "auto"
+    # num_threads: 0 = auto-detect (os.cpu_count()); >0 = explicit count
+    num_threads: int = 0
 
     model_config = SettingsConfigDict(
         env_prefix="GUIDE__",

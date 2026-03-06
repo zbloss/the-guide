@@ -1,17 +1,16 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, UploadFile, File
+from fastapi import APIRouter, BackgroundTasks, File, HTTPException, Request, UploadFile
 
 from guide.db.campaigns import CampaignRepository
 from guide.db.documents import DocumentRepository
 from guide.errors import NotFoundError
-from guide.models.document import CampaignDocument, DocumentKind
+from guide.models.document import CampaignDocument
 from guide.models.shared import IngestionStatus
 from guide.pdf.extractor import extract_document
 from guide.pdf.pipeline import ingest_campaign_document
@@ -114,21 +113,30 @@ async def ingest_document(
 
     await doc_repo.update_status(doc_id, IngestionStatus.processing)
 
+    cfg = request.app.state.guide.config
     db = _db(request)
-    background_tasks.add_task(_run_ingestion, campaign_id, doc_id, doc.stored_path, db)
+    background_tasks.add_task(
+        _run_ingestion,
+        campaign_id,
+        doc_id,
+        doc.stored_path,
+        db,
+        cfg.device,
+        cfg.num_threads,
+    )
 
     return {"status": "processing", "doc_id": str(doc_id)}
 
 
 async def _run_ingestion(
-    campaign_id: UUID, doc_id: UUID, stored_path: str, db
+    campaign_id: UUID, doc_id: UUID, stored_path: str, db, device: str, num_threads: int
 ) -> None:
     doc_repo = DocumentRepository(db)
     try:
         pdf_bytes = Path(stored_path).read_bytes()
-        pages = await extract_document(pdf_bytes)
-        await ingest_campaign_document(campaign_id, doc_id, pages, db)
-        logger.info("Ingested %d pages for doc %s", len(pages), doc_id)
+        extraction = await extract_document(pdf_bytes, device=device, num_threads=num_threads)
+        await ingest_campaign_document(campaign_id, doc_id, extraction, db)
+        logger.info("Ingested %d pages for doc %s", len(extraction.pages), doc_id)
     except Exception as e:
         logger.error("Ingestion failed for doc %s: %s", doc_id, e)
         await doc_repo.update_status(doc_id, IngestionStatus.failed, str(e))

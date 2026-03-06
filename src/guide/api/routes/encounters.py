@@ -162,7 +162,9 @@ async def update_participant(
     if body.spend_reaction:
         p.action_budget.has_reaction = False
     if body.spend_movement is not None:
-        p.action_budget.movement_remaining = max(0, p.action_budget.movement_remaining - body.spend_movement)
+        p.action_budget.movement_remaining = max(
+            0, p.action_budget.movement_remaining - body.spend_movement
+        )
 
     await repo.save_state(engine.encounter)
     updated = next(p for p in engine.encounter.participants if p.id == pid)

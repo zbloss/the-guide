@@ -30,8 +30,13 @@ class EncounterRepository:
             "  current_turn_index, created_at, updated_at)"
             " VALUES (?, ?, ?, ?, ?, 'pending', 0, 0, ?, ?)",
             (
-                str(id_), str(req.session_id), str(campaign_id),
-                req.name, req.description, now, now,
+                str(id_),
+                str(req.session_id),
+                str(campaign_id),
+                req.name,
+                req.description,
+                now,
+                now,
             ),
         )
         await self._db.commit()
@@ -75,8 +80,11 @@ class EncounterRepository:
             "UPDATE encounters SET status = ?, round = ?, current_turn_index = ?,"
             " updated_at = ? WHERE id = ?",
             (
-                encounter.status.value, encounter.round,
-                encounter.current_turn_index, now, str(encounter.id),
+                encounter.status.value,
+                encounter.round,
+                encounter.current_turn_index,
+                now,
+                str(encounter.id),
             ),
         )
         for p in encounter.participants:
@@ -94,12 +102,20 @@ class EncounterRepository:
             "  has_taken_turn, is_defeated)"
             " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
-                str(participant.id), str(participant.encounter_id),
-                str(participant.character_id), participant.name,
-                participant.initiative_roll, participant.initiative_modifier,
-                participant.initiative_total, participant.current_hp, participant.max_hp,
-                participant.armor_class, conditions_json, budget_json,
-                int(participant.has_taken_turn), int(participant.is_defeated),
+                str(participant.id),
+                str(participant.encounter_id),
+                str(participant.character_id),
+                participant.name,
+                participant.initiative_roll,
+                participant.initiative_modifier,
+                participant.initiative_total,
+                participant.current_hp,
+                participant.max_hp,
+                participant.armor_class,
+                conditions_json,
+                budget_json,
+                int(participant.has_taken_turn),
+                int(participant.is_defeated),
             ),
         )
         await self._db.commit()
@@ -113,9 +129,15 @@ class EncounterRepository:
             " initiative_total = ?, current_hp = ?, conditions = ?, action_budget = ?,"
             " has_taken_turn = ?, is_defeated = ? WHERE id = ?",
             (
-                p.initiative_roll, p.initiative_modifier, p.initiative_total,
-                p.current_hp, conditions_json, budget_json,
-                int(p.has_taken_turn), int(p.is_defeated), str(p.id),
+                p.initiative_roll,
+                p.initiative_modifier,
+                p.initiative_total,
+                p.current_hp,
+                conditions_json,
+                budget_json,
+                int(p.has_taken_turn),
+                int(p.is_defeated),
+                str(p.id),
             ),
         )
 

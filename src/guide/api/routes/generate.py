@@ -61,13 +61,12 @@ async def generate_encounter(campaign_id: UUID, body: GenerateEncounterRequest, 
     )
 
     profile = PlaystyleProfile.default_for(campaign_id)
-    type_preference = (
-        body.preferred_type.value if body.preferred_type else _infer_type(profile)
-    )
+    type_preference = body.preferred_type.value if body.preferred_type else _infer_type(profile)
 
     lore_section = (
         "\n\n## Relevant Campaign Lore\n" + "\n\n".join(c["content"] for c in chunks)
-        if chunks else ""
+        if chunks
+        else ""
     )
 
     system_prompt = (
@@ -90,21 +89,22 @@ async def generate_encounter(campaign_id: UUID, body: GenerateEncounterRequest, 
 
     user_message = (
         f"Party composition (average level {party_level}):\n{party_summary}"
-        f"{lore_section}"
-        + (f"\n\nAdditional context: {body.context}" if body.context else "")
+        f"{lore_section}" + (f"\n\nAdditional context: {body.context}" if body.context else "")
     )
 
     llm = request.app.state.guide.llm
     try:
-        resp = await llm.complete(CompletionRequest(
-            task=LlmTask.encounter_generation,
-            messages=[
-                Message(role="system", content=system_prompt),
-                Message(role="user", content=user_message),
-            ],
-            temperature=0.8,
-            max_tokens=800,
-        ))
+        resp = await llm.complete(
+            CompletionRequest(
+                task=LlmTask.encounter_generation,
+                messages=[
+                    Message(role="system", content=system_prompt),
+                    Message(role="user", content=user_message),
+                ],
+                temperature=0.8,
+                max_tokens=800,
+            )
+        )
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"LLM unavailable: {e}")
 
@@ -122,7 +122,9 @@ async def generate_encounter(campaign_id: UUID, body: GenerateEncounterRequest, 
     generated = GeneratedEncounter(
         title=raw["title"],
         description=raw["description"],
-        encounter_type=enc_type_map.get(raw.get("encounter_type", ""), GeneratedEncounterType.combat),
+        encounter_type=enc_type_map.get(
+            raw.get("encounter_type", ""), GeneratedEncounterType.combat
+        ),
         challenge_rating=raw.get("challenge_rating"),
         suggested_enemies=[
             EnemySuggestion(name=e["name"], count=e.get("count", 1), cr=e.get("cr"))
@@ -148,7 +150,10 @@ def _list_doc_ids(scope: str) -> list[UUID]:
 
 
 def _infer_type(profile: PlaystyleProfile) -> str:
-    if profile.combat_affinity >= profile.social_affinity and profile.combat_affinity >= profile.exploration_affinity:
+    if (
+        profile.combat_affinity >= profile.social_affinity
+        and profile.combat_affinity >= profile.exploration_affinity
+    ):
         return "combat"
     if profile.social_affinity >= profile.exploration_affinity:
         return "social"

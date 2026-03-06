@@ -1,16 +1,12 @@
-Background: We have started creating this project which will really help my be a great dungeon master. However, writing the code in Rust may have been a mistake as we're running into issues parsing PDF files. It may be more beneficial if this code were written in python, which has better support for LLM and related libraries.
+Background: We have now created a service called The Guide which starts by ingesting PDFs of Dungeons & Dragons (DnD) rules and campaign information. It first uses Docling to extract all of the text from the PDFs, and it then indexes that text using a new vectorless RAG system called PageIndex. PageIndex was designed to work on only one document at a time, which is where is excels tremendously in both cost and performance over traditional RAG systems. However this is a natural limitation of our service. Our goal is to provide a service that can be a source of information for DnD Players, Dungeon Masters (DMs), Monsters, as well as niche campaign specific information. This means we will need to ingest multiple PDFs, some of which (DnD Players Handbook, DM Guide, Monsters Guide, etc.) are general purpose information and will be used across all campaigns, while others are extremely specific to this particular campaign like an Adventurer's Guide and Campaign Guide. 
 
 Tasks:
-1. Review the current state of the codebase.
-2. Update the TODO.md file with all of the most recent information.
-3. Create a new TODO file at PYTHON_MIGRATION_TODO.md which you will use to track all of the migration todo tasks.
-5. Use `uv` for all dependency management, write all tests using pytest.
-    1. Store all configuration files next to dependencies within pyproject.toml. The entire project should be managed from here.
-6. Use Pydantic BaseModel classes for all model objects. Use the openai sdk as well.
-7. Use Docling for OCR instead of GLM-OCR.
-8. Convert the subagents within .claude/agents to python from rust.
-9. Refactor the current RAG pipeline to use PageIndex (https://github.com/VectifyAI/PageIndex) instead.
-    1. This is brand new technology that will drastically outperform our current RAG pipeline.
-    2. Consider using Nanbeige/Nanbeige4.1-3B as the core reasoning model.
+1. Design a system that allows PageIndex to be utilized across multiple documents at once.
+    1. The first idea you should explore is one that I came up with. The idea is that you will create a separate PageIndex index for each PDF that you are given, and you will maintain a document index in PageIndex which maps each PDF index to a high-level summary of that index.
+    2. For example, Say you are storing the Players Handbook, Dungeon Masters Guide, and a Campaign PDF. This will result in four total indices. One for each of the Players Handbook, Dungeon Masters Guide, and Campaign PDF, and another index that stores a mapping between what the Players Handbook, Dungeon Masters Guide, and Campaign PDF are. 
+    3. Then on receiving a query or question, an AI Agent first determines which of the 3 indices need to be referenced, and then it executes queries against those indices.
+2. Ensure that all new code has been tested and is working as expected.
+3. Ensure all code is formatted correctly using `uv run ruff format` followed by `uv run ruff check --fix`.
+    1. Continue fixing all errors until `uv run ruff check` returns no errors.
 
-Goal: Convert this codebase from Rust into Python.
+Goal: Implement multi-document functionality for The Guide. 

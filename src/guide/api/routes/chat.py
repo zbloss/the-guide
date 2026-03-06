@@ -42,15 +42,26 @@ async def chat(campaign_id: UUID, body: ChatRequest, request: Request):
     context_limit = body.context_limit or 5
     llm = request.app.state.guide.llm
 
+    async def _call_llm(prompt: str) -> str:
+        resp = await llm.complete(
+            CompletionRequest(
+                task=LlmTask.campaign_assistant,
+                messages=[Message(role="user", content=prompt)],
+                temperature=0,
+            )
+        )
+        return resp.content
+
     # PageIndex RAG: query indexes for this campaign
     index_scope = str(campaign_id)
     doc_ids = _list_doc_ids(index_scope)
     global_doc_ids = _list_doc_ids("global")
 
-    chunks = query_indexes(
+    chunks = await query_indexes(
         scopes=[index_scope] * len(doc_ids) + ["global"] * len(global_doc_ids),
         doc_ids=doc_ids + global_doc_ids,
         query=body.message,
+        call_llm=_call_llm,
         player_visible_only=(perspective == Perspective.player),
         limit=context_limit,
     )
@@ -58,15 +69,17 @@ async def chat(campaign_id: UUID, body: ChatRequest, request: Request):
     context = _build_context(perspective, chunks)
 
     try:
-        resp = await llm.complete(CompletionRequest(
-            task=LlmTask.campaign_assistant,
-            messages=[
-                Message(role="system", content=context),
-                Message(role="user", content=body.message),
-            ],
-            temperature=0.7,
-            max_tokens=1024,
-        ))
+        resp = await llm.complete(
+            CompletionRequest(
+                task=LlmTask.campaign_assistant,
+                messages=[
+                    Message(role="system", content=context),
+                    Message(role="user", content=body.message),
+                ],
+                temperature=0.7,
+                max_tokens=1024,
+            )
+        )
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"LLM unavailable: {e}")
 
@@ -97,8 +110,7 @@ def _build_context(perspective: Perspective, chunks: list[dict]) -> str:
         "You have access to full campaign lore including DM-only information. "
         "Be concise, accurate, and helpful."
         if perspective == Perspective.dm
-        else
-        "You are The Guide, an AI assistant for players in a D&D campaign. "
+        else "You are The Guide, an AI assistant for players in a D&D campaign. "
         "You MUST NOT reveal DM-only information, secret plot points, or unrevealed lore. "
         "Only share what the players have discovered in-game."
     )
@@ -107,11 +119,6 @@ def _build_context(perspective: Perspective, chunks: list[dict]) -> str:
         return f"{role_instruction}\n\nNo campaign-specific lore is available yet."
 
     context_block = "\n\n".join(
-        f"[{i+1}] {c.get('section_path', '')}\n{c['content']}"
-        for i, c in enumerate(chunks)
+        f"[{i + 1}] {c.get('section_path', '')}\n{c['content']}" for i, c in enumerate(chunks)
     )
-    return (
-        f"{role_instruction}\n\n"
-        "## Campaign Context\n"
-        f"{context_block}"
-    )
+    return f"{role_instruction}\n\n## Campaign Context\n{context_block}"

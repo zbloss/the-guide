@@ -8,10 +8,9 @@ from pydantic import BaseModel
 
 from guide.db.characters import CharacterRepository
 from guide.errors import NotFoundError
-from guide.llm.client import CompletionRequest, LlmTask, Message
 from guide.llm import prompts
+from guide.llm.client import CompletionRequest, LlmTask, Message
 from guide.models.character import Backstory, CreateCharacterRequest, HookPriority, PlotHook
-from guide.models.shared import CharacterType
 
 router = APIRouter()
 
@@ -82,15 +81,20 @@ async def analyze_backstory(
 
     llm = _llm(request)
     try:
-        resp = await llm.complete(CompletionRequest(
-            task=LlmTask.backstory_analysis,
-            messages=[
-                Message(role="system", content=prompts.backstory_analysis_system()),
-                Message(role="user", content=f"Character: {character.name}\n\nBackstory:\n{raw_text}"),
-            ],
-            temperature=0.3,
-            max_tokens=1024,
-        ))
+        resp = await llm.complete(
+            CompletionRequest(
+                task=LlmTask.backstory_analysis,
+                messages=[
+                    Message(role="system", content=prompts.backstory_analysis_system()),
+                    Message(
+                        role="user",
+                        content=f"Character: {character.name}\n\nBackstory:\n{raw_text}",
+                    ),
+                ],
+                temperature=0.3,
+                max_tokens=1024,
+            )
+        )
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"LLM unavailable: {e}")
 
@@ -121,6 +125,8 @@ async def analyze_backstory(
 
 
 def _parse_priority(s: str) -> HookPriority:
-    return {"low": HookPriority.low, "high": HookPriority.high, "critical": HookPriority.critical}.get(
-        s.lower(), HookPriority.medium
-    )
+    return {
+        "low": HookPriority.low,
+        "high": HookPriority.high,
+        "critical": HookPriority.critical,
+    }.get(s.lower(), HookPriority.medium)

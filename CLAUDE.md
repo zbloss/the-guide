@@ -15,7 +15,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Config:** `pydantic-settings` `BaseSettings` (`GUIDE__` prefix)
 - **Database:** `aiosqlite` (SQLite, same schema as Rust era)
 - **LLM SDK:** `openai.AsyncOpenAI` pointed at Ollama `/v1` endpoint
-- **Default model:** `nanbeige4.1:3b` via Ollama
+- **Default model:** `tomng/nanbeige4.1:3b` via Ollama
 - **PDF Processing:** Docling (`DocumentConverter`) — no vision model required for well-formatted PDFs
 - **RAG:** PageIndex (vectorless, LLM-reasoning retrieval) — disk-based JSON indexes at `data/indexes/`
 - **No Qdrant** — replaced by PageIndex

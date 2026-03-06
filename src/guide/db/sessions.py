@@ -83,9 +83,7 @@ class SessionRepository:
         return await self.get_by_id(id_)
 
     async def delete(self, id_: UUID) -> None:
-        cursor = await self._db.execute(
-            "DELETE FROM sessions WHERE id = ?", (str(id_),)
-        )
+        cursor = await self._db.execute("DELETE FROM sessions WHERE id = ?", (str(id_),))
         await self._db.commit()
         if cursor.rowcount == 0:
             raise NotFoundError(f"Session {id_}")
@@ -113,9 +111,15 @@ class SessionEventRepository:
             "  is_player_visible, involved_character_ids, occurred_at)"
             " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
-                str(id_), str(session_id), str(campaign_id),
-                req.event_type.value, req.description, significance,
-                is_visible, char_ids, now,
+                str(id_),
+                str(session_id),
+                str(campaign_id),
+                req.event_type.value,
+                req.description,
+                significance,
+                is_visible,
+                char_ids,
+                now,
             ),
         )
         await self._db.commit()
@@ -172,7 +176,9 @@ def _row_to_event(row: aiosqlite.Row) -> SessionEvent:
         id=UUID(row["id"]),
         session_id=UUID(row["session_id"]),
         campaign_id=UUID(row["campaign_id"]),
-        event_type=EventType(row["event_type"]) if row["event_type"] in EventType._value2member_map_ else EventType.custom,
+        event_type=EventType(row["event_type"])
+        if row["event_type"] in EventType._value2member_map_
+        else EventType.custom,
         description=row["description"],
         significance=EventSignificance(row["significance"]),
         is_player_visible=bool(row["is_player_visible"]),

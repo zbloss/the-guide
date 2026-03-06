@@ -1,4 +1,5 @@
 """Port of the 12 Rust DB integration tests."""
+
 from __future__ import annotations
 
 from uuid import uuid4
@@ -19,16 +20,18 @@ from guide.models.shared import (
     GameSystem,
 )
 
-
 # ── Campaign tests ─────────────────────────────────────────────────────────────
+
 
 async def test_campaign_create_and_get(db):
     repo = CampaignRepository(db)
-    campaign = await repo.create(CreateCampaignRequest(
-        name="Lost Mine of Phandelver",
-        description="A classic starter adventure",
-        game_system=GameSystem.dnd5e,
-    ))
+    campaign = await repo.create(
+        CreateCampaignRequest(
+            name="Lost Mine of Phandelver",
+            description="A classic starter adventure",
+            game_system=GameSystem.dnd5e,
+        )
+    )
 
     assert campaign.name == "Lost Mine of Phandelver"
     assert campaign.game_system == GameSystem.dnd5e
@@ -52,10 +55,13 @@ async def test_campaign_update(db):
     repo = CampaignRepository(db)
     campaign = await repo.create(CreateCampaignRequest(name="Original"))
 
-    updated = await repo.update(campaign.id, UpdateCampaignRequest(
-        name="Updated Name",
-        description="Added later",
-    ))
+    updated = await repo.update(
+        campaign.id,
+        UpdateCampaignRequest(
+            name="Updated Name",
+            description="Added later",
+        ),
+    )
 
     assert updated.name == "Updated Name"
     assert updated.description == "Added later"
@@ -79,6 +85,7 @@ async def test_campaign_delete_not_found(db):
 
 # ── Character tests ────────────────────────────────────────────────────────────
 
+
 async def _create_test_campaign(db):
     repo = CampaignRepository(db)
     campaign = await repo.create(CreateCampaignRequest(name="Test Campaign"))
@@ -89,16 +96,19 @@ async def test_character_create_and_get(db):
     campaign_id = await _create_test_campaign(db)
     repo = CharacterRepository(db)
 
-    character = await repo.create(campaign_id, CreateCharacterRequest(
-        name="Briv",
-        character_type=CharacterType.pc,
-        class_="Fighter",
-        race="Half-Orc",
-        level=5,
-        max_hp=52,
-        armor_class=18,
-        speed=30,
-    ))
+    character = await repo.create(
+        campaign_id,
+        CreateCharacterRequest(
+            name="Briv",
+            character_type=CharacterType.pc,
+            class_="Fighter",
+            race="Half-Orc",
+            level=5,
+            max_hp=52,
+            armor_class=18,
+            speed=30,
+        ),
+    )
 
     assert character.name == "Briv"
     assert character.max_hp == 52
@@ -115,9 +125,15 @@ async def test_character_list_by_campaign(db):
     repo = CharacterRepository(db)
 
     for name in ["Aerith", "Barret", "Tifa"]:
-        await repo.create(campaign_id, CreateCharacterRequest(
-            name=name, character_type=CharacterType.pc, max_hp=30, armor_class=12,
-        ))
+        await repo.create(
+            campaign_id,
+            CreateCharacterRequest(
+                name=name,
+                character_type=CharacterType.pc,
+                max_hp=30,
+                armor_class=12,
+            ),
+        )
 
     chars = await repo.list_by_campaign(campaign_id)
     assert len(chars) == 3
@@ -129,9 +145,15 @@ async def test_character_isolation_between_campaigns(db):
     campaign_b = await _create_test_campaign(db)
     repo = CharacterRepository(db)
 
-    await repo.create(campaign_a, CreateCharacterRequest(
-        name="Alice", character_type=CharacterType.pc, max_hp=20, armor_class=10,
-    ))
+    await repo.create(
+        campaign_a,
+        CreateCharacterRequest(
+            name="Alice",
+            character_type=CharacterType.pc,
+            max_hp=20,
+            armor_class=10,
+        ),
+    )
 
     chars_b = await repo.list_by_campaign(campaign_b)
     assert len(chars_b) == 0
@@ -141,9 +163,16 @@ async def test_character_delete(db):
     campaign_id = await _create_test_campaign(db)
     repo = CharacterRepository(db)
 
-    character = await repo.create(campaign_id, CreateCharacterRequest(
-        name="Doomed", character_type=CharacterType.monster, max_hp=7, armor_class=15, race="Goblin",
-    ))
+    character = await repo.create(
+        campaign_id,
+        CreateCharacterRequest(
+            name="Doomed",
+            character_type=CharacterType.monster,
+            max_hp=7,
+            armor_class=15,
+            race="Goblin",
+        ),
+    )
 
     await repo.delete(character.id)
 
@@ -152,6 +181,7 @@ async def test_character_delete(db):
 
 
 # ── Session tests ──────────────────────────────────────────────────────────────
+
 
 async def test_session_create_and_numbering(db):
     campaign_id = await _create_test_campaign(db)
@@ -186,7 +216,8 @@ async def test_session_event_create_and_list(db):
     event_repo = SessionEventRepository(db)
 
     event = await event_repo.create(
-        session.id, campaign_id,
+        session.id,
+        campaign_id,
         CreateSessionEventRequest(
             event_type=EventType.combat,
             description="The party fought 3 goblins",
@@ -199,7 +230,8 @@ async def test_session_event_create_and_list(db):
 
     # DM-only event
     await event_repo.create(
-        session.id, campaign_id,
+        session.id,
+        campaign_id,
         CreateSessionEventRequest(
             event_type=EventType.plot_revealed,
             description="BBEG secret revealed (DM only)",

@@ -1,4 +1,5 @@
 """Port of the 11 Rust combat unit tests."""
+
 from __future__ import annotations
 
 from uuid import uuid4
@@ -6,7 +7,7 @@ from uuid import uuid4
 import pytest
 
 from guide.combat.engine import CombatEngine, build_participant
-from guide.combat.initiative import sort_initiative, InitiativeEntry
+from guide.combat.initiative import InitiativeEntry, sort_initiative
 from guide.errors import InvalidInputError
 from guide.models.encounter import Encounter
 from guide.models.shared import Condition, EncounterStatus
@@ -30,6 +31,7 @@ def _make_encounter(specs: list[tuple[str, int, int, int]]) -> Encounter:
         for name, roll, dex_mod, hp in specs
     ]
     from datetime import datetime, timezone
+
     now = datetime.now(timezone.utc)
     return Encounter(
         id=enc_id,
@@ -46,11 +48,13 @@ def _make_encounter(specs: list[tuple[str, int, int, int]]) -> Encounter:
 
 
 def test_encounter_start_sorts_initiative():
-    enc = _make_encounter([
-        ("Goblin A", 5, 1, 7),
-        ("Fighter", 18, 2, 50),
-        ("Rogue", 14, 3, 35),
-    ])
+    enc = _make_encounter(
+        [
+            ("Goblin A", 5, 1, 7),
+            ("Fighter", 18, 2, 50),
+            ("Rogue", 14, 3, 35),
+        ]
+    )
     engine = CombatEngine(enc)
     engine.start()
 

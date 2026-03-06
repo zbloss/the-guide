@@ -1,7 +1,6 @@
 """HTTP-layer tests via httpx.AsyncClient."""
-from __future__ import annotations
 
-import pytest
+from __future__ import annotations
 
 
 async def test_health(client):
@@ -40,6 +39,7 @@ async def test_list_campaigns(client):
 
 async def test_campaign_not_found(client):
     from uuid import uuid4
+
     resp = await client.get(f"/campaigns/{uuid4()}")
     assert resp.status_code == 404
 
@@ -82,9 +82,7 @@ async def test_create_session(client):
     camp = await client.post("/campaigns", json={"name": "Session Campaign"})
     campaign_id = camp.json()["id"]
 
-    resp = await client.post(
-        f"/campaigns/{campaign_id}/sessions", json={"title": "First Session"}
-    )
+    resp = await client.post(f"/campaigns/{campaign_id}/sessions", json={"title": "First Session"})
     assert resp.status_code == 201
     assert resp.json()["session_number"] == 1
 
@@ -93,7 +91,5 @@ async def test_chat_empty_message(client):
     camp = await client.post("/campaigns", json={"name": "Chat Campaign"})
     campaign_id = camp.json()["id"]
 
-    resp = await client.post(
-        f"/campaigns/{campaign_id}/chat", json={"message": ""}
-    )
+    resp = await client.post(f"/campaigns/{campaign_id}/chat", json={"message": ""})
     assert resp.status_code == 400
