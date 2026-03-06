@@ -239,6 +239,8 @@ async fn retrieve_lore_context(
     campaign_id: &str,
     query: &str,
 ) -> Option<Vec<String>> {
+    use guide_db::qdrant::{search_campaign_lore, search_global_rules};
+
     let qdrant = state.qdrant.as_ref()?;
 
     let embedding = state
@@ -247,28 +249,14 @@ async fn retrieve_lore_context(
         .await
         .ok()?;
 
-    use guide_db::qdrant::campaign_collection_name;
-    use qdrant_client::qdrant::{SearchParamsBuilder, SearchPointsBuilder};
+    let campaign_chunks =
+        search_campaign_lore(qdrant, campaign_id, embedding.clone(), 3, false).await.ok()?;
+    let global_chunks = search_global_rules(qdrant, embedding, 2).await.ok()?;
 
-    let collection = campaign_collection_name(campaign_id);
-    let results = qdrant
-        .search_points(
-            SearchPointsBuilder::new(&collection, embedding, 4)
-                .with_payload(true)
-                .params(SearchParamsBuilder::default().hnsw_ef(64).exact(false)),
-        )
-        .await
-        .ok()?;
+    let mut all = [campaign_chunks, global_chunks].concat();
+    all.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
 
-    let chunks = results
-        .result
-        .into_iter()
-        .filter_map(|s| {
-            s.payload.get("content").and_then(|v| v.as_str()).map(|s| s.to_string())
-        })
-        .collect();
-
-    Some(chunks)
+    Some(all.into_iter().map(|c| c.content).collect())
 }
 
 fn error_response(status: StatusCode, msg: &str) -> axum::response::Response {

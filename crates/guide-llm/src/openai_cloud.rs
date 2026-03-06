@@ -116,7 +116,7 @@ impl LlmClient for OpenAICloudProvider {
     }
 
     async fn embed(&self, req: EmbeddingRequest) -> Result<Vec<f32>> {
-        let model = req.model_override.unwrap_or_else(|| "text-embedding-3-small".to_string());
+        let model = req.model_override.unwrap_or_else(|| self.model.clone());
 
         let request = CreateEmbeddingRequestArgs::default()
             .model(&model)

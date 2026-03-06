@@ -5,7 +5,7 @@ use axum::{
     routing::post,
     Json, Router,
 };
-use guide_core::models::Perspective;
+use guide_core::models::{Perspective, RankedChunk};
 use guide_llm::client::{CompletionRequest, EmbeddingRequest, LlmTask, Message, MessageRole};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -33,11 +33,30 @@ pub struct ChatResponse {
     pub provider: String,
 }
 
+const MAX_MESSAGE_CHARS: usize = 4_000;
+
 async fn chat(
     State(state): State<AppState>,
     Path(campaign_id): Path<Uuid>,
     Json(req): Json<ChatRequest>,
 ) -> impl IntoResponse {
+    if req.message.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "message must not be empty" })),
+        )
+            .into_response();
+    }
+    if req.message.len() > MAX_MESSAGE_CHARS {
+        return (
+            StatusCode::PAYLOAD_TOO_LARGE,
+            Json(serde_json::json!({
+                "error": format!("message exceeds maximum length of {MAX_MESSAGE_CHARS} characters")
+            })),
+        )
+            .into_response();
+    }
+
     let perspective = req.perspective.unwrap_or(Perspective::Dm);
     let context_limit = req.context_limit.unwrap_or(5);
 
@@ -57,7 +76,7 @@ async fn chat(
         }
     };
 
-    // ── Step 2: Retrieve lore from Qdrant ─────────────────────────────────────
+    // ── Step 2: Retrieve lore from both Qdrant collections ───────────────────
     let lore_chunks = if let (Some(embedding), Some(qdrant)) = (query_embedding, &state.qdrant) {
         retrieve_lore(
             qdrant,
@@ -120,7 +139,7 @@ async fn chat(
     }
 }
 
-fn build_system_prompt(perspective: &Perspective, lore_chunks: &[String]) -> String {
+fn build_system_prompt(perspective: &Perspective, lore_chunks: &[RankedChunk]) -> String {
     let role_instruction = match perspective {
         Perspective::Dm => {
             "You are The Guide, an AI assistant for a Dungeon Master running a D&D campaign. \
@@ -146,7 +165,10 @@ fn build_system_prompt(perspective: &Perspective, lore_chunks: &[String]) -> Str
     let context_block = lore_chunks
         .iter()
         .enumerate()
-        .map(|(i, chunk)| format!("[{}] {}", i + 1, chunk))
+        .map(|(i, chunk)| {
+            let attribution = build_attribution(chunk);
+            format!("[{}] {}\n{}", i + 1, attribution, chunk.content)
+        })
         .collect::<Vec<_>>()
         .join("\n\n");
 
@@ -159,51 +181,49 @@ fn build_system_prompt(perspective: &Perspective, lore_chunks: &[String]) -> Str
     )
 }
 
-/// Query Qdrant for relevant lore chunks, filtered by player visibility if needed.
+fn build_attribution(chunk: &RankedChunk) -> String {
+    let mut parts = Vec::new();
+    if !chunk.doc_title.is_empty() {
+        parts.push(chunk.doc_title.clone());
+    }
+    if !chunk.section_path.is_empty() {
+        parts.push(chunk.section_path.clone());
+    }
+    if parts.is_empty() {
+        return String::new();
+    }
+    format!("({})", parts.join(" — "))
+}
+
+/// Query both campaign and global Qdrant collections, merge by score, return top N.
 async fn retrieve_lore(
     qdrant: &qdrant_client::Qdrant,
     campaign_id: &str,
     embedding: Vec<f32>,
     perspective: &Perspective,
     limit: usize,
-) -> guide_core::Result<Vec<String>> {
-    use guide_db::qdrant::campaign_collection_name;
-    use qdrant_client::qdrant::{Condition, Filter, SearchParamsBuilder, SearchPointsBuilder};
+) -> guide_core::Result<Vec<RankedChunk>> {
+    use guide_db::qdrant::{search_campaign_lore, search_global_rules};
 
-    let collection = campaign_collection_name(campaign_id);
+    let player_visible_only = matches!(perspective, Perspective::Player);
 
-    let mut builder = SearchPointsBuilder::new(
-        &collection,
-        embedding,
-        limit as u64,
+    // Query campaign-specific collection
+    let campaign_results = search_campaign_lore(
+        qdrant,
+        campaign_id,
+        embedding.clone(),
+        limit,
+        player_visible_only,
     )
-    .with_payload(true)
-    .params(SearchParamsBuilder::default().hnsw_ef(128).exact(false));
+    .await
+    .unwrap_or_default();
 
-    // Spoiler filter: players only see visible lore
-    if matches!(perspective, Perspective::Player) {
-        builder = builder.filter(Filter::must([Condition::matches(
-            "is_player_visible",
-            true,
-        )]));
-    }
+    // Query global rulebook collection (never spoiler-filtered)
+    let global_results = search_global_rules(qdrant, embedding, limit).await.unwrap_or_default();
 
-    let results = qdrant
-        .search_points(builder)
-        .await
-        .map_err(|e| guide_core::GuideError::Qdrant(e.to_string()))?;
-
-    let chunks = results
-        .result
-        .into_iter()
-        .filter_map(|scored| {
-            scored
-                .payload
-                .get("content")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-        })
-        .collect();
-
-    Ok(chunks)
+    // Merge by score, take top N
+    let mut all = [campaign_results, global_results].concat();
+    all.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    all.dedup_by(|a, b| a.content == b.content);
+    Ok(all.into_iter().take(limit).collect())
 }

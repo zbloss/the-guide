@@ -254,8 +254,12 @@ fn row_to_session(row: SqliteRow) -> Result<Session> {
         notes: row.try_get("notes").map_err(|e| GuideError::Database(e.to_string()))?,
         started_at: started_at_str.as_deref().and_then(|s| s.parse().ok()),
         ended_at: ended_at_str.as_deref().and_then(|s| s.parse().ok()),
-        created_at: created_at_str.parse().unwrap_or_else(|_| Utc::now()),
-        updated_at: updated_at_str.parse().unwrap_or_else(|_| Utc::now()),
+        created_at: created_at_str
+            .parse()
+            .map_err(|e| GuideError::Internal(format!("bad created_at for session {id_str}: {e}")))?,
+        updated_at: updated_at_str
+            .parse()
+            .map_err(|e| GuideError::Internal(format!("bad updated_at for session {id_str}: {e}")))?,
     })
 }
 
@@ -300,6 +304,8 @@ fn row_to_event(row: SqliteRow) -> Result<SessionEvent> {
         significance,
         is_player_visible: is_player_visible_int != 0,
         involved_character_ids,
-        occurred_at: occurred_at_str.parse().unwrap_or_else(|_| Utc::now()),
+        occurred_at: occurred_at_str
+            .parse()
+            .map_err(|e| GuideError::Internal(format!("bad occurred_at for event {id_str}: {e}")))?,
     })
 }

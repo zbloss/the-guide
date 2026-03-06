@@ -87,6 +87,43 @@ Guidelines:
 - Each chunk should be self-contained and meaningful on its own"#
 }
 
+/// Per-page OCR extraction prompt for campaign PDFs.
+/// Instructs GLM-OCR to return raw text + headings + DM-only flag per page.
+pub fn ocr_campaign_page_prompt() -> &'static str {
+    "Extract text from this PDF page exactly as written. Return ONLY valid JSON (no markdown):\n\
+     \n\
+     {\n\
+       \"raw_text\": \"<full extracted text for this page>\",\n\
+       \"headings\": [\"## Major Section\", \"### Sub-section\"],\n\
+       \"is_dm_only\": false\n\
+     }\n\
+     \n\
+     Rules:\n\
+     - raw_text: all text on the page, preserving paragraph breaks with \\n\\n\n\
+     - headings: identify section headings using ## for major headings, ### for sub-headings\n\
+     - is_dm_only: set true if the page contains sections labeled DM Note, Secret, Hidden, or Only the DM\n\
+     - Do NOT chunk or summarize — extract faithfully"
+}
+
+/// Per-page OCR extraction prompt for rulebook PDFs.
+/// Tags mechanics clearly and always sets is_dm_only to false (rulebooks are always DM-visible).
+pub fn ocr_rulebook_page_prompt() -> &'static str {
+    "Extract text from this rulebook PDF page exactly as written. Return ONLY valid JSON (no markdown):\n\
+     \n\
+     {\n\
+       \"raw_text\": \"<full extracted text for this page>\",\n\
+       \"headings\": [\"## Major Section\", \"### Sub-section\"],\n\
+       \"is_dm_only\": false\n\
+     }\n\
+     \n\
+     Rules:\n\
+     - raw_text: all text on the page, preserving paragraph breaks with \\n\\n\n\
+     - headings: identify section headings using ## for major headings, ### for sub-headings\n\
+     - is_dm_only: always false for rulebooks (all content is DM-accessible)\n\
+     - Do NOT chunk or summarize — extract faithfully\n\
+     - Include stat blocks, spell descriptions, and tables as plain text"
+}
+
 /// Campaign Q&A for DM perspective.
 pub fn campaign_assistant_dm_system(context: &str) -> String {
     format!(

@@ -1,9 +1,11 @@
 use async_openai::{
     config::OpenAIConfig,
     types::{
-        ChatCompletionRequestMessage, ChatCompletionRequestSystemMessageArgs,
-        ChatCompletionRequestUserMessageArgs, CreateChatCompletionRequestArgs,
-        CreateEmbeddingRequestArgs,
+        ChatCompletionRequestMessage, ChatCompletionRequestMessageContentPartImage,
+        ChatCompletionRequestMessageContentPartText, ChatCompletionRequestSystemMessageArgs,
+        ChatCompletionRequestUserMessageArgs, ChatCompletionRequestUserMessageContent,
+        ChatCompletionRequestUserMessageContentPart, CreateChatCompletionRequestArgs,
+        CreateEmbeddingRequestArgs, ImageUrl,
     },
     Client,
 };
@@ -23,7 +25,7 @@ pub struct OllamaProvider {
     base_url: String,
     /// Default chat model (e.g. "llama3.2")
     default_model: String,
-    /// OCR model (e.g. "glm4v")
+    /// OCR model (e.g. "glm-ocr")
     ocr_model: String,
     /// Vision model (e.g. "llama3.2-vision")
     vision_model: String,
@@ -77,22 +79,18 @@ impl LlmClient for OllamaProvider {
         let mut messages: Vec<ChatCompletionRequestMessage> = Vec::new();
         for msg in &req.messages {
             let m = match msg.role {
-                MessageRole::System => {
-                    ChatCompletionRequestMessage::System(
-                        ChatCompletionRequestSystemMessageArgs::default()
-                            .content(msg.content.clone())
-                            .build()
-                            .map_err(|e| GuideError::Llm(e.to_string()))?,
-                    )
-                }
-                MessageRole::User | MessageRole::Assistant => {
-                    ChatCompletionRequestMessage::User(
-                        ChatCompletionRequestUserMessageArgs::default()
-                            .content(msg.content.clone())
-                            .build()
-                            .map_err(|e| GuideError::Llm(e.to_string()))?,
-                    )
-                }
+                MessageRole::System => ChatCompletionRequestMessage::System(
+                    ChatCompletionRequestSystemMessageArgs::default()
+                        .content(msg.content.clone())
+                        .build()
+                        .map_err(|e| GuideError::Llm(e.to_string()))?,
+                ),
+                MessageRole::User | MessageRole::Assistant => ChatCompletionRequestMessage::User(
+                    ChatCompletionRequestUserMessageArgs::default()
+                        .content(msg.content.clone())
+                        .build()
+                        .map_err(|e| GuideError::Llm(e.to_string()))?,
+                ),
             };
             messages.push(m);
         }
@@ -105,7 +103,9 @@ impl LlmClient for OllamaProvider {
         if let Some(max) = req.max_tokens {
             builder.max_tokens(max as u16);
         }
-        let request = builder.build().map_err(|e| GuideError::Llm(e.to_string()))?;
+        let request = builder
+            .build()
+            .map_err(|e| GuideError::Llm(e.to_string()))?;
 
         let response = self
             .client
@@ -120,10 +120,7 @@ impl LlmClient for OllamaProvider {
             .next()
             .ok_or_else(|| GuideError::Llm("No choices returned".into()))?;
 
-        let content = choice
-            .message
-            .content
-            .unwrap_or_default();
+        let content = choice.message.content.unwrap_or_default();
 
         let (prompt_tokens, completion_tokens) = response
             .usage
@@ -177,17 +174,22 @@ impl LlmClient for OllamaProvider {
         let encoded = STANDARD.encode(&req.image_bytes);
         let data_url = format!("data:{};base64,{}", req.image_mime_type, encoded);
 
-        // Build a user message with inline image using JSON content
-        let content_json = serde_json::json!([
-            { "type": "image_url", "image_url": { "url": data_url } },
-            { "type": "text", "text": req.prompt }
+        let content = ChatCompletionRequestUserMessageContent::Array(vec![
+            ChatCompletionRequestUserMessageContentPart::ImageUrl(
+                ChatCompletionRequestMessageContentPartImage {
+                    image_url: ImageUrl { url: data_url, detail: None },
+                },
+            ),
+            ChatCompletionRequestUserMessageContentPart::Text(
+                ChatCompletionRequestMessageContentPartText { text: req.prompt.clone() },
+            ),
         ]);
 
         let request = CreateChatCompletionRequestArgs::default()
             .model(model.clone())
             .messages(vec![ChatCompletionRequestMessage::User(
                 ChatCompletionRequestUserMessageArgs::default()
-                    .content(content_json.to_string())
+                    .content(content)
                     .build()
                     .map_err(|e| GuideError::Llm(e.to_string()))?,
             )])

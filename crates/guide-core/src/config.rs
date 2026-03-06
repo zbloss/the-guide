@@ -6,6 +6,8 @@ pub struct AppConfig {
     pub database: DatabaseConfig,
     pub qdrant: QdrantConfig,
     pub llm: LlmConfig,
+    pub upload: UploadConfig,
+    pub ingestion: IngestionConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -45,6 +47,22 @@ pub struct LlmConfig {
     pub cloud_api_key: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct UploadConfig {
+    /// Maximum allowed file size for document uploads in bytes (default: 52_428_800 = 50 MB)
+    pub max_upload_bytes: u64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct IngestionConfig {
+    /// Maximum estimated tokens per chunk (approx: chars / 4)
+    pub chunk_max_tokens: usize,
+    /// Characters of overlap to prepend to subsequent chunks within a section
+    pub chunk_overlap_chars: usize,
+    /// Delay in milliseconds between per-page OCR calls (rate-limiting)
+    pub ocr_batch_delay_ms: u64,
+}
+
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
@@ -62,11 +80,19 @@ impl Default for AppConfig {
             llm: LlmConfig {
                 ollama_base_url: "http://localhost:11434/v1".to_string(),
                 default_model: "llama3.2".to_string(),
-                ocr_model: "glm4v".to_string(),
+                ocr_model: "glm-ocr".to_string(),
                 vision_model: "llama3.2-vision".to_string(),
                 embedding_model: "nomic-embed-text".to_string(),
                 cloud_fallback: None,
                 cloud_api_key: None,
+            },
+            upload: UploadConfig {
+                max_upload_bytes: 52_428_800, // 50 MB
+            },
+            ingestion: IngestionConfig {
+                chunk_max_tokens: 400,
+                chunk_overlap_chars: 200,
+                ocr_batch_delay_ms: 500,
             },
         }
     }
@@ -83,16 +109,34 @@ impl AppConfig {
 
         let cfg = config::Config::builder()
             // Built-in defaults so partial env-var overrides work
-            .set_default("server.host", d.server.host).map_err(|e| crate::GuideError::Config(e.to_string()))?
-            .set_default("server.port", d.server.port as i64).map_err(|e| crate::GuideError::Config(e.to_string()))?
-            .set_default("database.url", d.database.url).map_err(|e| crate::GuideError::Config(e.to_string()))?
-            .set_default("qdrant.url", d.qdrant.url).map_err(|e| crate::GuideError::Config(e.to_string()))?
-            .set_default("qdrant.vector_size", d.qdrant.vector_size as i64).map_err(|e| crate::GuideError::Config(e.to_string()))?
-            .set_default("llm.ollama_base_url", d.llm.ollama_base_url).map_err(|e| crate::GuideError::Config(e.to_string()))?
-            .set_default("llm.default_model", d.llm.default_model).map_err(|e| crate::GuideError::Config(e.to_string()))?
-            .set_default("llm.ocr_model", d.llm.ocr_model).map_err(|e| crate::GuideError::Config(e.to_string()))?
-            .set_default("llm.vision_model", d.llm.vision_model).map_err(|e| crate::GuideError::Config(e.to_string()))?
-            .set_default("llm.embedding_model", d.llm.embedding_model).map_err(|e| crate::GuideError::Config(e.to_string()))?
+            .set_default("server.host", d.server.host)
+            .map_err(|e| crate::GuideError::Config(e.to_string()))?
+            .set_default("server.port", d.server.port as i64)
+            .map_err(|e| crate::GuideError::Config(e.to_string()))?
+            .set_default("database.url", d.database.url)
+            .map_err(|e| crate::GuideError::Config(e.to_string()))?
+            .set_default("qdrant.url", d.qdrant.url)
+            .map_err(|e| crate::GuideError::Config(e.to_string()))?
+            .set_default("qdrant.vector_size", d.qdrant.vector_size as i64)
+            .map_err(|e| crate::GuideError::Config(e.to_string()))?
+            .set_default("llm.ollama_base_url", d.llm.ollama_base_url)
+            .map_err(|e| crate::GuideError::Config(e.to_string()))?
+            .set_default("llm.default_model", d.llm.default_model)
+            .map_err(|e| crate::GuideError::Config(e.to_string()))?
+            .set_default("llm.ocr_model", d.llm.ocr_model)
+            .map_err(|e| crate::GuideError::Config(e.to_string()))?
+            .set_default("llm.vision_model", d.llm.vision_model)
+            .map_err(|e| crate::GuideError::Config(e.to_string()))?
+            .set_default("llm.embedding_model", d.llm.embedding_model)
+            .map_err(|e| crate::GuideError::Config(e.to_string()))?
+            .set_default("upload.max_upload_bytes", d.upload.max_upload_bytes as i64)
+            .map_err(|e| crate::GuideError::Config(e.to_string()))?
+            .set_default("ingestion.chunk_max_tokens", d.ingestion.chunk_max_tokens as i64)
+            .map_err(|e| crate::GuideError::Config(e.to_string()))?
+            .set_default("ingestion.chunk_overlap_chars", d.ingestion.chunk_overlap_chars as i64)
+            .map_err(|e| crate::GuideError::Config(e.to_string()))?
+            .set_default("ingestion.ocr_batch_delay_ms", d.ingestion.ocr_batch_delay_ms as i64)
+            .map_err(|e| crate::GuideError::Config(e.to_string()))?
             // Optional file override
             .add_source(config::File::with_name("config").required(false))
             // Env vars win: GUIDE__SERVER__PORT=8000 etc.
@@ -100,6 +144,7 @@ impl AppConfig {
             .build()
             .map_err(|e| crate::GuideError::Config(e.to_string()))?;
 
-        cfg.try_deserialize::<AppConfig>().map_err(|e| crate::GuideError::Config(e.to_string()))
+        cfg.try_deserialize::<AppConfig>()
+            .map_err(|e| crate::GuideError::Config(e.to_string()))
     }
 }

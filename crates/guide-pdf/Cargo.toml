@@ -13,6 +13,10 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true }
 qdrant-client = { workspace = true }
+image = { workspace = true }
 
-# Optional: PDF → image rendering (requires native pdfium binary at runtime)
-# pdfium-render = { version = "0.8", features = ["image"], optional = true }
+# PDF → image rendering (requires pdfium.dll at runtime beside the binary)
+pdfium-render = { version = "0.8", features = ["image"] }
+
+[features]
+default = []

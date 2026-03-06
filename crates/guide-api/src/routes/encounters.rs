@@ -67,17 +67,29 @@ async fn create_encounter(
     // Collect participant character IDs from the request
     let char_ids = req.participant_character_ids.clone();
 
+    // Validate all requested characters exist before creating the encounter
+    let mut characters = Vec::new();
+    let mut missing_ids = Vec::new();
+    for char_id in &char_ids {
+        match char_repo.get_by_id(*char_id).await {
+            Ok(c) => characters.push(c),
+            Err(_) => missing_ids.push(char_id.to_string()),
+        }
+    }
+    if !missing_ids.is_empty() {
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            &format!("Unknown character IDs: {}", missing_ids.join(", ")),
+        );
+    }
+
     let encounter = match enc_repo.create(campaign_id, req).await {
         Ok(e) => e,
         Err(e) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     };
 
-    // Add each requested character as a participant with rolled initiative
-    for char_id in char_ids {
-        let character = match char_repo.get_by_id(char_id).await {
-            Ok(c) => c,
-            Err(_) => continue, // skip unknown characters
-        };
+    // Add each validated character as a participant with rolled initiative
+    for character in characters {
 
         let dex_mod = guide_core::models::AbilityScores::modifier(
             character.ability_scores.dexterity,
@@ -97,7 +109,7 @@ async fn create_encounter(
         );
 
         if let Err(e) = enc_repo.add_participant(&participant).await {
-            tracing::warn!("Failed to add participant {}: {e}", char_id);
+            tracing::warn!("Failed to add participant {}: {e}", character.id);
         }
     }
 

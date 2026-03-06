@@ -1,11 +1,12 @@
-Background: I want to build software that allows me to easily manage dunegons and dragon campaigns. I got into Dungeons & Dragons (DnD) years ago as a player and now want to participate as a Dungeon Master (DM). This is a massive amount of work though. I want to create software that will make it easy for me to tell the story of the campaign, create meaningful random encounters, track player and campaign progress, and so much more. I have started detailing these feature requests in TASKS.md, though more will be coming soon. To start, I plan to build the backend service(s) that will enable me to eventually build a frontend to interact with. I want to build the backend in rust for it's performance and packaging capabilities.
+Background: We have started creating this project which will really help my be a great dungeon master. However, writing the code in Rust may have been a mistake as we're running into issues parsing PDF files. It may be more beneficial if this code were written in python, which has better support for LLM and related libraries.
 
 Tasks:
+1. Review the current state of the codebase.
+2. Update the TODO.md file with all of the most recent information.
+3. Create a new TODO file at PYTHON_MIGRATION_TODO.md which you will use to track all of the migration todo tasks.
+4. Convert the subagents within .claude/agents to python from rust.
+5. Refactor the current RAG pipeline to use PageIndex (https://github.com/VectifyAI/PageIndex) instead.
+    1. This is brand new technology that will drastically outperform our current RAG pipeline.
+    2. Consider using Nanbeige/Nanbeige4.1-3B as the core reasoning model.
 
-1. Review the README.md file to gain an understanding of what the project does.
-2. See the TASKS.md file to understand the current list of feature requests.
-3. Implement the various tasks and document your progress using a todo list stored as a markdown file in this repository.
-    1. My goal with having you store a to-do list is to easily allow another AI Agent to continue collaborating on this work with your help.
-    2. In the situation where my usage limit is met, I want to easily pick up this work using a fresh context window when that limit is reset.
-
-Goal: Build a fantastic software that will allow me to easily be the best dungeon master for my Dungeon & Dragons campaigns.
+Goal: Convert this codebase from Rust into Python.

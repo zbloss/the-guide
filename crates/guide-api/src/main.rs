@@ -25,7 +25,8 @@ async fn main() -> anyhow::Result<()> {
         .context("Failed to initialise application state")?;
 
     // ── Router ────────────────────────────────────────────────────────────────
-    let app = routes::all_routes(state);
+    let max_upload = state.config.upload.max_upload_bytes as usize;
+    let app = routes::all_routes(state).layer(axum::extract::DefaultBodyLimit::max(max_upload));
 
     // ── Serve ─────────────────────────────────────────────────────────────────
     let listener = tokio::net::TcpListener::bind(&addr)
