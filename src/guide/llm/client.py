@@ -29,6 +29,7 @@ class CompletionRequest:
     model_override: str | None = None
     temperature: float | None = None
     max_tokens: int | None = None
+    think: bool | None = None  # False disables chain-of-thought on models that support it
 
 
 @dataclass

@@ -225,3 +225,4 @@ data/**/*.pdf
 *.db-wal
 data/guide.db-shm
 data/guide.db-wal
+data/indexes/*

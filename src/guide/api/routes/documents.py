@@ -5,15 +5,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, BackgroundTasks, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, BackgroundTasks, File, HTTPException, Query, Request, UploadFile
 
 from guide.db.campaigns import CampaignRepository
 from guide.db.documents import DocumentRepository
 from guide.errors import NotFoundError
+from guide.llm.client import CompletionRequest, LlmTask, Message
 from guide.models.document import CampaignDocument
 from guide.models.shared import IngestionStatus
 from guide.pdf.extractor import extract_document
-from guide.pdf.pipeline import ingest_campaign_document
+from guide.pdf.pipeline import ingest_campaign_document, is_already_indexed
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +102,7 @@ async def ingest_document(
     doc_id: UUID,
     request: Request,
     background_tasks: BackgroundTasks,
+    force: bool = Query(False, description="Re-ingest even if already indexed"),
 ):
     doc_repo = DocumentRepository(_db(request))
     try:
@@ -115,6 +117,18 @@ async def ingest_document(
 
     cfg = request.app.state.guide.config
     db = _db(request)
+    llm = request.app.state.guide.llm
+
+    async def _call_llm(prompt: str) -> str:
+        resp = await llm.complete(
+            CompletionRequest(
+                task=LlmTask.campaign_assistant,
+                messages=[Message(role="user", content=prompt)],
+                temperature=0,
+            )
+        )
+        return resp.content
+
     background_tasks.add_task(
         _run_ingestion,
         campaign_id,
@@ -123,19 +137,35 @@ async def ingest_document(
         db,
         cfg.device,
         cfg.num_threads,
+        doc.filename,
+        _call_llm,
+        force,
     )
 
     return {"status": "processing", "doc_id": str(doc_id)}
 
 
 async def _run_ingestion(
-    campaign_id: UUID, doc_id: UUID, stored_path: str, db, device: str, num_threads: int
+    campaign_id: UUID,
+    doc_id: UUID,
+    stored_path: str,
+    db,
+    device: str,
+    num_threads: int,
+    doc_name: str | None = None,
+    call_llm=None,
+    force: bool = False,
 ) -> None:
+    scope = str(campaign_id)
+    if not force and is_already_indexed(scope, doc_id):
+        logger.info("Doc %s already indexed, skipping extraction", doc_id)
+        return
+
     doc_repo = DocumentRepository(db)
     try:
         pdf_bytes = Path(stored_path).read_bytes()
         extraction = await extract_document(pdf_bytes, device=device, num_threads=num_threads)
-        await ingest_campaign_document(campaign_id, doc_id, extraction, db)
+        await ingest_campaign_document(campaign_id, doc_id, extraction, db, doc_name, call_llm)
         logger.info("Ingested %d pages for doc %s", len(extraction.pages), doc_id)
     except Exception as e:
         logger.error("Ingestion failed for doc %s: %s", doc_id, e)

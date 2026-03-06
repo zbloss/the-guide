@@ -46,3 +46,17 @@ class RankedChunk(BaseModel):
     section_path: str = ""
     doc_title: str = ""
     score: float = 0.0
+
+
+class DocSummary(BaseModel):
+    doc_id: UUID
+    doc_name: str
+    filename: str
+    summary: str  # empty string if LLM unavailable
+    scope: str    # campaign_id string OR "global"
+    ingested_at: datetime
+
+
+class MetaIndex(BaseModel):
+    scope: str
+    entries: list[DocSummary] = []

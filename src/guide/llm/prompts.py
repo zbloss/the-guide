@@ -104,3 +104,34 @@ def campaign_assistant_player_system(context: str) -> str:
         "If unsure whether something is player-visible, do not share it."
         f"\n\n## Campaign Context\n{context}"
     )
+
+
+def doc_summary_prompt(doc_name: str, excerpt: str) -> str:
+    return (
+        "You are summarizing a D&D document for a routing system.\n"
+        f"Document name: {doc_name}\n\n"
+        "Document excerpt (first ~2000 characters):\n"
+        f"{excerpt}\n\n"
+        "Write 2-3 sentences describing what this document covers. "
+        "Be specific: mention the adventure name, campaign setting, rulebook type, "
+        "or specific mechanics. Return plain text only, no markdown."
+    )
+
+
+def doc_selector_prompt(query: str, entries: list) -> str:
+    doc_list = "\n".join(
+        f'- doc_id: "{e.doc_id}", name: "{e.doc_name}", scope: "{e.scope}"\n'
+        f'  summary: "{e.summary}"'
+        for e in entries
+    )
+    return (
+        "You are a document routing agent for a D&D assistant.\n"
+        "Select which documents are most likely to contain relevant information for the query.\n\n"
+        f"User query: {query}\n\n"
+        "Available documents:\n"
+        f"{doc_list}\n\n"
+        "Return ONLY the doc_ids of relevant documents as JSON. "
+        "Omit documents clearly unrelated to the query.\n"
+        'Example: {"doc_ids": ["uuid-here"]}\n'
+        "JSON only, no explanation:"
+    )

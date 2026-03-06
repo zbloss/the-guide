@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request
@@ -8,7 +7,7 @@ from pydantic import BaseModel
 
 from guide.llm.client import CompletionRequest, LlmTask, Message
 from guide.models.shared import Perspective
-from guide.pdf.pipeline import query_indexes
+from guide.pdf.pipeline import query_indexes, select_relevant_docs
 
 router = APIRouter()
 
@@ -48,18 +47,19 @@ async def chat(campaign_id: UUID, body: ChatRequest, request: Request):
                 task=LlmTask.campaign_assistant,
                 messages=[Message(role="user", content=prompt)],
                 temperature=0,
+                think=False,
             )
         )
         return resp.content
 
-    # PageIndex RAG: query indexes for this campaign
-    index_scope = str(campaign_id)
-    doc_ids = _list_doc_ids(index_scope)
-    global_doc_ids = _list_doc_ids("global")
+    # PageIndex RAG: select relevant docs then query their indexes
+    selected = await select_relevant_docs(campaign_id, body.message, _call_llm)
+    scopes = [s for s, _ in selected]
+    doc_ids = [d for _, d in selected]
 
     chunks = await query_indexes(
-        scopes=[index_scope] * len(doc_ids) + ["global"] * len(global_doc_ids),
-        doc_ids=doc_ids + global_doc_ids,
+        scopes=scopes,
+        doc_ids=doc_ids,
         query=body.message,
         call_llm=_call_llm,
         player_visible_only=(perspective == Perspective.player),
@@ -89,19 +89,6 @@ async def chat(campaign_id: UUID, body: ChatRequest, request: Request):
         model=resp.model,
         provider=resp.provider,
     ).model_dump()
-
-
-def _list_doc_ids(scope: str) -> list[UUID]:
-    index_dir = Path("data/indexes") / scope
-    if not index_dir.exists():
-        return []
-    ids = []
-    for f in index_dir.glob("*.json"):
-        try:
-            ids.append(UUID(f.stem))
-        except ValueError:
-            pass
-    return ids
 
 
 def _build_context(perspective: Perspective, chunks: list[dict]) -> str:

@@ -8,7 +8,7 @@ class AppConfig(BaseSettings):
     port: int = 8000
     database_url: str = "data/guide.db"
     ollama_base_url: str = "http://localhost:11434/v1"
-    default_model: str = "tomng/nanbeige4.1:3b"
+    default_model: str = "qwen3.5:9b"
     embedding_model: str = "nomic-embed-text"
     ocr_model: str = "glm-ocr"
     vision_model: str = "glm4v"

@@ -18,12 +18,15 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Awaitable, Callable
+from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID
 
 import aiosqlite
 
 from guide.db.documents import DocumentRepository, GlobalDocumentRepository
+from guide.llm.prompts import doc_selector_prompt, doc_summary_prompt
+from guide.models.document import DocSummary, MetaIndex
 from guide.models.shared import IngestionStatus
 from guide.pdf.extractor import DocumentExtraction
 
@@ -153,6 +156,80 @@ def _build_index(full_markdown: str, doc_name: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# MetaIndex helpers
+# ---------------------------------------------------------------------------
+
+
+def is_already_indexed(scope: str, doc_id: UUID) -> bool:
+    """Return True if a content index file already exists on disk for this doc."""
+    return _index_path(scope, doc_id).exists()
+
+
+def _meta_path(scope: str) -> Path:
+    return _INDEX_BASE / scope / "meta.json"
+
+
+def _load_meta_index(scope: str) -> MetaIndex:
+    path = _meta_path(scope)
+    if not path.exists():
+        return MetaIndex(scope=scope)
+    try:
+        return MetaIndex.model_validate_json(path.read_text(encoding="utf-8"))
+    except Exception:
+        return MetaIndex(scope=scope)
+
+
+def _save_meta_index(meta: MetaIndex) -> None:
+    path = _meta_path(meta.scope)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(meta.model_dump_json(indent=2), encoding="utf-8")
+
+
+def _add_to_meta_index(scope: str, entry: DocSummary) -> None:
+    meta = _load_meta_index(scope)
+    meta.entries = [e for e in meta.entries if e.doc_id != entry.doc_id]
+    meta.entries.append(entry)
+    _save_meta_index(meta)
+
+
+_TOC_KEYWORDS = {"contents", "table of contents", "chapters", "chapter list"}
+
+
+def _build_summary_excerpt(full_markdown: str, max_chars: int = 3000) -> str:
+    """Return a content-rich excerpt, skipping front-matter (credits, legal).
+
+    Strategy (in order):
+    1. If a Table of Contents heading is found, take text from that line onward.
+    2. Otherwise skip the first 10 % of the document (covers most credits pages)
+       and sample from there.
+    """
+    lines = full_markdown.split("\n")
+
+    for i, line in enumerate(lines):
+        if any(kw in line.lower() for kw in _TOC_KEYWORDS):
+            excerpt = "\n".join(lines[i : i + 150])
+            if len(excerpt) >= 300:
+                return excerpt[:max_chars]
+
+    skip = max(0, len(full_markdown) // 10)
+    return full_markdown[skip : skip + max_chars]
+
+
+async def _generate_doc_summary(
+    full_markdown: str,
+    doc_name: str,
+    call_llm: Callable[[str], Awaitable[str]] | None,
+) -> str:
+    if call_llm is None:
+        return ""
+    excerpt = _build_summary_excerpt(full_markdown)
+    try:
+        return (await call_llm(doc_summary_prompt(doc_name, excerpt))).strip()
+    except Exception:
+        return ""
+
+
+# ---------------------------------------------------------------------------
 # Ingestion
 # ---------------------------------------------------------------------------
 
@@ -162,14 +239,30 @@ async def ingest_campaign_document(
     doc_id: UUID,
     extraction: DocumentExtraction,
     db: aiosqlite.Connection,
+    doc_name: str | None = None,
+    call_llm: Callable[[str], Awaitable[str]] | None = None,
 ) -> int:
     """Build and persist a PageIndex tree for a campaign document. Returns page count."""
     scope = str(campaign_id)
+    name = doc_name or str(doc_id)
     index_file = _index_path(scope, doc_id)
     index_file.parent.mkdir(parents=True, exist_ok=True)
 
-    index_data = _build_index(extraction.full_markdown, doc_name=str(doc_id))
+    index_data = _build_index(extraction.full_markdown, doc_name=name)
     index_file.write_text(json.dumps(index_data, ensure_ascii=False), encoding="utf-8")
+
+    summary = await _generate_doc_summary(extraction.full_markdown, name, call_llm)
+    _add_to_meta_index(
+        scope,
+        DocSummary(
+            doc_id=doc_id,
+            doc_name=name,
+            filename=name,
+            summary=summary,
+            scope=scope,
+            ingested_at=datetime.now(timezone.utc),
+        ),
+    )
 
     repo = DocumentRepository(db)
     await repo.update_ingested(doc_id, len(extraction.pages))
@@ -180,14 +273,30 @@ async def ingest_global_document(
     doc_id: UUID,
     extraction: DocumentExtraction,
     db: aiosqlite.Connection,
+    doc_name: str | None = None,
+    call_llm: Callable[[str], Awaitable[str]] | None = None,
 ) -> int:
     """Build and persist a PageIndex tree for a global rulebook. Returns page count."""
     scope = "global"
+    name = doc_name or str(doc_id)
     index_file = _index_path(scope, doc_id)
     index_file.parent.mkdir(parents=True, exist_ok=True)
 
-    index_data = _build_index(extraction.full_markdown, doc_name=str(doc_id))
+    index_data = _build_index(extraction.full_markdown, doc_name=name)
     index_file.write_text(json.dumps(index_data, ensure_ascii=False), encoding="utf-8")
+
+    summary = await _generate_doc_summary(extraction.full_markdown, name, call_llm)
+    _add_to_meta_index(
+        scope,
+        DocSummary(
+            doc_id=doc_id,
+            doc_name=name,
+            filename=name,
+            summary=summary,
+            scope=scope,
+            ingested_at=datetime.now(timezone.utc),
+        ),
+    )
 
     repo = GlobalDocumentRepository(db)
     await repo.update_status(doc_id, IngestionStatus.completed)
@@ -313,3 +422,61 @@ async def query_indexes(
                 break
 
     return results
+
+
+async def select_relevant_docs(
+    campaign_id: UUID,
+    query: str,
+    call_llm: Callable[[str], Awaitable[str]],
+) -> list[tuple[str, UUID]]:
+    """Choose which indexed documents are likely relevant to *query*.
+
+    Reads MetaIndex files for both the campaign scope and "global" scope,
+    then asks the LLM to select relevant doc_ids.  Falls back to returning
+    all docs if the LLM fails or MetaIndex is absent.
+    """
+    campaign_scope = str(campaign_id)
+    all_entries = (
+        _load_meta_index(campaign_scope).entries + _load_meta_index("global").entries
+    )
+
+    # Fallback: if no MetaIndex entries exist, scan filesystem like before
+    if not all_entries:
+        return _fallback_list_all_docs(campaign_scope)
+
+    # Fast path: single doc — skip LLM call
+    if len(all_entries) == 1:
+        return [(e.scope, e.doc_id) for e in all_entries]
+
+    try:
+        response = await call_llm(doc_selector_prompt(query, all_entries))
+        selected_ids: list[str] = json.loads(_extract_json_text(response)).get("doc_ids", [])
+        entry_map = {str(e.doc_id): e for e in all_entries}
+        result = [
+            (entry_map[id_].scope, entry_map[id_].doc_id)
+            for id_ in selected_ids
+            if id_ in entry_map
+        ]
+        if result:
+            return result
+    except Exception:
+        pass
+
+    return [(e.scope, e.doc_id) for e in all_entries]  # fallback: all docs
+
+
+def _fallback_list_all_docs(campaign_scope: str) -> list[tuple[str, UUID]]:
+    """Filesystem fallback for campaigns with no MetaIndex (pre-migration content)."""
+    result = []
+    for scope in [campaign_scope, "global"]:
+        d = _INDEX_BASE / scope
+        if not d.exists():
+            continue
+        for f in d.glob("*.json"):
+            if f.stem == "meta":
+                continue
+            try:
+                result.append((scope, UUID(f.stem)))
+            except ValueError:
+                pass
+    return result

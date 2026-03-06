@@ -56,6 +56,8 @@ class OllamaProvider(LlmClient):
             kwargs["temperature"] = req.temperature
         if req.max_tokens is not None:
             kwargs["max_tokens"] = req.max_tokens
+        if req.think is not None:
+            kwargs["extra_body"] = {"think": req.think}
 
         response = await self._client.chat.completions.create(**kwargs)
         choice = response.choices[0] if response.choices else None
