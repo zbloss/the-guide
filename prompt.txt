@@ -2,6 +2,12 @@ Background: We have now created a service called The Guide which starts by inges
 
 Tasks:
 1. Review the application codebase in it's entirety.
-2. 
+2. Replace TODO.md with the tasks that need to be done to complete this migration
+4. Systematically update all of the python code to be in Rust.
+5. Copy over all tests into Rust and assert they are all passing.
+6. Perform an end to end ingestion of PDFs located in `C:\Users\altoz\Documents\dnd\Land of Vampires` through to example question answering like is being done in `scripts/test_ingest.py`.
+7. Keep your TODO list up to date after each step.
+8. Update all subagents in .claude/agents to be Rust focussed.
+9. Update CLAUDE.md to be rust focussed. 
 
-Goal: Implement multi-document functionality for The Guide. 
+Goal: Refactor this application from Python into Rust. 
