@@ -62,6 +62,9 @@ async def upload_document(
     if not file.filename:
         raise HTTPException(status_code=400, detail="Missing filename")
 
+    if not file_bytes.startswith(b"%PDF"):
+        raise HTTPException(status_code=400, detail="Uploaded file is not a valid PDF")
+
     doc_id = uuid4()
     dir_path = Path(f"data/documents/{campaign_id}")
     dir_path.mkdir(parents=True, exist_ok=True)
@@ -118,6 +121,7 @@ async def ingest_document(
     cfg = request.app.state.guide.config
     db = _db(request)
     llm = request.app.state.guide.llm
+    qdrant = request.app.state.guide.qdrant
 
     async def _call_llm(prompt: str) -> str:
         resp = await llm.complete(
@@ -128,6 +132,11 @@ async def ingest_document(
             )
         )
         return resp.content
+
+    from guide.llm.client import EmbeddingRequest
+
+    async def _embed(text: str) -> list[float]:
+        return await llm.embed(EmbeddingRequest(text=text))
 
     background_tasks.add_task(
         _run_ingestion,
@@ -140,6 +149,10 @@ async def ingest_document(
         doc.filename,
         _call_llm,
         force,
+        _embed,
+        qdrant,
+        cfg.qdrant_collection,
+        cfg.chunk_max_chars,
     )
 
     return {"status": "processing", "doc_id": str(doc_id)}
@@ -155,6 +168,10 @@ async def _run_ingestion(
     doc_name: str | None = None,
     call_llm=None,
     force: bool = False,
+    embed=None,
+    qdrant=None,
+    collection: str = "guide_chunks",
+    chunk_max_chars: int = 2048,
 ) -> None:
     scope = str(campaign_id)
     if not force and is_already_indexed(scope, doc_id):
@@ -165,8 +182,15 @@ async def _run_ingestion(
     try:
         pdf_bytes = Path(stored_path).read_bytes()
         extraction = await extract_document(pdf_bytes, device=device, num_threads=num_threads)
-        await ingest_campaign_document(campaign_id, doc_id, extraction, db, doc_name, call_llm)
+        await ingest_campaign_document(
+            campaign_id, doc_id, extraction, db, doc_name, call_llm,
+            embed=embed, qdrant=qdrant, collection=collection,
+            chunk_max_chars=chunk_max_chars, force=force,
+        )
         logger.info("Ingested %d pages for doc %s", len(extraction.pages), doc_id)
-    except Exception as e:
-        logger.error("Ingestion failed for doc %s: %s", doc_id, e)
-        await doc_repo.update_status(doc_id, IngestionStatus.failed, str(e))
+    except Exception as exc:
+        logger.exception("Ingestion failed for doc %s", doc_id)
+        try:
+            await doc_repo.update_status(doc_id, IngestionStatus.failed, str(exc))
+        except Exception:
+            logger.exception("Failed to update status to failed for doc %s", doc_id)

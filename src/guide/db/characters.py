@@ -29,33 +29,37 @@ class CharacterRepository:
         level = req.level or 1
         speed = req.speed or 30
 
-        await self._db.execute(
-            "INSERT INTO characters"
-            " (id, campaign_id, name, character_type, class, race, level, max_hp, current_hp,"
-            "  armor_class, speed, ability_scores, conditions, backstory, is_alive,"
-            "  created_at, updated_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                str(id_),
-                str(campaign_id),
-                req.name,
-                char_type,
-                req.class_,
-                req.race,
-                level,
-                req.max_hp,
-                req.max_hp,
-                req.armor_class,
-                speed,
-                ability_scores.model_dump_json(),
-                "[]",
-                None,
-                1,
-                now,
-                now,
-            ),
-        )
-        await self._db.commit()
+        try:
+            await self._db.execute(
+                "INSERT INTO characters"
+                " (id, campaign_id, name, character_type, class, race, level, max_hp, current_hp,"
+                "  armor_class, speed, ability_scores, conditions, backstory, is_alive,"
+                "  created_at, updated_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    str(id_),
+                    str(campaign_id),
+                    req.name,
+                    char_type,
+                    req.class_,
+                    req.race,
+                    level,
+                    req.max_hp,
+                    req.max_hp,
+                    req.armor_class,
+                    speed,
+                    ability_scores.model_dump_json(),
+                    "[]",
+                    None,
+                    1,
+                    now,
+                    now,
+                ),
+            )
+            await self._db.commit()
+        except Exception:
+            await self._db.rollback()
+            raise
         return await self.get_by_id(id_)
 
     async def get_by_id(self, id_: UUID) -> Character:
@@ -86,36 +90,51 @@ class CharacterRepository:
     async def update(self, id_: UUID, req: UpdateCharacterRequest) -> Character:
         now = datetime.now(timezone.utc).isoformat()
         id_str = str(id_)
-        if req.current_hp is not None:
-            await self._db.execute(
-                "UPDATE characters SET current_hp = ?, updated_at = ? WHERE id = ?",
-                (req.current_hp, now, id_str),
-            )
-        if req.conditions is not None:
-            await self._db.execute(
-                "UPDATE characters SET conditions = ?, updated_at = ? WHERE id = ?",
-                (json.dumps([c.value for c in req.conditions]), now, id_str),
-            )
-        if req.is_alive is not None:
-            await self._db.execute(
-                "UPDATE characters SET is_alive = ?, updated_at = ? WHERE id = ?",
-                (int(req.is_alive), now, id_str),
-            )
-        await self._db.commit()
+        try:
+            last_cursor = None
+            if req.current_hp is not None:
+                last_cursor = await self._db.execute(
+                    "UPDATE characters SET current_hp = ?, updated_at = ? WHERE id = ?",
+                    (req.current_hp, now, id_str),
+                )
+            if req.conditions is not None:
+                last_cursor = await self._db.execute(
+                    "UPDATE characters SET conditions = ?, updated_at = ? WHERE id = ?",
+                    (json.dumps([c.value for c in req.conditions]), now, id_str),
+                )
+            if req.is_alive is not None:
+                last_cursor = await self._db.execute(
+                    "UPDATE characters SET is_alive = ?, updated_at = ? WHERE id = ?",
+                    (int(req.is_alive), now, id_str),
+                )
+            if last_cursor is not None and last_cursor.rowcount == 0:
+                raise NotFoundError(f"Character {id_}")
+            await self._db.commit()
+        except Exception:
+            await self._db.rollback()
+            raise
         return await self.get_by_id(id_)
 
     async def delete(self, id_: UUID) -> None:
-        cursor = await self._db.execute("DELETE FROM characters WHERE id = ?", (str(id_),))
-        await self._db.commit()
+        try:
+            cursor = await self._db.execute("DELETE FROM characters WHERE id = ?", (str(id_),))
+            await self._db.commit()
+        except Exception:
+            await self._db.rollback()
+            raise
         if cursor.rowcount == 0:
             raise NotFoundError(f"Character {id_}")
 
     async def set_backstory(self, id_: UUID, backstory: Backstory) -> None:
-        await self._db.execute(
-            "UPDATE characters SET backstory = ?, updated_at = ? WHERE id = ?",
-            (backstory.model_dump_json(), datetime.now(timezone.utc).isoformat(), str(id_)),
-        )
-        await self._db.commit()
+        try:
+            await self._db.execute(
+                "UPDATE characters SET backstory = ?, updated_at = ? WHERE id = ?",
+                (backstory.model_dump_json(), datetime.now(timezone.utc).isoformat(), str(id_)),
+            )
+            await self._db.commit()
+        except Exception:
+            await self._db.rollback()
+            raise
 
 
 def _row_to_character(row: aiosqlite.Row) -> Character:

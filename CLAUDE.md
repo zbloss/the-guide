@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**The Guide** is an AI-powered assistant for Dungeon Masters running D&D campaigns. The backend has been fully migrated from Rust to Python (Phases 0–7 archived; Python implementation complete with 33 passing tests).
+**The Guide** is an AI-powered assistant for Dungeon Masters running D&D campaigns. The backend has been fully migrated from Rust to Python (Phases 0–7 archived; Python implementation complete with 33+ passing tests).
 
 ## Tech Stack & Architectural Decisions
 
@@ -17,15 +17,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **LLM SDK:** `openai.AsyncOpenAI` pointed at Ollama `/v1` endpoint
 - **Default model:** `tomng/nanbeige4.1:3b` via Ollama
 - **PDF Processing:** Docling (`DocumentConverter`) — no vision model required for well-formatted PDFs
-- **RAG:** PageIndex (vectorless, LLM-reasoning retrieval) — disk-based JSON indexes at `data/indexes/`
-- **No Qdrant** — replaced by PageIndex
+- **RAG:** Hybrid — Qdrant (`qdrant-client[async]`) for vector similarity search (primary), PageIndex tree (fallback when Qdrant unavailable)
+- **Embeddings:** `nomic-embed-text` via Ollama, 768-dim vectors stored in Qdrant collection `guide_chunks`
+- **PageIndex:** disk-based JSON trees at `data/indexes/` — used by MetaIndex doc selection and LLM-fallback retrieval path
 
 ## Key Constraints
 
 - Use `openai.AsyncOpenAI` for all LLM interactions (including Ollama) — no provider-specific SDKs.
 - PDF ingestion uses Docling, not vision models or pdfium.
-- PageIndex indexes stored at `data/indexes/{campaign_id}/{doc_id}.json` (campaign) or `data/indexes/global/{doc_id}.json` (rulebooks).
+- PageIndex trees stored at `data/indexes/{campaign_id}/{doc_id}.json` (campaign) or `data/indexes/global/{doc_id}.json` (rulebooks).
 - All DB access via `aiosqlite` repositories — no SQLAlchemy ORM.
+- Qdrant is optional: set `GUIDE__QDRANT_URL` to connect; omit to use LLM-fallback retrieval.
+- Tests use `AsyncQdrantClient(location=":memory:")` for in-memory Qdrant (no server required).
 
 ## Commands
 
@@ -44,7 +47,7 @@ src/guide/
   config.py          AppConfig (pydantic-settings, GUIDE__ prefix)
   errors.py          GuideError, NotFoundError, InvalidInputError, LlmError
   models/            Pydantic domain models (campaign, character, session, encounter, document, playstyle, shared)
-  db/                aiosqlite repositories + migrations/001_initial.sql, 002_document_kind.sql
+  db/                aiosqlite repositories + migrations/001–006_*.sql
   llm/               LlmClient ABC, OllamaProvider, CloudProvider, LlmRouter, prompts
   pdf/               Docling extractor + PageIndex pipeline
   combat/            CombatEngine, initiative helpers
@@ -54,6 +57,7 @@ tests/
   test_combat.py     11 combat unit tests
   test_repositories.py  12 DB integration tests
   test_api.py        HTTP layer tests
+  test_rag.py        Qdrant RAG path tests (in-memory Qdrant)
 ```
 
 ## Feature Areas

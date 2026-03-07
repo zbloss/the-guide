@@ -3,14 +3,15 @@ from __future__ import annotations
 import json
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel
 
+from guide.db.campaigns import CampaignRepository
 from guide.db.characters import CharacterRepository
 from guide.errors import NotFoundError
 from guide.llm import prompts
 from guide.llm.client import CompletionRequest, LlmTask, Message
-from guide.models.character import Backstory, CreateCharacterRequest, HookPriority, PlotHook
+from guide.models.character import Backstory, CreateCharacterRequest, HookPriority, PlotHook, UpdateCharacterRequest
 
 router = APIRouter()
 
@@ -31,12 +32,20 @@ async def list_characters(campaign_id: UUID, request: Request):
 
 
 @router.post("/campaigns/{campaign_id}/characters", status_code=201)
-async def create_character(campaign_id: UUID, body: CreateCharacterRequest, request: Request):
+async def create_character(
+    campaign_id: UUID, body: CreateCharacterRequest, request: Request, response: Response
+):
+    cam_repo = CampaignRepository(_db(request))
+    try:
+        await cam_repo.get_by_id(campaign_id)
+    except NotFoundError:
+        raise HTTPException(status_code=404, detail="Campaign not found")
     repo = CharacterRepository(_db(request))
     try:
         character = await repo.create(campaign_id, body)
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    response.headers["Location"] = f"/campaigns/{campaign_id}/characters/{character.id}"
     return character.model_dump(mode="json")
 
 
@@ -47,6 +56,21 @@ async def get_character(campaign_id: UUID, char_id: UUID, request: Request):
         character = await repo.get_by_id(char_id)
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    if character.campaign_id != campaign_id:
+        raise HTTPException(status_code=404, detail="Character not found")
+    return character.model_dump(mode="json")
+
+
+@router.put("/campaigns/{campaign_id}/characters/{char_id}")
+async def update_character(campaign_id: UUID, char_id: UUID, body: UpdateCharacterRequest, request: Request):
+    repo = CharacterRepository(_db(request))
+    try:
+        character = await repo.get_by_id(char_id)
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    if character.campaign_id != campaign_id:
+        raise HTTPException(status_code=404, detail="Character not found")
+    character = await repo.update(char_id, body)
     return character.model_dump(mode="json")
 
 
@@ -54,9 +78,12 @@ async def get_character(campaign_id: UUID, char_id: UUID, request: Request):
 async def delete_character(campaign_id: UUID, char_id: UUID, request: Request):
     repo = CharacterRepository(_db(request))
     try:
-        await repo.delete(char_id)
+        character = await repo.get_by_id(char_id)
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    if character.campaign_id != campaign_id:
+        raise HTTPException(status_code=404, detail="Character not found")
+    await repo.delete(char_id)
 
 
 class AnalyzeBackstoryRequest(BaseModel):
@@ -72,6 +99,8 @@ async def analyze_backstory(
         character = await repo.get_by_id(char_id)
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    if character.campaign_id != campaign_id:
+        raise HTTPException(status_code=404, detail="Character not found")
 
     raw_text = body.backstory_text or (
         character.backstory.raw_text if character.backstory else None

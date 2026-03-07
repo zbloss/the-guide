@@ -15,6 +15,8 @@ class CombatEngine:
     def start(self) -> None:
         if self.encounter.status != EncounterStatus.pending:
             raise InvalidInputError("Encounter has already started")
+        if not self.encounter.participants:
+            raise InvalidInputError("Cannot start encounter with no participants")
 
         # Sort participants by initiative_total descending; ties by modifier, then id
         self.encounter.participants.sort(
@@ -38,7 +40,7 @@ class CombatEngine:
         if n == 0:
             raise InvalidInputError("No participants in encounter")
 
-        current_idx = self.encounter.current_turn_index
+        current_idx = self.encounter.current_turn_index % n
         self.encounter.participants[current_idx].has_taken_turn = True
 
         next_idx = (current_idx + 1) % n

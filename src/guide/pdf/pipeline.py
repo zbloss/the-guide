@@ -1,4 +1,4 @@
-"""PageIndex-based document ingestion pipeline.
+"""Qdrant-backed document ingestion pipeline.
 
 After Docling extracts a PDF, its full markdown output is fed into a
 PageIndex-compatible tree builder (vendored from VectifyAI/PageIndex,
@@ -8,9 +8,13 @@ Tree structures are stored on disk at:
   data/indexes/{campaign_id}/{doc_id}.json   (campaign documents)
   data/indexes/global/{doc_id}.json          (rulebooks)
 
-At query time the tree (minus node text) is sent to the local Ollama LLM,
-which selects the relevant node IDs. The caller supplies a `call_llm`
-coroutine so this module stays decoupled from the LLM layer.
+At query time, chunks are retrieved via Qdrant vector similarity search.
+When Qdrant is unavailable (qdrant=None), falls back to the legacy
+LLM-reasoning retrieval path so existing tests continue to pass.
+
+The MetaIndex (LLM-generated doc summaries + select_relevant_docs) is
+preserved unchanged — it still picks which documents to search before
+retrieval begins.
 """
 
 from __future__ import annotations
@@ -20,7 +24,7 @@ import re
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from pathlib import Path
-from uuid import UUID
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 import aiosqlite
 
@@ -230,6 +234,114 @@ async def _generate_doc_summary(
 
 
 # ---------------------------------------------------------------------------
+# Qdrant helpers
+# ---------------------------------------------------------------------------
+
+
+async def ensure_collection(qdrant, collection: str, embedding_dims: int) -> None:
+    """Create the Qdrant collection if it does not already exist (idempotent)."""
+    from qdrant_client.models import Distance, VectorParams
+
+    exists = await qdrant.collection_exists(collection)
+    if not exists:
+        await qdrant.create_collection(
+            collection_name=collection,
+            vectors_config=VectorParams(size=embedding_dims, distance=Distance.COSINE),
+        )
+
+
+def _flatten_nodes_to_chunks(
+    tree: list[dict],
+    doc_id: str,
+    doc_name: str,
+    scope: str,
+    chunk_max_chars: int,
+    chunk_overlap_chars: int,
+    parent_path: str = "",
+    default_visible: bool = True,
+) -> list[dict]:
+    """DFS over the tree, splitting large nodes into overlapping chunks."""
+    chunks: list[dict] = []
+    for node in tree:
+        title = node.get("title", "")
+        section_path = f"{parent_path} > {title}" if parent_path else title
+        text = node.get("text", "")
+        node_id = node.get("node_id", "")
+
+        is_player_visible = node.get("is_player_visible", default_visible)
+
+        if len(text) <= chunk_max_chars:
+            chunks.append(
+                {
+                    "doc_id": doc_id,
+                    "scope": scope,
+                    "doc_name": doc_name,
+                    "section_path": section_path,
+                    "content": text,
+                    "node_id": node_id,
+                    "is_player_visible": is_player_visible,
+                }
+            )
+        else:
+            step = max(1, chunk_max_chars - chunk_overlap_chars)
+            parts = range(0, len(text), step)
+            total = len(list(parts))
+            for part_idx, start in enumerate(range(0, len(text), step), 1):
+                chunk_text = text[start : start + chunk_max_chars]
+                chunks.append(
+                    {
+                        "doc_id": doc_id,
+                        "scope": scope,
+                        "doc_name": doc_name,
+                        "section_path": f"{section_path} [part {part_idx}/{total}]",
+                        "content": chunk_text,
+                        "node_id": node_id,
+                        "is_player_visible": is_player_visible,
+                    }
+                )
+
+        child_nodes = node.get("nodes", [])
+        if child_nodes:
+            chunks.extend(
+                _flatten_nodes_to_chunks(
+                    child_nodes, doc_id, doc_name, scope,
+                    chunk_max_chars, chunk_overlap_chars, section_path,
+                    default_visible=default_visible,
+                )
+            )
+
+    return chunks
+
+
+async def _upsert_chunks_to_qdrant(
+    chunks: list[dict],
+    embed: Callable[[str], Awaitable[list[float]]],
+    qdrant,
+    collection: str,
+) -> None:
+    """Embed each chunk and upsert to Qdrant in batches of 100."""
+    from qdrant_client.models import PointStruct
+
+    BATCH_SIZE = 100
+    points: list[PointStruct] = []
+
+    for chunk in chunks:
+        vector = await embed(chunk["content"])
+        point_id = str(uuid5(NAMESPACE_URL, f"{chunk['doc_id']}|{chunk['section_path']}"))
+        points.append(
+            PointStruct(
+                id=point_id,
+                vector=vector,
+                payload=chunk,
+            )
+        )
+
+    for i in range(0, len(points), BATCH_SIZE):
+        batch = points[i : i + BATCH_SIZE]
+        await qdrant.upsert(collection_name=collection, points=batch)
+
+
+# ---------------------------------------------------------------------------
 # Ingestion
 # ---------------------------------------------------------------------------
 
@@ -241,6 +353,14 @@ async def ingest_campaign_document(
     db: aiosqlite.Connection,
     doc_name: str | None = None,
     call_llm: Callable[[str], Awaitable[str]] | None = None,
+    *,
+    embed: Callable[[str], Awaitable[list[float]]] | None = None,
+    qdrant=None,
+    collection: str = "guide_chunks",
+    chunk_max_chars: int = 2048,
+    chunk_overlap_chars: int = 64,
+    force: bool = False,
+    is_player_visible: bool = True,
 ) -> int:
     """Build and persist a PageIndex tree for a campaign document. Returns page count."""
     scope = str(campaign_id)
@@ -250,6 +370,22 @@ async def ingest_campaign_document(
 
     index_data = _build_index(extraction.full_markdown, doc_name=name)
     index_file.write_text(json.dumps(index_data, ensure_ascii=False), encoding="utf-8")
+
+    if force and qdrant is not None:
+        from qdrant_client.models import FieldCondition, Filter, MatchValue
+        await qdrant.delete(
+            collection_name=collection,
+            points_selector=Filter(
+                must=[FieldCondition(key="doc_id", match=MatchValue(value=str(doc_id)))]
+            ),
+        )
+
+    if embed is not None and qdrant is not None:
+        chunks = _flatten_nodes_to_chunks(
+            index_data["structure"], str(doc_id), name, scope, chunk_max_chars, chunk_overlap_chars,
+            default_visible=is_player_visible,
+        )
+        await _upsert_chunks_to_qdrant(chunks, embed, qdrant, collection)
 
     summary = await _generate_doc_summary(extraction.full_markdown, name, call_llm)
     _add_to_meta_index(
@@ -275,6 +411,14 @@ async def ingest_global_document(
     db: aiosqlite.Connection,
     doc_name: str | None = None,
     call_llm: Callable[[str], Awaitable[str]] | None = None,
+    *,
+    embed: Callable[[str], Awaitable[list[float]]] | None = None,
+    qdrant=None,
+    collection: str = "guide_chunks",
+    chunk_max_chars: int = 2048,
+    chunk_overlap_chars: int = 64,
+    force: bool = False,
+    is_player_visible: bool = True,
 ) -> int:
     """Build and persist a PageIndex tree for a global rulebook. Returns page count."""
     scope = "global"
@@ -284,6 +428,22 @@ async def ingest_global_document(
 
     index_data = _build_index(extraction.full_markdown, doc_name=name)
     index_file.write_text(json.dumps(index_data, ensure_ascii=False), encoding="utf-8")
+
+    if force and qdrant is not None:
+        from qdrant_client.models import FieldCondition, Filter, MatchValue
+        await qdrant.delete(
+            collection_name=collection,
+            points_selector=Filter(
+                must=[FieldCondition(key="doc_id", match=MatchValue(value=str(doc_id)))]
+            ),
+        )
+
+    if embed is not None and qdrant is not None:
+        chunks = _flatten_nodes_to_chunks(
+            index_data["structure"], str(doc_id), name, scope, chunk_max_chars, chunk_overlap_chars,
+            default_visible=is_player_visible,
+        )
+        await _upsert_chunks_to_qdrant(chunks, embed, qdrant, collection)
 
     summary = await _generate_doc_summary(extraction.full_markdown, name, call_llm)
     _add_to_meta_index(
@@ -304,7 +464,7 @@ async def ingest_global_document(
 
 
 # ---------------------------------------------------------------------------
-# Retrieval helpers
+# Retrieval helpers (legacy LLM path)
 # ---------------------------------------------------------------------------
 
 
@@ -340,13 +500,23 @@ def _build_node_map(tree: list[dict], out: dict | None = None) -> dict[str, dict
 
 
 def _extract_json_text(text: str) -> str:
-    """Strip ```json ... ``` fences that local LLMs often add around JSON."""
-    start = text.find("```json")
-    if start != -1:
-        text = text[start + 7 :]
-    end = text.rfind("```")
-    if end != -1:
-        text = text[:end]
+    """Extract JSON from LLM output, stripping fences, think tags, and prose."""
+    import re
+
+    # Strip <think>...</think> blocks (qwen3 chain-of-thought)
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+
+    # Handle ```json ... ``` or ``` ... ``` fences
+    fence = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+    if fence:
+        return fence.group(1).strip()
+
+    # Fall back: grab from first { to last }
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        return text[start : end + 1].strip()
+
     return text.strip()
 
 
@@ -359,20 +529,124 @@ async def query_indexes(
     scopes: list[str],
     doc_ids: list[UUID],
     query: str,
-    call_llm: Callable[[str], Awaitable[str]],
+    call_llm: Callable[[str], Awaitable[str]] | None = None,
     player_visible_only: bool = False,
     limit: int = 5,
+    embed: Callable[[str], Awaitable[list[float]]] | None = None,
+    qdrant=None,
+    collection: str = "guide_chunks",
+    campaign_id: str | None = None,
 ) -> list[dict]:
-    """LLM-reasoning retrieval across PageIndex trees.
+    """Retrieve relevant chunks across indexed documents.
 
-    Steps:
-      1. For each index, strip node text and send tree + query to the LLM.
-      2. LLM returns the node IDs most likely to contain the answer.
-      3. Fetch the full text from those nodes and return as context chunks.
+    Qdrant path (when embed and qdrant are provided):
+      If campaign_id is given, searches the entire collection filtered to that
+      campaign's scope + "global" in a single vector query — no doc pre-selection needed.
+      Otherwise falls back to per-doc search using scopes/doc_ids.
 
-    Args:
-        call_llm: Async callable ``async (prompt: str) -> str`` backed by Ollama.
+    Fallback path (when embed or qdrant is None):
+      LLM-reasoning retrieval over PageIndex trees — preserves all existing tests.
     """
+    if embed is not None and qdrant is not None:
+        return await _query_indexes_qdrant(
+            query, embed, qdrant, collection, limit,
+            campaign_id=campaign_id, scopes=scopes, doc_ids=doc_ids,
+            player_visible_only=player_visible_only,
+        )
+    return await _query_indexes_llm(scopes, doc_ids, query, call_llm, limit)
+
+
+async def _query_indexes_qdrant(
+    query: str,
+    embed: Callable[[str], Awaitable[list[float]]],
+    qdrant,
+    collection: str,
+    limit: int,
+    campaign_id: str | None = None,
+    scopes: list[str] | None = None,
+    doc_ids: list[UUID] | None = None,
+    player_visible_only: bool = False,
+) -> list[dict]:
+    from qdrant_client.models import FieldCondition, Filter, MatchValue
+
+    query_vector = await embed(query)
+
+    if campaign_id is not None:
+        # Single search across all chunks in this campaign + global rulebooks
+        scope_filter = Filter(
+            should=[
+                FieldCondition(key="scope", match=MatchValue(value=campaign_id)),
+                FieldCondition(key="scope", match=MatchValue(value="global")),
+            ]
+        )
+        must_conditions: list = [scope_filter]
+        if player_visible_only:
+            must_conditions.append(
+                FieldCondition(key="is_player_visible", match=MatchValue(value=True))
+            )
+        search_filter = Filter(must=must_conditions)
+        result = await qdrant.query_points(
+            collection_name=collection,
+            query=query_vector,
+            query_filter=search_filter,
+            limit=limit,
+            with_payload=True,
+        )
+        return [
+            {
+                "content": hit.payload.get("content", ""),
+                "section_path": hit.payload.get("section_path", ""),
+                "doc_id": hit.payload.get("doc_id", ""),
+                "doc_name": hit.payload.get("doc_name", ""),
+                "node_id": hit.payload.get("node_id", ""),
+                "score": hit.score,
+            }
+            for hit in result.points
+        ]
+
+    # Fallback: per-doc search (used when campaign_id is not provided)
+    all_hits: list[dict] = []
+    for scope, doc_id in zip(scopes or [], doc_ids or []):
+        must_conditions = [
+            FieldCondition(key="scope", match=MatchValue(value=scope)),
+            FieldCondition(key="doc_id", match=MatchValue(value=str(doc_id))),
+        ]
+        if player_visible_only:
+            must_conditions.append(
+                FieldCondition(key="is_player_visible", match=MatchValue(value=True))
+            )
+        search_filter = Filter(must=must_conditions)
+        result = await qdrant.query_points(
+            collection_name=collection,
+            query=query_vector,
+            query_filter=search_filter,
+            limit=limit,
+            with_payload=True,
+        )
+        for hit in result.points:
+            payload = hit.payload or {}
+            all_hits.append(
+                {
+                    "content": payload.get("content", ""),
+                    "section_path": payload.get("section_path", ""),
+                    "doc_id": payload.get("doc_id", str(doc_id)),
+                    "doc_name": payload.get("doc_name", ""),
+                    "node_id": payload.get("node_id", ""),
+                    "score": hit.score,
+                }
+            )
+    all_hits.sort(key=lambda h: h["score"], reverse=True)
+    return all_hits[:limit]
+
+
+async def _query_indexes_llm(
+    scopes: list[str],
+    doc_ids: list[UUID],
+    query: str,
+    call_llm: Callable[[str], Awaitable[str]] | None,
+    limit: int,
+) -> list[dict]:
+    """Legacy LLM-reasoning retrieval across PageIndex trees."""
     results: list[dict] = []
 
     for scope, doc_id in zip(scopes, doc_ids):

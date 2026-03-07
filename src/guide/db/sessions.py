@@ -24,21 +24,20 @@ class SessionRepository:
         id_ = uuid4()
         now = datetime.now(timezone.utc).isoformat()
 
-        # Auto-number sessions within campaign
-        async with self._db.execute(
-            "SELECT COALESCE(MAX(session_number), 0) + 1 FROM sessions WHERE campaign_id = ?",
-            (str(campaign_id),),
-        ) as cursor:
-            row = await cursor.fetchone()
-            session_number = row[0] if row else 1
-
-        await self._db.execute(
-            "INSERT INTO sessions"
-            " (id, campaign_id, session_number, title, notes, created_at, updated_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (str(id_), str(campaign_id), session_number, req.title, req.notes, now, now),
-        )
-        await self._db.commit()
+        # Atomic INSERT: compute session_number and insert in a single statement
+        # to avoid a race condition when two sessions are created concurrently.
+        try:
+            await self._db.execute(
+                "INSERT INTO sessions"
+                " (id, campaign_id, session_number, title, notes, created_at, updated_at)"
+                " SELECT ?, ?, COALESCE(MAX(session_number), 0) + 1, ?, ?, ?, ?"
+                " FROM sessions WHERE campaign_id = ?",
+                (str(id_), str(campaign_id), req.title, req.notes, now, now, str(campaign_id)),
+            )
+            await self._db.commit()
+        except Exception:
+            await self._db.rollback()
+            raise
         return await self.get_by_id(id_)
 
     async def get_by_id(self, id_: UUID) -> Session:
@@ -66,25 +65,37 @@ class SessionRepository:
 
     async def start_session(self, id_: UUID) -> Session:
         now = datetime.now(timezone.utc).isoformat()
-        await self._db.execute(
-            "UPDATE sessions SET started_at = ?, updated_at = ? WHERE id = ?",
-            (now, now, str(id_)),
-        )
-        await self._db.commit()
+        try:
+            await self._db.execute(
+                "UPDATE sessions SET started_at = ?, updated_at = ? WHERE id = ?",
+                (now, now, str(id_)),
+            )
+            await self._db.commit()
+        except Exception:
+            await self._db.rollback()
+            raise
         return await self.get_by_id(id_)
 
     async def end_session(self, id_: UUID) -> Session:
         now = datetime.now(timezone.utc).isoformat()
-        await self._db.execute(
-            "UPDATE sessions SET ended_at = ?, updated_at = ? WHERE id = ?",
-            (now, now, str(id_)),
-        )
-        await self._db.commit()
+        try:
+            await self._db.execute(
+                "UPDATE sessions SET ended_at = ?, updated_at = ? WHERE id = ?",
+                (now, now, str(id_)),
+            )
+            await self._db.commit()
+        except Exception:
+            await self._db.rollback()
+            raise
         return await self.get_by_id(id_)
 
     async def delete(self, id_: UUID) -> None:
-        cursor = await self._db.execute("DELETE FROM sessions WHERE id = ?", (str(id_),))
-        await self._db.commit()
+        try:
+            cursor = await self._db.execute("DELETE FROM sessions WHERE id = ?", (str(id_),))
+            await self._db.commit()
+        except Exception:
+            await self._db.rollback()
+            raise
         if cursor.rowcount == 0:
             raise NotFoundError(f"Session {id_}")
 
@@ -105,24 +116,28 @@ class SessionEventRepository:
         is_visible = int(req.is_player_visible if req.is_player_visible is not None else True)
         char_ids = json.dumps([str(c) for c in (req.involved_character_ids or [])])
 
-        await self._db.execute(
-            "INSERT INTO session_events"
-            " (id, session_id, campaign_id, event_type, description, significance,"
-            "  is_player_visible, involved_character_ids, occurred_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                str(id_),
-                str(session_id),
-                str(campaign_id),
-                req.event_type.value,
-                req.description,
-                significance,
-                is_visible,
-                char_ids,
-                now,
-            ),
-        )
-        await self._db.commit()
+        try:
+            await self._db.execute(
+                "INSERT INTO session_events"
+                " (id, session_id, campaign_id, event_type, description, significance,"
+                "  is_player_visible, involved_character_ids, occurred_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    str(id_),
+                    str(session_id),
+                    str(campaign_id),
+                    req.event_type.value,
+                    req.description,
+                    significance,
+                    is_visible,
+                    char_ids,
+                    now,
+                ),
+            )
+            await self._db.commit()
+        except Exception:
+            await self._db.rollback()
+            raise
 
         async with self._db.execute(
             "SELECT id, session_id, campaign_id, event_type, description, significance,"
@@ -131,6 +146,8 @@ class SessionEventRepository:
             (str(id_),),
         ) as cursor:
             row = await cursor.fetchone()
+        if row is None:
+            raise RuntimeError("Event was deleted concurrently after insert")
         return _row_to_event(row)
 
     async def list_by_session(self, session_id: UUID) -> list[SessionEvent]:

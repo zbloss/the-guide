@@ -87,6 +87,13 @@ class LlmRouter(LlmClient):
             return self._cloud
         return self._local
 
+    def model_for_task(self, task: LlmTask) -> str:
+        """Return the model identifier that would be used for *task*."""
+        provider = self._select_provider(task)
+        if hasattr(provider, "_model_for_task"):
+            return provider._model_for_task(task, None)
+        return provider.provider_name
+
     async def complete(self, req: CompletionRequest) -> CompletionResponse:
         provider = self._select_provider(req.task)
         try:
@@ -97,6 +104,20 @@ class LlmRouter(LlmClient):
                 return await self._cloud.complete(req)
             raise
 
+    async def complete_stream(self, req: CompletionRequest):  # type: ignore[override]
+        """Async generator that streams content chunks from the selected provider."""
+        provider = self._select_provider(req.task)
+        try:
+            async for chunk in provider.complete_stream(req):
+                yield chunk
+        except Exception as local_err:
+            if self._strategy == RoutingStrategy.local_with_fallback and self._cloud:
+                logger.warning("Local stream failed (%s), falling back to cloud", local_err)
+                async for chunk in self._cloud.complete_stream(req):
+                    yield chunk
+            else:
+                raise
+
     async def embed(self, req: EmbeddingRequest) -> list[float]:
         return await self._local.embed(req)
 
@@ -105,4 +126,4 @@ class LlmRouter(LlmClient):
 
     @property
     def provider_name(self) -> str:
-        return "router"
+        return self._select_provider(LlmTask.campaign_assistant).provider_name

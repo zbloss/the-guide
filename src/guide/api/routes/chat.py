@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import json
+import time
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from guide.llm.client import CompletionRequest, LlmTask, Message
+from guide.llm.client import CompletionRequest, EmbeddingRequest, LlmTask, Message
 from guide.models.shared import Perspective
 from guide.pdf.pipeline import query_indexes, select_relevant_docs
 
@@ -19,12 +22,6 @@ class ChatRequest(BaseModel):
     perspective: Perspective | None = None
     context_limit: int | None = None
 
-
-class ChatResponse(BaseModel):
-    answer: str
-    context_chunks_used: int
-    model: str
-    provider: str
 
 
 @router.post("/campaigns/{campaign_id}/chat")
@@ -52,43 +49,73 @@ async def chat(campaign_id: UUID, body: ChatRequest, request: Request):
         )
         return resp.content
 
-    # PageIndex RAG: select relevant docs then query their indexes
-    selected = await select_relevant_docs(campaign_id, body.message, _call_llm)
-    scopes = [s for s, _ in selected]
-    doc_ids = [d for _, d in selected]
+    async def _embed(text: str) -> list[float]:
+        return await llm.embed(EmbeddingRequest(text=text))
 
-    chunks = await query_indexes(
-        scopes=scopes,
-        doc_ids=doc_ids,
-        query=body.message,
-        call_llm=_call_llm,
-        player_visible_only=(perspective == Perspective.player),
-        limit=context_limit,
-    )
+    qdrant = request.app.state.guide.qdrant
+    collection = request.app.state.guide.config.qdrant_collection
+
+    if qdrant is not None:
+        # Qdrant path: single vector search across campaign + global chunks — no doc pre-selection
+        chunks = await query_indexes(
+            scopes=[],
+            doc_ids=[],
+            query=body.message,
+            call_llm=_call_llm,
+            player_visible_only=(perspective == Perspective.player),
+            limit=context_limit,
+            embed=_embed,
+            qdrant=qdrant,
+            collection=collection,
+            campaign_id=str(campaign_id),
+        )
+    else:
+        # LLM fallback: pre-select docs then query their PageIndex trees
+        selected = await select_relevant_docs(campaign_id, body.message, _call_llm)
+        chunks = await query_indexes(
+            scopes=[s for s, _ in selected],
+            doc_ids=[d for _, d in selected],
+            query=body.message,
+            call_llm=_call_llm,
+            player_visible_only=(perspective == Perspective.player),
+            limit=context_limit,
+        )
 
     context = _build_context(perspective, chunks)
+    model = llm.model_for_task(LlmTask.campaign_assistant)
+    provider = llm.provider_name
 
-    try:
-        resp = await llm.complete(
-            CompletionRequest(
+    async def _token_stream():
+        total_chars = 0
+        t_start = time.perf_counter()
+
+        try:
+            stream_req = CompletionRequest(
                 task=LlmTask.campaign_assistant,
                 messages=[
                     Message(role="system", content=context),
                     Message(role="user", content=body.message),
                 ],
                 temperature=0.7,
-                max_tokens=1024,
             )
-        )
-    except Exception as e:
-        raise HTTPException(status_code=503, detail=f"LLM unavailable: {e}")
+            async for chunk in llm.complete_stream(stream_req):
+                total_chars += len(chunk)
+                yield f"data: {json.dumps({'type': 'token', 'content': chunk})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'detail': str(e)})}\n\n"
+            return
 
-    return ChatResponse(
-        answer=resp.content,
-        context_chunks_used=len(chunks),
-        model=resp.model,
-        provider=resp.provider,
-    ).model_dump()
+        elapsed = time.perf_counter() - t_start
+        approx_tokens = max(total_chars / 4, 1)
+        tokens_per_second = round(approx_tokens / elapsed, 1) if elapsed > 0 else 0.0
+
+        yield f"data: {json.dumps({'type': 'done', 'model': model, 'provider': provider, 'context_chunks_used': len(chunks), 'tokens_per_second': tokens_per_second})}\n\n"
+
+    return StreamingResponse(
+        _token_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 def _build_context(perspective: Perspective, chunks: list[dict]) -> str:

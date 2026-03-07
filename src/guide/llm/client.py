@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from enum import Enum
 
@@ -59,6 +60,10 @@ class VisionRequest:
 class LlmClient(ABC):
     @abstractmethod
     async def complete(self, req: CompletionRequest) -> CompletionResponse: ...
+
+    @abstractmethod
+    async def complete_stream(self, req: CompletionRequest) -> AsyncIterator[str]:
+        """Yield content chunks as they arrive from the LLM."""
 
     @abstractmethod
     async def embed(self, req: EmbeddingRequest) -> list[float]: ...

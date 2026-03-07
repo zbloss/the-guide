@@ -12,6 +12,7 @@ dependencies = [
     "docling>=2.0",
     "python-multipart>=0.0.9",
     "torch>=2.10.0",
+    "qdrant-client[async]>=1.9",
 ]
 
 [dependency-groups]

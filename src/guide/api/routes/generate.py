@@ -8,7 +8,8 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from guide.db.characters import CharacterRepository
-from guide.llm.client import CompletionRequest, LlmTask, Message
+from guide.db.playstyle import PlaystyleProfileRepository
+from guide.llm.client import CompletionRequest, EmbeddingRequest, LlmTask, Message
 from guide.models.playstyle import (
     EnemySuggestion,
     GeneratedEncounter,
@@ -32,6 +33,9 @@ async def generate_encounter(campaign_id: UUID, body: GenerateEncounterRequest, 
     char_repo = CharacterRepository(request.app.state.guide.db)
     characters = await char_repo.list_by_campaign(campaign_id)
 
+    if body.party_level_override is not None and body.party_level_override <= 0:
+        raise HTTPException(status_code=400, detail="party_level_override must be a positive integer")
+
     pcs = [c for c in characters if c.character_type == CharacterType.pc and c.is_alive]
     if not pcs:
         raise HTTPException(
@@ -48,19 +52,42 @@ async def generate_encounter(campaign_id: UUID, body: GenerateEncounterRequest, 
         for c in pcs
     )
 
+    llm = request.app.state.guide.llm
+    qdrant = request.app.state.guide.qdrant
+    collection = request.app.state.guide.config.qdrant_collection
+
+    async def _call_llm(prompt: str) -> str:
+        resp = await llm.complete(
+            CompletionRequest(
+                task=LlmTask.campaign_assistant,
+                messages=[Message(role="user", content=prompt)],
+                temperature=0,
+            )
+        )
+        return resp.content
+
+    async def _embed(text: str) -> list[float]:
+        return await llm.embed(EmbeddingRequest(text=text))
+
     # Retrieve lore context via PageIndex
     context_query = body.context or f"encounter for party level {party_level}"
     scope = str(campaign_id)
     doc_ids = _list_doc_ids(scope)
     global_doc_ids = _list_doc_ids("global")
-    chunks = query_indexes(
+    chunks = await query_indexes(
         scopes=[scope] * len(doc_ids) + ["global"] * len(global_doc_ids),
         doc_ids=doc_ids + global_doc_ids,
         query=context_query,
+        call_llm=_call_llm,
         limit=5,
+        embed=_embed if qdrant is not None else None,
+        qdrant=qdrant,
+        collection=collection,
+        campaign_id=str(campaign_id) if qdrant is not None else None,
     )
 
-    profile = PlaystyleProfile.default_for(campaign_id)
+    profile_repo = PlaystyleProfileRepository(request.app.state.guide.db)
+    profile = await profile_repo.get_or_default(campaign_id)
     type_preference = body.preferred_type.value if body.preferred_type else _infer_type(profile)
 
     lore_section = (
@@ -92,7 +119,6 @@ async def generate_encounter(campaign_id: UUID, body: GenerateEncounterRequest, 
         f"{lore_section}" + (f"\n\nAdditional context: {body.context}" if body.context else "")
     )
 
-    llm = request.app.state.guide.llm
     try:
         resp = await llm.complete(
             CompletionRequest(

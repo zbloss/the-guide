@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import time
+from collections import OrderedDict
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -41,11 +43,24 @@ async def lifespan(app: FastAPI):
     db = await init_db(config.database_url)
     llm = LlmRouter.from_config(config)
 
-    app.state.guide = AppState(config=config, llm=llm, db=db)
+    from qdrant_client import AsyncQdrantClient
+    from guide.pdf.pipeline import ensure_collection
+
+    qdrant_client = AsyncQdrantClient(url=config.qdrant_url)
+    try:
+        await ensure_collection(qdrant_client, config.qdrant_collection, config.embedding_dims)
+        logger.info("Qdrant ready — url=%s collection=%s", config.qdrant_url, config.qdrant_collection)
+    except Exception as exc:
+        logger.warning("Qdrant unavailable (%s) — vector retrieval disabled", exc)
+        qdrant_client = None
+
+    app.state.guide = AppState(config=config, llm=llm, db=db, qdrant=qdrant_client)
     logger.info("The Guide started — db=%s model=%s", config.database_url, config.default_model)
 
     yield
 
+    if qdrant_client is not None:
+        await qdrant_client.close()
     await close_db()
     logger.info("The Guide stopped")
 
@@ -56,11 +71,38 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     app = FastAPI(title="The Guide", version="0.1.0", lifespan=lifespan)
     app.state.guide_config = cfg  # passed into lifespan
 
+    # Rate limiting — per-IP token bucket; disabled when limit == 0
+    _MAX_RATE_BUCKETS = 10_000
+    _rate_buckets: OrderedDict[str, list[float]] = OrderedDict()
+
+    @app.middleware("http")
+    async def _rate_limit(request: Request, call_next):
+        limit = cfg.max_requests_per_minute
+        if limit > 0:
+            forwarded_for = request.headers.get("x-forwarded-for")
+            if forwarded_for:
+                ip = forwarded_for.split(",")[0].strip()
+            else:
+                ip = request.client.host if request.client else "unknown"
+            now = time.time()
+            bucket = _rate_buckets.get(ip, [])
+            _rate_buckets[ip] = [t for t in bucket if now - t < 60.0]
+            _rate_buckets.move_to_end(ip)
+            if len(_rate_buckets[ip]) >= limit:
+                return JSONResponse(
+                    status_code=429,
+                    content={"error": "Rate limit exceeded. Please slow down."},
+                )
+            _rate_buckets[ip].append(now)
+            while len(_rate_buckets) > _MAX_RATE_BUCKETS:
+                _rate_buckets.popitem(last=False)
+        return await call_next(request)
+
     # Exception handlers
     @app.exception_handler(Exception)
     async def generic_handler(request: Request, exc: Exception) -> JSONResponse:
-        logger.exception("Unhandled error: %s", exc)
-        return JSONResponse(status_code=500, content={"error": str(exc)})
+        logger.exception("Unhandled exception")
+        return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
     # Register routers
     app.include_router(health.router)

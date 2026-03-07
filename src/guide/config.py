@@ -15,8 +15,15 @@ class AppConfig(BaseSettings):
     cloud_fallback: str | None = None
     cloud_api_key: str | None = None
     max_upload_bytes: int = 50 * 1024 * 1024
-    chunk_max_tokens: int = 512
+    chunk_max_chars: int = 2048
     chunk_overlap_chars: int = 64
+
+    qdrant_url: str = "http://localhost:6333"
+    qdrant_collection: str = "guide_chunks"
+    embedding_dims: int = 768  # nomic-embed-text output size
+
+    # Rate limiting: requests per IP per minute. 0 = disabled (suitable for local deployments).
+    max_requests_per_minute: int = 0
 
     # Hardware acceleration
     # device: "auto" | "cpu" | "cuda" | "cuda:N" | "mps" | "xpu"

@@ -115,10 +115,11 @@ def _extract_pages_from_docling(doc) -> list[PageExtraction]:  # type: ignore[no
             headings: list[str] = []
             for item, _ in doc.iterate_items():
                 # Filter by page ref if available
-                if hasattr(item, "prov") and item.prov:
-                    item_page = item.prov[0].page_no if item.prov else None
-                    if item_page != page_no:
-                        continue
+                if not hasattr(item, "prov") or not item.prov:
+                    continue
+                item_page = item.prov[0].page_no
+                if item_page != page_no:
+                    continue
                 label = getattr(item, "label", "")
                 text = getattr(item, "text", "") or ""
                 if not text:
@@ -145,6 +146,9 @@ def _extract_pages_from_docling(doc) -> list[PageExtraction]:  # type: ignore[no
 
 def _fallback_extract(pdf_bytes: bytes) -> DocumentExtraction:
     """Last-resort extraction when Docling is unavailable."""
+    logger.warning(
+        "Docling unavailable, using fallback text extraction (%d bytes)", len(pdf_bytes)
+    )
     placeholder = f"[PDF content — {len(pdf_bytes)} bytes — Docling not installed]"
     return DocumentExtraction(
         pages=[PageExtraction(page_number=1, raw_text=placeholder)],

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 
 from guide.combat.engine import CombatEngine, build_participant
 from guide.combat.initiative import roll_d20
@@ -32,21 +32,29 @@ async def list_encounters(campaign_id: UUID, session_id: UUID, request: Request)
 
 @router.post("/campaigns/{campaign_id}/sessions/{session_id}/encounters", status_code=201)
 async def create_encounter(
-    campaign_id: UUID, session_id: UUID, body: CreateEncounterRequest, request: Request
+    campaign_id: UUID, session_id: UUID, body: CreateEncounterRequest, request: Request,
+    response: Response,
 ):
     enc_repo = EncounterRepository(_db(request))
     char_repo = CharacterRepository(_db(request))
 
     characters = []
     missing = []
+    wrong_campaign = []
     for cid in body.participant_character_ids:
         try:
-            characters.append(await char_repo.get_by_id(cid))
+            char = await char_repo.get_by_id(cid)
+            if char.campaign_id != campaign_id:
+                wrong_campaign.append(str(cid))
+            else:
+                characters.append(char)
         except NotFoundError:
             missing.append(str(cid))
 
     if missing:
         raise HTTPException(status_code=400, detail=f"Unknown character IDs: {', '.join(missing)}")
+    if wrong_campaign:
+        raise HTTPException(status_code=400, detail=f"Characters do not belong to this campaign: {', '.join(wrong_campaign)}")
 
     encounter = await enc_repo.create(campaign_id, body)
 
@@ -67,6 +75,9 @@ async def create_encounter(
         await enc_repo.add_participant(participant)
 
     encounter = await enc_repo.get_by_id(encounter.id)
+    response.headers["Location"] = (
+        f"/campaigns/{campaign_id}/sessions/{session_id}/encounters/{encounter.id}"
+    )
     return encounter.model_dump(mode="json")
 
 
@@ -77,6 +88,8 @@ async def get_encounter(campaign_id: UUID, enc_id: UUID, request: Request):
         enc = await repo.get_by_id(enc_id)
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    if enc.campaign_id != campaign_id:
+        raise HTTPException(status_code=404, detail="Encounter not found")
     return enc.model_dump(mode="json")
 
 
@@ -87,6 +100,8 @@ async def start_encounter(campaign_id: UUID, enc_id: UUID, request: Request):
         encounter = await repo.get_by_id(enc_id)
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    if encounter.campaign_id != campaign_id:
+        raise HTTPException(status_code=404, detail="Encounter not found")
 
     engine = CombatEngine(encounter)
     try:
@@ -109,6 +124,8 @@ async def next_turn(campaign_id: UUID, enc_id: UUID, request: Request):
         encounter = await repo.get_by_id(enc_id)
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    if encounter.campaign_id != campaign_id:
+        raise HTTPException(status_code=404, detail="Encounter not found")
 
     engine = CombatEngine(encounter)
     try:
@@ -133,6 +150,8 @@ async def update_participant(
         encounter = await repo.get_by_id(enc_id)
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    if encounter.campaign_id != campaign_id:
+        raise HTTPException(status_code=404, detail="Encounter not found")
 
     engine = CombatEngine(encounter)
 
@@ -178,6 +197,8 @@ async def end_encounter(campaign_id: UUID, enc_id: UUID, request: Request):
         encounter = await repo.get_by_id(enc_id)
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    if encounter.campaign_id != campaign_id:
+        raise HTTPException(status_code=404, detail="Encounter not found")
 
     engine = CombatEngine(encounter)
     try:

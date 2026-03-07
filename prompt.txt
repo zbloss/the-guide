@@ -1,12 +1,7 @@
-Background: We have now created a service called The Guide which starts by ingesting PDFs of Dungeons & Dragons (DnD) rules and campaign information. It first uses Docling to extract all of the text from the PDFs, and it then indexes that text using a new vectorless RAG system called PageIndex. PageIndex was designed to work on only one document at a time, which is where is excels tremendously in both cost and performance over traditional RAG systems. However this is a natural limitation of our service. Our goal is to provide a service that can be a source of information for DnD Players, Dungeon Masters (DMs), Monsters, as well as niche campaign specific information. This means we will need to ingest multiple PDFs, some of which (DnD Players Handbook, DM Guide, Monsters Guide, etc.) are general purpose information and will be used across all campaigns, while others are extremely specific to this particular campaign like an Adventurer's Guide and Campaign Guide. 
+Background: We have now created a service called The Guide which starts by ingesting PDFs of Dungeons & Dragons (DnD) rules and campaign information. It then uses this knowledge base to provide question answering functionality to a dungeon master. The DM may ask anything like "What is the standard AC for a bugbear?" into a text chat, The Guide then answers the question using local LLMs (optionally cloud LLMs) and it's knowledge base. It returns the answer and references to the DM. We have built out backend APIs for this system in python and now need to create a user interface to interact with this service. We wrote this application in rust, and then pivotted to Python for ease  of development and to try out new tools like PageIndex, but that did not work out and we now need to refactor into Rust.
 
 Tasks:
-1. Design a system that allows PageIndex to be utilized across multiple documents at once.
-    1. The first idea you should explore is one that I came up with. The idea is that you will create a separate PageIndex index for each PDF that you are given, and you will maintain a document index in PageIndex which maps each PDF index to a high-level summary of that index.
-    2. For example, Say you are storing the Players Handbook, Dungeon Masters Guide, and a Campaign PDF. This will result in four total indices. One for each of the Players Handbook, Dungeon Masters Guide, and Campaign PDF, and another index that stores a mapping between what the Players Handbook, Dungeon Masters Guide, and Campaign PDF are. 
-    3. Then on receiving a query or question, an AI Agent first determines which of the 3 indices need to be referenced, and then it executes queries against those indices.
-2. Ensure that all new code has been tested and is working as expected.
-3. Ensure all code is formatted correctly using `uv run ruff format` followed by `uv run ruff check --fix`.
-    1. Continue fixing all errors until `uv run ruff check` returns no errors.
+1. Review the application codebase in it's entirety.
+2. 
 
 Goal: Implement multi-document functionality for The Guide. 

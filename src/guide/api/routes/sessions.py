@@ -3,8 +3,9 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request, Response
 
+from guide.db.campaigns import CampaignRepository
 from guide.db.sessions import SessionEventRepository, SessionRepository
 from guide.errors import NotFoundError
 from guide.llm import prompts
@@ -35,9 +36,17 @@ async def list_sessions(campaign_id: UUID, request: Request):
 
 
 @router.post("/campaigns/{campaign_id}/sessions", status_code=201)
-async def create_session(campaign_id: UUID, body: CreateSessionRequest, request: Request):
+async def create_session(
+    campaign_id: UUID, body: CreateSessionRequest, request: Request, response: Response
+):
+    cam_repo = CampaignRepository(_db(request))
+    try:
+        await cam_repo.get_by_id(campaign_id)
+    except NotFoundError:
+        raise HTTPException(status_code=404, detail="Campaign not found")
     repo = SessionRepository(_db(request))
     session = await repo.create(campaign_id, body)
+    response.headers["Location"] = f"/campaigns/{campaign_id}/sessions/{session.id}"
     return session.model_dump(mode="json")
 
 
@@ -48,6 +57,8 @@ async def get_session(campaign_id: UUID, session_id: UUID, request: Request):
         session = await repo.get_by_id(session_id)
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    if session.campaign_id != campaign_id:
+        raise HTTPException(status_code=404, detail="Session not found")
     return session.model_dump(mode="json")
 
 
@@ -55,14 +66,23 @@ async def get_session(campaign_id: UUID, session_id: UUID, request: Request):
 async def delete_session(campaign_id: UUID, session_id: UUID, request: Request):
     repo = SessionRepository(_db(request))
     try:
-        await repo.delete(session_id)
+        session = await repo.get_by_id(session_id)
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    if session.campaign_id != campaign_id:
+        raise HTTPException(status_code=404, detail="Session not found")
+    await repo.delete(session_id)
 
 
 @router.post("/campaigns/{campaign_id}/sessions/{session_id}/start")
 async def start_session(campaign_id: UUID, session_id: UUID, request: Request):
     repo = SessionRepository(_db(request))
+    try:
+        session = await repo.get_by_id(session_id)
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    if session.campaign_id != campaign_id:
+        raise HTTPException(status_code=404, detail="Session not found")
     try:
         session = await repo.start_session(session_id)
     except NotFoundError as e:
@@ -73,6 +93,12 @@ async def start_session(campaign_id: UUID, session_id: UUID, request: Request):
 @router.post("/campaigns/{campaign_id}/sessions/{session_id}/end")
 async def end_session(campaign_id: UUID, session_id: UUID, request: Request):
     repo = SessionRepository(_db(request))
+    try:
+        session = await repo.get_by_id(session_id)
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    if session.campaign_id != campaign_id:
+        raise HTTPException(status_code=404, detail="Session not found")
     try:
         session = await repo.end_session(session_id)
     except NotFoundError as e:
@@ -89,10 +115,17 @@ async def list_events(campaign_id: UUID, session_id: UUID, request: Request):
 
 @router.post("/campaigns/{campaign_id}/sessions/{session_id}/events", status_code=201)
 async def create_event(
-    campaign_id: UUID, session_id: UUID, body: CreateSessionEventRequest, request: Request
+    campaign_id: UUID,
+    session_id: UUID,
+    body: CreateSessionEventRequest,
+    request: Request,
+    response: Response,
 ):
     repo = SessionEventRepository(_db(request))
     event = await repo.create(session_id, campaign_id, body)
+    response.headers["Location"] = (
+        f"/campaigns/{campaign_id}/sessions/{session_id}/events/{event.id}"
+    )
     return event.model_dump(mode="json")
 
 
@@ -103,7 +136,7 @@ async def session_summary(
     request: Request,
     perspective: str = Query("dm"),
 ):
-    persp = Perspective.player if perspective in ("player", "players") else Perspective.dm
+    persp = Perspective.player if perspective.lower() in ("player", "players") else Perspective.dm
 
     event_repo = SessionEventRepository(_db(request))
     if persp == Perspective.player:

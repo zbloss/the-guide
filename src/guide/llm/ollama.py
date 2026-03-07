@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 
+import httpx
 import openai
 
 from guide.errors import LlmError
@@ -59,7 +61,13 @@ class OllamaProvider(LlmClient):
         if req.think is not None:
             kwargs["extra_body"] = {"think": req.think}
 
-        response = await self._client.chat.completions.create(**kwargs)
+        try:
+            response = await self._client.chat.completions.create(**kwargs)
+        except (httpx.ConnectError, httpx.TimeoutException, asyncio.TimeoutError) as e:
+            raise LlmError(f"Ollama connection error: {e}") from e
+        except openai.APIError as e:
+            raise LlmError(f"Ollama API error: {e}") from e
+
         choice = response.choices[0] if response.choices else None
         if choice is None:
             raise LlmError("No choices returned from LLM")
@@ -76,9 +84,37 @@ class OllamaProvider(LlmClient):
             completion_tokens=completion_tokens,
         )
 
+    async def complete_stream(self, req: CompletionRequest):  # type: ignore[override]
+        """Async generator that yields content chunks as they arrive."""
+        model = self._model_for_task(req.task, req.model_override)
+        messages = [{"role": m.role, "content": m.content} for m in req.messages]
+
+        kwargs: dict = {"model": model, "messages": messages, "stream": True}
+        if req.temperature is not None:
+            kwargs["temperature"] = req.temperature
+        if req.max_tokens is not None:
+            kwargs["max_tokens"] = req.max_tokens
+        if req.think is not None:
+            kwargs["extra_body"] = {"think": req.think}
+
+        try:
+            stream = await self._client.chat.completions.create(**kwargs)
+            async for chunk in stream:
+                if chunk.choices and chunk.choices[0].delta.content:
+                    yield chunk.choices[0].delta.content
+        except (httpx.ConnectError, httpx.TimeoutException, asyncio.TimeoutError) as e:
+            raise LlmError(f"Ollama connection error: {e}") from e
+        except openai.APIError as e:
+            raise LlmError(f"Ollama API error: {e}") from e
+
     async def embed(self, req: EmbeddingRequest) -> list[float]:
         model = req.model_override or self._embedding_model
-        response = await self._client.embeddings.create(model=model, input=req.text)
+        try:
+            response = await self._client.embeddings.create(model=model, input=req.text)
+        except (httpx.ConnectError, httpx.TimeoutException, asyncio.TimeoutError) as e:
+            raise LlmError(f"Ollama connection error: {e}") from e
+        except openai.APIError as e:
+            raise LlmError(f"Ollama API error: {e}") from e
         if not response.data:
             raise LlmError("No embedding returned")
         return response.data[0].embedding
