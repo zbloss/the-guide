@@ -1,0 +1,9 @@
+target/
+.git/
+data/
+*.dll
+*.so
+src/
+pyproject.toml
+uv.lock
+.venv/

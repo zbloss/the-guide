@@ -1,0 +1,21 @@
+[package]
+name = "guide-db"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+guide-core = { workspace = true }
+sqlx = { workspace = true }
+qdrant-client = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+tokio = { workspace = true }
+futures = { workspace = true }
+
+[dev-dependencies]
+tokio      = { workspace = true }
+sqlx       = { workspace = true }
+guide-core = { workspace = true }

@@ -4,79 +4,82 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**The Guide** is an AI-powered assistant for Dungeon Masters running D&D campaigns. The backend has been fully migrated from Rust to Python (Phases 0–7 archived; Python implementation complete with 33+ passing tests).
+**The Guide** is an AI-powered assistant for Dungeon Masters running D&D campaigns. The backend is written in Rust with a fully validated test suite (55 tests, zero clippy lints).
 
 ## Tech Stack & Architectural Decisions
 
-- **Language:** Python 3.12+
-- **Dependency management:** `uv` + `pyproject.toml`
-- **HTTP framework:** FastAPI + uvicorn
-- **Models:** Pydantic v2 `BaseModel`
-- **Config:** `pydantic-settings` `BaseSettings` (`GUIDE__` prefix)
-- **Database:** `aiosqlite` (SQLite, same schema as Rust era)
-- **LLM SDK:** `openai.AsyncOpenAI` pointed at Ollama `/v1` endpoint
-- **Default model:** `tomng/nanbeige4.1:3b` via Ollama
-- **PDF Processing:** Docling (`DocumentConverter`) — no vision model required for well-formatted PDFs
-- **RAG:** Hybrid — Qdrant (`qdrant-client[async]`) for vector similarity search (primary), PageIndex tree (fallback when Qdrant unavailable)
-- **Embeddings:** `nomic-embed-text` via Ollama, 768-dim vectors stored in Qdrant collection `guide_chunks`
-- **PageIndex:** disk-based JSON trees at `data/indexes/` — used by MetaIndex doc selection and LLM-fallback retrieval path
+- **Language:** Rust stable 1.82+
+- **Build:** `cargo build`, `cargo test`, `cargo run -p guide-api`
+- **HTTP framework:** axum 0.8 + tokio 1
+- **Models:** `serde::{Serialize, Deserialize}` derived structs in `guide-core`
+- **Config:** `config` crate + `dotenvy`, `GUIDE__` prefix (flat `AppConfig`)
+- **Database:** sqlx 0.8 SQLite with `sqlx::migrate!()`, WAL mode, FK enforcement
+- **LLM SDK:** `async-openai` 0.27 pointed at Ollama `/v1` endpoint
+- **Default model:** configurable via `GUIDE__DEFAULT_MODEL` (Ollama)
+- **PDF Processing:** pdfium-render 0.8 + GLM-OCR vision, lopdf text fallback
+- **RAG:** Qdrant (optional) + PageIndex disk JSON fallback at `data/indexes/`
+- **Embeddings:** `nomic-embed-text` via Ollama, 768-dim, `guide_chunks` collection
 
 ## Key Constraints
 
-- Use `openai.AsyncOpenAI` for all LLM interactions (including Ollama) — no provider-specific SDKs.
-- PDF ingestion uses Docling, not vision models or pdfium.
+- All LLM interactions via `async-openai` Client pointing at Ollama or cloud endpoint.
+- PDF ingestion uses pdfium-render (requires `pdfium.dll`/`libpdfium.so` at runtime) + GLM-OCR.
 - PageIndex trees stored at `data/indexes/{campaign_id}/{doc_id}.json` (campaign) or `data/indexes/global/{doc_id}.json` (rulebooks).
-- All DB access via `aiosqlite` repositories — no SQLAlchemy ORM.
-- Qdrant is optional: set `GUIDE__QDRANT_URL` to connect; omit to use LLM-fallback retrieval.
-- Tests use `AsyncQdrantClient(location=":memory:")` for in-memory Qdrant (no server required).
+- All DB access via sqlx repositories (no ORM). Repositories use `&SqlitePool` references.
+- Qdrant is optional: set `GUIDE__QDRANT_URL` to connect; omit to disable vector search.
+- Tests use in-memory SQLite via `guide_db::init_sqlite(":memory:")` — no server required.
+- `AppState.llm` is `Arc<dyn LlmClient>` (not `Arc<LlmRouter>`) for trait method dispatch.
 
 ## Commands
 
 ```bash
-uv sync --extra dev       # install all dependencies
-uv run pytest             # run all 33 tests
-uv run pytest tests/test_combat.py -v    # run single test file
-uv run uvicorn guide.api.main:app --reload  # start dev server (port 8000)
-uv run ruff check src/    # lint
+cargo build                                  # build all crates
+cargo test --workspace                       # run all 55 tests
+cargo test -p guide-combat                   # run single crate tests
+cargo clippy --workspace -- -D warnings      # lint (must be zero errors)
+cargo run -p guide-api                       # start dev server (port 8000)
 ```
 
-## Source Structure
+## Workspace Structure
 
 ```
-src/guide/
-  config.py          AppConfig (pydantic-settings, GUIDE__ prefix)
-  errors.py          GuideError, NotFoundError, InvalidInputError, LlmError
-  models/            Pydantic domain models (campaign, character, session, encounter, document, playstyle, shared)
-  db/                aiosqlite repositories + migrations/001–006_*.sql
-  llm/               LlmClient ABC, OllamaProvider, CloudProvider, LlmRouter, prompts
-  pdf/               Docling extractor + PageIndex pipeline
-  combat/            CombatEngine, initiative helpers
-  api/               FastAPI app factory (main.py), AppState (state.py), routes/
-tests/
-  conftest.py        in-memory SQLite, mock LLM, AsyncClient fixture
-  test_combat.py     11 combat unit tests
-  test_repositories.py  12 DB integration tests
-  test_api.py        HTTP layer tests
-  test_rag.py        Qdrant RAG path tests (in-memory Qdrant)
+crates/
+  guide-core/     domain models, config, errors (no I/O deps)
+  guide-combat/   CombatEngine, initiative helpers
+  guide-llm/      LlmClient trait, OllamaProvider, LlmRouter, prompts
+  guide-db/       sqlx repositories + Qdrant helpers + migrations/
+  guide-pdf/      pdfium extractor, chunker, ingest pipeline
+  guide-api/      axum HTTP server (lib + bin), routes, AppState
+crates/guide-db/migrations/   001–006 SQL schema files
+data/indexes/                 PageIndex JSON trees (runtime)
+```
+
+## Test Files
+
+```
+crates/guide-combat/tests/combat_tests.rs       11 tests — CombatEngine
+crates/guide-db/tests/repository_tests.rs       12 tests — sqlx::test macro
+crates/guide-pdf/tests/chunker_tests.rs          9 tests — chunker unit tests
+crates/guide-api/tests/api_tests.rs             23 tests — tower::oneshot + MockLlm
 ```
 
 ## Feature Areas
 
 1. Combat Management (initiative, action economy, state tracking)
-2. Campaign Intelligent Assistant (context-aware Q&A, spoiler prevention via PageIndex)
+2. Campaign Intelligent Assistant (context-aware Q&A, SSE streaming)
 3. Backstory & Character Integration (LLM-extracted plot hooks)
 4. Meaningful Encounter Generation (RAG-grounded, party-aware)
 5. Rulebook & Mechanics Reference (D&D 5e core)
-6. PDF Parsing & Campaign Portability (Docling → PageIndex)
+6. PDF Parsing & Campaign Portability (pdfium → PageIndex)
 7. Playstyle Personalization (PlaystyleProfile)
 8. World Building & Narrative Tools
 9. Session Summaries (tiered: player recaps vs. DM master logs)
 
 ## Agent Files
 
-- `.claude/agents/python-backend-architect.md` — infrastructure, DB, LLM routing
-- `.claude/agents/dnd-pipeline-engineer.md` — Docling + PageIndex pipeline
+- `.claude/agents/rust-backend-architect.md` — infrastructure, DB, LLM routing
+- `.claude/agents/dnd-pipeline-engineer.md` — pdfium + PageIndex pipeline
 - `.claude/agents/dnd5e-systems-engineer.md` — combat engine, D&D mechanics
-- `.claude/agents/partner-dm-narrator.md` — RAG Q&A, narrative generation, session summaries
+- `.claude/agents/partner-dm-narrator.md` — RAG Q&A, SSE chat, session summaries
 
-The old Rust `crates/` directory remains as reference — delete once fully validated.
+The Python `src/` directory remains for reference — delete once E2E validation is complete.

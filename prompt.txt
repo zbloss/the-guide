@@ -1,13 +1,15 @@
-Background: We have now created a service called The Guide which starts by ingesting PDFs of Dungeons & Dragons (DnD) rules and campaign information. It then uses this knowledge base to provide question answering functionality to a dungeon master. The DM may ask anything like "What is the standard AC for a bugbear?" into a text chat, The Guide then answers the question using local LLMs (optionally cloud LLMs) and it's knowledge base. It returns the answer and references to the DM. We have built out backend APIs for this system in python and now need to create a user interface to interact with this service. We wrote this application in rust, and then pivotted to Python for ease  of development and to try out new tools like PageIndex, but that did not work out and we now need to refactor into Rust.
+Background: We have now created a service called The Guide which starts by ingesting PDFs of Dungeons & Dragons (DnD) rules and campaign information. It then uses this knowledge base to provide question answering functionality to a dungeon master. The DM may ask anything like "What is the standard AC for a bugbear?" into a text chat, The Guide then answers the question using local LLMs (optionally cloud LLMs) and it's knowledge base. It returns the answer and references to the DM. We have built out backend APIs for this system in rust and now need to create a user interface to interact with this service. This frontend should be built in a web framework of your choosing. Understand that I plan to package the frontend and backend together into an application using [Tauri](https://v2.tauri.app/start/).
+
+I have started by creating an empty tauri app in ./guide-frontend which has been configured to use React JS, Typescript, and Bun.
+
+For now don't spend too much effort making the frontend look nice. It's much more important that the functionality provided by the backend guide rust services is exposed to the frontend.
 
 Tasks:
 1. Review the application codebase in it's entirety.
-2. Replace TODO.md with the tasks that need to be done to complete this migration
-4. Systematically update all of the python code to be in Rust.
-5. Copy over all tests into Rust and assert they are all passing.
-6. Perform an end to end ingestion of PDFs located in `C:\Users\altoz\Documents\dnd\Land of Vampires` through to example question answering like is being done in `scripts/test_ingest.py`.
-7. Keep your TODO list up to date after each step.
-8. Update all subagents in .claude/agents to be Rust focussed.
-9. Update CLAUDE.md to be rust focussed. 
+2. Create a TODO.md with the tasks that need to be done to complete this frontend. Before you start implementing any changes, this TODO.md file must be extremely well documented so that we can return to this work in case we hit our daily or weekly token limit.
+3. Review all Rust backend APIs to get an understanding of what functionality this service provides.
+4. Systematically create an interactive and intuitive user interface in a web framework that gives the user the ability to interact with all of the functionality provided by the backend apis.
+5. Keep your TODO list up to date after each step.
+6. Review your work and document any next steps for yourself or me in the TODO.
 
-Goal: Refactor this application from Python into Rust. 
+Goal: Build a frontend user interface for The Guide. 

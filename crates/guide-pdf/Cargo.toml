@@ -1,0 +1,22 @@
+[package]
+name = "guide-pdf"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+guide-core = { workspace = true }
+guide-llm = { workspace = true }
+guide-db = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+futures = { workspace = true }
+
+qdrant-client = { workspace = true }
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+pdfium-render = { workspace = true }
