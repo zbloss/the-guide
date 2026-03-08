@@ -3,6 +3,10 @@ name = "guide-api"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "guide_api"
+path = "src/lib.rs"
+
 [[bin]]
 name = "guide-api"
 path = "src/main.rs"
@@ -25,6 +29,18 @@ tracing       = { workspace = true }
 tracing-subscriber = { workspace = true }
 uuid          = { workspace = true }
 chrono        = { workspace = true }
+dotenvy       = { workspace = true }
+futures       = { workspace = true }
+async-stream  = { workspace = true }
 
-# Qdrant (optional — service degrades gracefully if unavailable)
 qdrant-client = { workspace = true }
+
+utoipa        = { workspace = true }
+utoipa-axum   = { workspace = true }
+utoipa-swagger-ui = { workspace = true }
+
+[dev-dependencies]
+tokio       = { workspace = true }
+sqlx        = { workspace = true }
+async-trait = { workspace = true }
+serde_json  = { workspace = true }

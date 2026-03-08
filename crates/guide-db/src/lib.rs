@@ -8,32 +8,24 @@ pub mod sessions;
 pub use sqlx::SqlitePool;
 
 use guide_core::{GuideError, Result};
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 use std::str::FromStr;
 
-/// Initialise the SQLite connection pool and run any pending migrations.
 pub async fn init_sqlite(database_url: &str) -> Result<SqlitePool> {
     let options = SqliteConnectOptions::from_str(database_url)
-        .map_err(|e| GuideError::Database(e.to_string()))?
+        .map_err(|e| GuideError::Internal(e.to_string()))?
         .create_if_missing(true)
-        .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
+        .journal_mode(SqliteJournalMode::Wal)
         .foreign_keys(true);
 
     let pool = SqlitePoolOptions::new()
         .max_connections(10)
         .connect_with(options)
-        .await
-        .map_err(|e| GuideError::Database(e.to_string()))?;
+        .await?;
 
-    run_migrations(&pool).await?;
+    sqlx::migrate!("./migrations").run(&pool).await.map_err(|e| {
+        GuideError::Internal(format!("Migration failed: {e}"))
+    })?;
 
     Ok(pool)
-}
-
-async fn run_migrations(pool: &SqlitePool) -> Result<()> {
-    sqlx::migrate!("./migrations")
-        .run(pool)
-        .await
-        .map_err(|e| GuideError::Database(e.to_string()))?;
-    Ok(())
 }

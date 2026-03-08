@@ -46,6 +46,55 @@ Detailed technical requirements and the feature backlog are maintained in the [T
 
 This project is currently in the **requirements and planning phase**. The files in this repository serve as the blueprint for a fleet of AI agents that will soon begin the implementation process.
 
+## To Test
+
+#### 1. Health check
+
+curl http://localhost:8000/health
+
+#### 2. Create campaign
+
+CAMP=$(curl -s -X POST http://localhost:8000/campaigns \
+ -H "Content-Type: application/json" \
+ -d '{"name":"Land of Vampires","game_system":"dnd5e"}' | jq -r .id)
+
+#### 3. Upload PDF
+
+DOC=$(curl -s -X POST http://localhost:8000/campaigns/$CAMP/documents \
+ -F "file=@/mnt/c/Users/altoz/Documents/dnd/Land of Vampires/Land of Vampires Full Campaign.pdf" | jq -r .id)
+
+#### 4. Trigger ingestion
+
+curl -X POST http://localhost:8000/campaigns/$CAMP/documents/$DOC/ingest
+
+#### 5. Poll until completed
+
+while true; do
+STATUS=$(curl -s http://localhost:8000/campaigns/$CAMP/documents/$DOC | jq -r .ingestion_status)
+    echo "Status: $STATUS"; [ "$STATUS" = "completed" ] && break || sleep 5
+done
+
+#### 6. Chat (SSE stream)
+
+curl -N http://localhost:8000/campaigns/$CAMP/chat \
+ -H "Content-Type: application/json" \
+ -d '{"message":"Who is Draego and what are his goals?","perspective":"dm"}'
+
+#### 7. Encounter generation
+
+curl -X POST http://localhost:8000/campaigns/$CAMP/encounters/generate \
+ -H "Content-Type: application/json" \
+ -d '{"context":"The party enters Castle Io Keep for the first time","party_level":8}'
+
+Prerequisites before running:
+
+- docker compose up -d (or cargo run -p guide-api if running locally)
+- Ollama running with the required models pulled:
+  ollama pull nomic-embed-text
+  ollama pull qwen3.5:9b
+  ollama pull glm-ocr
+- jq installed (for parsing JSON responses)
+
 ---
 
 _Developed for DMs who want to spend less time checking tables and more time telling stories._

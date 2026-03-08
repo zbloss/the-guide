@@ -1,19 +1,36 @@
-//! Stage 1 of the ingestion pipeline: extract per-page text from a PDF.
-//!
-//! Uses pdfium-render to render each page to a small JPEG, then sends it to
-//! GLM-OCR via the vision API. Falls back to whole-document mode if pdfium
-//! fails to load at runtime.
+use std::path::Path;
+use std::sync::OnceLock;
 
-use std::path::{Path, PathBuf};
-
-use guide_core::{GuideError, Result, models::DocumentKind};
-use guide_llm::{LlmClient, LlmTask, VisionRequest, prompts};
-use image::ImageFormat;
+use guide_core::{models::DocumentKind, GuideError, Result};
+use guide_llm::{prompts, LlmClient, LlmTask, VisionRequest};
 use serde::Deserialize;
 
-/// Structured extraction result for one page.
+// Embed libpdfium.so at compile time (downloaded by build.rs into OUT_DIR).
+static PDFIUM_BYTES: &[u8] = include_bytes!(env!("PDFIUM_LIB_PATH"));
+
+static PDFIUM_LIB_PATH: OnceLock<std::path::PathBuf> = OnceLock::new();
+
+/// Writes the embedded pdfium binary to a temp directory on first call,
+/// then returns the stable path for subsequent calls.
+fn pdfium_lib_path() -> Result<&'static std::path::PathBuf> {
+    if let Some(p) = PDFIUM_LIB_PATH.get() {
+        return Ok(p);
+    }
+
+    let dir = std::env::temp_dir().join("guide-pdfium");
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| GuideError::PdfProcessing(format!("failed to create pdfium temp dir: {e}")))?;
+
+    let path = dir.join("libpdfium.so");
+    if !path.exists() {
+        std::fs::write(&path, PDFIUM_BYTES)
+            .map_err(|e| GuideError::PdfProcessing(format!("failed to write pdfium lib: {e}")))?;
+    }
+
+    Ok(PDFIUM_LIB_PATH.get_or_init(|| path))
+}
+
 pub struct PageExtraction {
-    /// 1-based page index (0 in whole-doc fallback mode)
     pub page_num: u32,
     pub raw_text: String,
     pub headings: Vec<String>,
@@ -29,8 +46,6 @@ struct PageOcrResponse {
     is_dm_only: bool,
 }
 
-/// Extract text from a PDF using pdfium per-page rendering + GLM-OCR.
-/// Falls back to whole-document mode if pdfium cannot load.
 pub async fn extract_pages(
     pdf_path: &Path,
     document_kind: &DocumentKind,
@@ -43,38 +58,29 @@ pub async fn extract_pages(
         DocumentKind::Campaign => prompts::ocr_campaign_page_prompt(),
     };
 
-    // Render all pages to JPEG in a blocking thread (pdfium types are not Send)
     let path_buf = pdf_path.to_path_buf();
-    let page_images: Result<Vec<(u32, Vec<u8>)>> =
-        tokio::task::spawn_blocking(move || render_pages_to_jpeg(&path_buf))
-            .await
-            .map_err(|e| GuideError::PdfProcessing(format!("Render task panicked: {e}")))?;
+    let pages = tokio::task::spawn_blocking(move || render_pages_to_jpeg(&path_buf))
+        .await
+        .map_err(|e| GuideError::PdfProcessing(format!("render task panicked: {e}")))??;
 
-    match page_images {
-        Ok(pages) if !pages.is_empty() => {
-            tracing::info!("Rendered {} pages via pdfium from {:?}", pages.len(), pdf_path);
-            ocr_pages(pages, llm, ocr_model, prompt, delay_ms).await
-        }
-        Ok(_) => {
-            tracing::warn!("pdfium returned 0 pages; falling back to whole-document mode");
-            whole_doc_fallback(pdf_path, llm, ocr_model, prompt).await
-        }
-        Err(e) => {
-            tracing::warn!("pdfium rendering failed ({e}); falling back to whole-document mode");
-            whole_doc_fallback(pdf_path, llm, ocr_model, prompt).await
-        }
+    if pages.is_empty() {
+        return Err(GuideError::PdfProcessing(format!(
+            "pdfium rendered 0 pages from {:?}",
+            pdf_path
+        )));
     }
+
+    tracing::info!("Rendered {} pages via pdfium from {:?}", pages.len(), pdf_path);
+    ocr_pages(pages, llm, ocr_model, prompt, delay_ms).await
 }
 
-/// Render every page to a small JPEG. Runs in a blocking thread.
-/// 600px width targets ~100KB per page, keeping images well within GLM-OCR's
-/// context window even for image-heavy or unusually-proportioned pages.
-fn render_pages_to_jpeg(pdf_path: &PathBuf) -> Result<Vec<(u32, Vec<u8>)>> {
+fn render_pages_to_jpeg(pdf_path: &std::path::PathBuf) -> Result<Vec<(u32, Vec<u8>)>> {
+    use image::ImageFormat;
     use pdfium_render::prelude::*;
 
+    let lib_path = pdfium_lib_path()?;
     let pdfium = Pdfium::new(
-        Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("./"))
-            .or_else(|_| Pdfium::bind_to_system_library())
+        Pdfium::bind_to_library(lib_path)
             .map_err(|e| GuideError::PdfProcessing(format!("pdfium load failed: {e}")))?,
     );
 
@@ -97,22 +103,23 @@ fn render_pages_to_jpeg(pdf_path: &PathBuf) -> Result<Vec<(u32, Vec<u8>)>> {
 
         let bitmap = page
             .render_with_config(&render_config)
-            .map_err(|e| GuideError::PdfProcessing(format!("Render page {page_num}: {e}")))?;
+            .map_err(|e| GuideError::PdfProcessing(format!("render page {page_num}: {e}")))?;
 
         let image = bitmap.as_image();
         let mut jpeg_bytes: Vec<u8> = Vec::new();
         image
-            .write_to(&mut std::io::Cursor::new(&mut jpeg_bytes), ImageFormat::Jpeg)
-            .map_err(|e| GuideError::PdfProcessing(format!("Encode page {page_num}: {e}")))?;
+            .write_to(
+                &mut std::io::Cursor::new(&mut jpeg_bytes),
+                ImageFormat::Jpeg,
+            )
+            .map_err(|e| GuideError::PdfProcessing(format!("encode page {page_num}: {e}")))?;
 
-        tracing::debug!("Page {page_num}/{page_count}: {} JPEG bytes", jpeg_bytes.len());
         result.push((page_num, jpeg_bytes));
     }
 
     Ok(result)
 }
 
-/// Send each rendered page image to GLM-OCR and collect extractions.
 async fn ocr_pages(
     pages: Vec<(u32, Vec<u8>)>,
     llm: &dyn LlmClient,
@@ -166,24 +173,4 @@ async fn ocr_pages(
     }
 
     Ok(extractions)
-}
-
-/// Whole-document fallback: not supported.
-///
-/// Sending a raw PDF file to a vision model (which expects JPEG/PNG) will
-/// produce a malformed prompt of tens of millions of tokens and crash the
-/// inference engine. Return a clear error so the operator knows to install
-/// the pdfium library instead.
-async fn whole_doc_fallback(
-    pdf_path: &Path,
-    _llm: &dyn LlmClient,
-    _ocr_model: &str,
-    _prompt: &str,
-) -> Result<Vec<PageExtraction>> {
-    Err(GuideError::PdfProcessing(format!(
-        "pdfium failed to render pages from {:?}. \
-        Ensure the pdfium shared library is present (libpdfium.so on Linux, \
-        pdfium.dll on Windows) in the working directory or system library path.",
-        pdf_path
-    )))
 }

@@ -2,9 +2,9 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::{CharacterType, Condition};
+use super::shared::{CharacterType, Condition};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct Character {
     pub id: Uuid,
     pub campaign_id: Uuid,
@@ -16,7 +16,6 @@ pub struct Character {
     pub max_hp: i32,
     pub current_hp: i32,
     pub armor_class: i32,
-    /// Walking speed in feet
     pub speed: i32,
     pub ability_scores: AbilityScores,
     pub conditions: Vec<Condition>,
@@ -26,7 +25,7 @@ pub struct Character {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema, Default)]
 pub struct AbilityScores {
     pub strength: i32,
     pub dexterity: i32,
@@ -37,9 +36,9 @@ pub struct AbilityScores {
 }
 
 impl AbilityScores {
-    /// D&D 5e modifier formula: (score - 10) / 2, floor
+    /// D&D 5e modifier formula: floor((score - 10) / 2)
     pub fn modifier(score: i32) -> i32 {
-        (score - 10) / 2
+        (score - 10).div_euclid(2)
     }
 
     pub fn initiative_modifier(&self) -> i32 {
@@ -47,7 +46,7 @@ impl AbilityScores {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct Backstory {
     pub raw_text: String,
     pub extracted_hooks: Vec<PlotHook>,
@@ -56,7 +55,7 @@ pub struct Backstory {
     pub secrets: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct PlotHook {
     pub id: Uuid,
     pub character_id: Uuid,
@@ -66,7 +65,7 @@ pub struct PlotHook {
     pub llm_extracted: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum HookPriority {
     Low,
@@ -75,9 +74,7 @@ pub enum HookPriority {
     Critical,
 }
 
-// ── Request/Response types ────────────────────────────────────────────────────
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct CreateCharacterRequest {
     pub name: String,
     pub character_type: CharacterType,
@@ -91,7 +88,7 @@ pub struct CreateCharacterRequest {
     pub backstory_text: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct UpdateCharacterRequest {
     pub current_hp: Option<i32>,
     pub conditions: Option<Vec<Condition>>,

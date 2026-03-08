@@ -5,18 +5,18 @@ edition = "2021"
 
 [dependencies]
 guide-core = { workspace = true }
-guide-llm  = { workspace = true }
-guide-db   = { workspace = true }
-tokio = { workspace = true }
-tracing = { workspace = true }
+guide-llm = { workspace = true }
+guide-db = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
 uuid = { workspace = true }
+chrono = { workspace = true }
+futures = { workspace = true }
+
 qdrant-client = { workspace = true }
-image = { workspace = true }
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
 
-# PDF → image rendering (requires pdfium.dll at runtime beside the binary)
-pdfium-render = { version = "0.8", features = ["image"] }
-
-[features]
-default = []
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+pdfium-render = { workspace = true }

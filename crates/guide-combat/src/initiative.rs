@@ -1,6 +1,5 @@
 use rand::Rng;
 
-/// A participant with their initiative entry (before creating a full CombatParticipant).
 #[derive(Debug, Clone)]
 pub struct InitiativeEntry {
     pub name: String,
@@ -9,12 +8,10 @@ pub struct InitiativeEntry {
     pub total: i32,
 }
 
-/// Roll a d20 and return the result.
 pub fn roll_d20() -> i32 {
-    rand::thread_rng().gen_range(1..=20)
+    rand::rng().random_range(1..=20)
 }
 
-/// Roll initiative for a participant given their DEX modifier.
 pub fn roll_initiative(dex_modifier: i32) -> InitiativeEntry {
     let roll = roll_d20();
     InitiativeEntry {
@@ -25,8 +22,7 @@ pub fn roll_initiative(dex_modifier: i32) -> InitiativeEntry {
     }
 }
 
-/// Sort a list of initiative entries by total descending.
-/// Ties are broken by modifier (higher wins), then randomly.
+/// Sort entries by total DESC, then modifier DESC, then id string (not applicable here).
 pub fn sort_initiative(mut entries: Vec<InitiativeEntry>) -> Vec<InitiativeEntry> {
     entries.sort_by(|a, b| {
         b.total

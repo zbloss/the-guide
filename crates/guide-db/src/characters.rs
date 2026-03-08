@@ -4,8 +4,7 @@ use uuid::Uuid;
 
 use guide_core::{
     models::{
-        AbilityScores, Backstory, Character, CharacterType, Condition,
-        CreateCharacterRequest, UpdateCharacterRequest,
+        Backstory, Character, CharacterType, CreateCharacterRequest, UpdateCharacterRequest,
     },
     GuideError, Result,
 };
@@ -19,17 +18,12 @@ impl<'a> CharacterRepository<'a> {
         Self { pool }
     }
 
-    pub async fn create(
-        &self,
-        campaign_id: Uuid,
-        req: CreateCharacterRequest,
-    ) -> Result<Character> {
+    pub async fn create(&self, campaign_id: Uuid, req: CreateCharacterRequest) -> Result<Character> {
         let id = Uuid::new_v4();
         let now = Utc::now();
         let char_type_str = char_type_to_str(&req.character_type);
         let ability_scores = req.ability_scores.unwrap_or_default();
-        let ability_json = serde_json::to_string(&ability_scores)
-            .map_err(|e| GuideError::Serialization(e.to_string()))?;
+        let ability_json = serde_json::to_string(&ability_scores)?;
         let level = req.level.unwrap_or(1);
         let speed = req.speed.unwrap_or(30);
 
@@ -48,18 +42,17 @@ impl<'a> CharacterRepository<'a> {
         .bind(&req.race)
         .bind(level)
         .bind(req.max_hp)
-        .bind(req.max_hp) // current_hp starts at max
+        .bind(req.max_hp)
         .bind(req.armor_class)
         .bind(speed)
         .bind(&ability_json)
-        .bind("[]") // no initial conditions
-        .bind(Option::<String>::None) // backstory populated later
-        .bind(1i32) // is_alive = true
+        .bind("[]")
+        .bind(Option::<String>::None)
+        .bind(1i32)
         .bind(now.to_rfc3339())
         .bind(now.to_rfc3339())
         .execute(self.pool)
-        .await
-        .map_err(|e: sqlx::Error| GuideError::Database(e.to_string()))?;
+        .await?;
 
         self.get_by_id(id).await
     }
@@ -73,8 +66,7 @@ impl<'a> CharacterRepository<'a> {
         )
         .bind(id.to_string())
         .fetch_optional(self.pool)
-        .await
-        .map_err(|e: sqlx::Error| GuideError::Database(e.to_string()))?
+        .await?
         .ok_or_else(|| GuideError::NotFound(format!("Character {id}")))?;
 
         row_to_character(row)
@@ -89,8 +81,7 @@ impl<'a> CharacterRepository<'a> {
         )
         .bind(campaign_id.to_string())
         .fetch_all(self.pool)
-        .await
-        .map_err(|e: sqlx::Error| GuideError::Database(e.to_string()))?;
+        .await?;
 
         rows.into_iter().map(row_to_character).collect()
     }
@@ -105,20 +96,17 @@ impl<'a> CharacterRepository<'a> {
                 .bind(&now)
                 .bind(&id_str)
                 .execute(self.pool)
-                .await
-                .map_err(|e: sqlx::Error| GuideError::Database(e.to_string()))?;
+                .await?;
         }
 
         if let Some(conditions) = &req.conditions {
-            let cond_json = serde_json::to_string(conditions)
-                .map_err(|e| GuideError::Serialization(e.to_string()))?;
+            let json = serde_json::to_string(conditions)?;
             sqlx::query("UPDATE characters SET conditions = ?, updated_at = ? WHERE id = ?")
-                .bind(&cond_json)
+                .bind(&json)
                 .bind(&now)
                 .bind(&id_str)
                 .execute(self.pool)
-                .await
-                .map_err(|e: sqlx::Error| GuideError::Database(e.to_string()))?;
+                .await?;
         }
 
         if let Some(alive) = req.is_alive {
@@ -127,10 +115,21 @@ impl<'a> CharacterRepository<'a> {
                 .bind(&now)
                 .bind(&id_str)
                 .execute(self.pool)
-                .await
-                .map_err(|e: sqlx::Error| GuideError::Database(e.to_string()))?;
+                .await?;
         }
 
+        self.get_by_id(id).await
+    }
+
+    pub async fn update_backstory(&self, id: Uuid, backstory: &Backstory) -> Result<Character> {
+        let now = Utc::now().to_rfc3339();
+        let json = serde_json::to_string(backstory)?;
+        sqlx::query("UPDATE characters SET backstory = ?, updated_at = ? WHERE id = ?")
+            .bind(&json)
+            .bind(&now)
+            .bind(id.to_string())
+            .execute(self.pool)
+            .await?;
         self.get_by_id(id).await
     }
 
@@ -138,8 +137,7 @@ impl<'a> CharacterRepository<'a> {
         let affected = sqlx::query("DELETE FROM characters WHERE id = ?")
             .bind(id.to_string())
             .execute(self.pool)
-            .await
-            .map_err(|e: sqlx::Error| GuideError::Database(e.to_string()))?
+            .await?
             .rows_affected();
 
         if affected == 0 {
@@ -147,73 +145,35 @@ impl<'a> CharacterRepository<'a> {
         }
         Ok(())
     }
-
-    /// Persist an LLM-extracted backstory back to the character record.
-    pub async fn set_backstory(&self, id: Uuid, backstory: &Backstory) -> Result<()> {
-        let json = serde_json::to_string(backstory)
-            .map_err(|e| GuideError::Serialization(e.to_string()))?;
-        sqlx::query(
-            "UPDATE characters SET backstory = ?, updated_at = ? WHERE id = ?",
-        )
-        .bind(&json)
-        .bind(Utc::now().to_rfc3339())
-        .bind(id.to_string())
-        .execute(self.pool)
-        .await
-        .map_err(|e: sqlx::Error| GuideError::Database(e.to_string()))?;
-        Ok(())
-    }
 }
 
-// ── Row mapping ───────────────────────────────────────────────────────────────
-
 fn row_to_character(row: SqliteRow) -> Result<Character> {
-    let id_str: String = row.try_get("id").map_err(|e| GuideError::Database(e.to_string()))?;
-    let campaign_id_str: String =
-        row.try_get("campaign_id").map_err(|e| GuideError::Database(e.to_string()))?;
-    let char_type_str: String =
-        row.try_get("character_type").map_err(|e| GuideError::Database(e.to_string()))?;
-    let ability_json: String =
-        row.try_get("ability_scores").map_err(|e| GuideError::Database(e.to_string()))?;
-    let conditions_json: String =
-        row.try_get("conditions").map_err(|e| GuideError::Database(e.to_string()))?;
-    let backstory_json: Option<String> =
-        row.try_get("backstory").map_err(|e| GuideError::Database(e.to_string()))?;
-    let is_alive_int: i32 =
-        row.try_get("is_alive").map_err(|e| GuideError::Database(e.to_string()))?;
-    let created_at_str: String =
-        row.try_get("created_at").map_err(|e| GuideError::Database(e.to_string()))?;
-    let updated_at_str: String =
-        row.try_get("updated_at").map_err(|e| GuideError::Database(e.to_string()))?;
-
-    let ability_scores: AbilityScores =
-        serde_json::from_str(&ability_json).unwrap_or_default();
-    let conditions: Vec<Condition> =
-        serde_json::from_str(&conditions_json).unwrap_or_default();
-    let backstory: Option<Backstory> = backstory_json
-        .as_deref()
-        .and_then(|s| serde_json::from_str(s).ok());
+    let id_str: String = row.try_get("id")?;
+    let campaign_id_str: String = row.try_get("campaign_id")?;
+    let char_type_str: String = row.try_get("character_type")?;
+    let ability_json: String = row.try_get("ability_scores")?;
+    let conditions_json: String = row.try_get("conditions")?;
+    let backstory_json: Option<String> = row.try_get("backstory")?;
+    let is_alive_int: i32 = row.try_get("is_alive")?;
+    let created_at_str: String = row.try_get("created_at")?;
+    let updated_at_str: String = row.try_get("updated_at")?;
 
     Ok(Character {
         id: Uuid::parse_str(&id_str).map_err(|e| GuideError::Internal(e.to_string()))?,
         campaign_id: Uuid::parse_str(&campaign_id_str)
             .map_err(|e| GuideError::Internal(e.to_string()))?,
-        name: row.try_get("name").map_err(|e| GuideError::Database(e.to_string()))?,
+        name: row.try_get("name")?,
         character_type: parse_char_type(&char_type_str),
-        class: row.try_get("class").map_err(|e| GuideError::Database(e.to_string()))?,
-        race: row.try_get("race").map_err(|e| GuideError::Database(e.to_string()))?,
-        level: row.try_get("level").map_err(|e| GuideError::Database(e.to_string()))?,
-        max_hp: row.try_get("max_hp").map_err(|e| GuideError::Database(e.to_string()))?,
-        current_hp: row
-            .try_get("current_hp")
-            .map_err(|e| GuideError::Database(e.to_string()))?,
-        armor_class: row
-            .try_get("armor_class")
-            .map_err(|e| GuideError::Database(e.to_string()))?,
-        speed: row.try_get("speed").map_err(|e| GuideError::Database(e.to_string()))?,
-        ability_scores,
-        conditions,
-        backstory,
+        class: row.try_get("class")?,
+        race: row.try_get("race")?,
+        level: row.try_get("level")?,
+        max_hp: row.try_get("max_hp")?,
+        current_hp: row.try_get("current_hp")?,
+        armor_class: row.try_get("armor_class")?,
+        speed: row.try_get("speed")?,
+        ability_scores: serde_json::from_str(&ability_json).unwrap_or_default(),
+        conditions: serde_json::from_str(&conditions_json).unwrap_or_default(),
+        backstory: backstory_json.as_deref().and_then(|s| serde_json::from_str(s).ok()),
         is_alive: is_alive_int != 0,
         created_at: created_at_str.parse().unwrap_or_else(|_| Utc::now()),
         updated_at: updated_at_str.parse().unwrap_or_else(|_| Utc::now()),
@@ -231,7 +191,6 @@ fn char_type_to_str(t: &CharacterType) -> &'static str {
 fn parse_char_type(s: &str) -> CharacterType {
     match s {
         "pc" => CharacterType::Pc,
-        "npc" => CharacterType::Npc,
         "monster" => CharacterType::Monster,
         _ => CharacterType::Npc,
     }

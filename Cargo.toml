@@ -6,6 +6,7 @@ members = [
     "crates/guide-pdf",
     "crates/guide-combat",
     "crates/guide-api",
+    "guide-frontend/src-tauri"
 ]
 resolver = "2"
 
@@ -19,11 +20,16 @@ axum = { version = "0.8", features = ["multipart"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["trace", "cors"] }
 
+# OpenAPI / Swagger
+utoipa = { version = "5", features = ["axum_extras", "uuid", "chrono"] }
+utoipa-axum = "0.2"
+utoipa-swagger-ui = { version = "9", features = ["axum"] }
+
 # LLM (OpenAI-compatible SDK — used for Ollama, OpenAI, Gemini)
 async-openai = "0.27"
 
 # Database
-sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio", "uuid", "chrono", "migrate"] }
+sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio", "uuid", "chrono", "migrate", "macros"] }
 qdrant-client = "1"
 
 # Serialization
@@ -43,14 +49,20 @@ config = "0.14"
 dotenvy = "0.15"
 
 # Utilities
-uuid = { version = "1", features = ["v4", "serde"] }
+uuid = { version = "1", features = ["v4", "v5", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
+rand = "0.9"
 base64 = "0.22"
-image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+futures = "0.3"
+async-stream = "0.3"
+
+# PDF
+pdfium-render = { version = "0.8", features = ["image"] }
+lopdf = "0.32"
 
 # Workspace crates
-guide-core = { path = "crates/guide-core" }
-guide-llm  = { path = "crates/guide-llm" }
-guide-db   = { path = "crates/guide-db" }
-guide-pdf  = { path = "crates/guide-pdf" }
+guide-core   = { path = "crates/guide-core" }
+guide-llm    = { path = "crates/guide-llm" }
+guide-db     = { path = "crates/guide-db" }
+guide-pdf    = { path = "crates/guide-pdf" }
 guide-combat = { path = "crates/guide-combat" }

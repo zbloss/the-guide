@@ -2,10 +2,10 @@ use axum::{
     extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
-    routing::{delete, get, post, put},
+    routing::get,
     Json, Router,
 };
-use guide_core::models::{CreateCampaignRequest, UpdateCampaignRequest};
+use guide_core::models::{Campaign, CreateCampaignRequest, UpdateCampaignRequest};
 use guide_db::campaigns::CampaignRepository;
 use uuid::Uuid;
 
@@ -20,119 +20,94 @@ pub fn router() -> Router<AppState> {
         )
 }
 
-async fn list_campaigns(State(state): State<AppState>) -> impl IntoResponse {
+#[utoipa::path(
+    get,
+    path = "/campaigns",
+    responses(
+        (status = 200, description = "List all campaigns", body = [Campaign])
+    )
+)]
+async fn list_campaigns(State(state): State<AppState>) -> Result<impl IntoResponse, crate::error::AppError> {
     let repo = CampaignRepository::new(&state.db);
-    match repo.list().await {
-        Ok(campaigns) => (StatusCode::OK, Json(campaigns)).into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response(),
-    }
+    let campaigns = repo.list().await?;
+    Ok(Json(campaigns))
 }
 
+#[utoipa::path(
+    post,
+    path = "/campaigns",
+    request_body = CreateCampaignRequest,
+    responses(
+        (status = 201, description = "Campaign created successfully", body = Campaign)
+    )
+)]
 async fn create_campaign(
     State(state): State<AppState>,
     Json(req): Json<CreateCampaignRequest>,
-) -> impl IntoResponse {
+) -> Result<impl IntoResponse, crate::error::AppError> {
     let repo = CampaignRepository::new(&state.db);
-    match repo.create(req).await {
-        Ok(campaign) => {
-            // Phase 1: also create Qdrant collection
-            if let Some(qdrant) = &state.qdrant {
-                let vector_size = state.config.qdrant.vector_size;
-                let campaign_id = campaign.id.to_string();
-                let qdrant = qdrant.clone();
-                tokio::spawn(async move {
-                    if let Err(e) =
-                        guide_db::qdrant::create_campaign_collection(&qdrant, &campaign_id, vector_size).await
-                    {
-                        tracing::warn!("Failed to create Qdrant collection: {e}");
-                    }
-                });
-            }
-            (StatusCode::CREATED, Json(campaign)).into_response()
-        }
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response(),
-    }
+    let campaign = repo.create(req).await?;
+    Ok((StatusCode::CREATED, Json(campaign)))
 }
 
+#[utoipa::path(
+    get,
+    path = "/campaigns/{id}",
+    params(
+        ("id" = Uuid, Path, description = "Campaign ID")
+    ),
+    responses(
+        (status = 200, description = "Found campaign", body = Campaign),
+        (status = 404, description = "Campaign not found")
+    )
+)]
 async fn get_campaign(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
-) -> impl IntoResponse {
+) -> Result<impl IntoResponse, crate::error::AppError> {
     let repo = CampaignRepository::new(&state.db);
-    match repo.get_by_id(id).await {
-        Ok(campaign) => (StatusCode::OK, Json(campaign)).into_response(),
-        Err(guide_core::GuideError::NotFound(msg)) => (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({ "error": msg })),
-        )
-            .into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response(),
-    }
+    let campaign = repo.get_by_id(id).await?;
+    Ok(Json(campaign))
 }
 
+#[utoipa::path(
+    put,
+    path = "/campaigns/{id}",
+    params(
+        ("id" = Uuid, Path, description = "Campaign ID")
+    ),
+    request_body = UpdateCampaignRequest,
+    responses(
+        (status = 200, description = "Campaign updated successfully", body = Campaign),
+        (status = 404, description = "Campaign not found")
+    )
+)]
 async fn update_campaign(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
     Json(req): Json<UpdateCampaignRequest>,
-) -> impl IntoResponse {
+) -> Result<impl IntoResponse, crate::error::AppError> {
     let repo = CampaignRepository::new(&state.db);
-    match repo.update(id, req).await {
-        Ok(campaign) => (StatusCode::OK, Json(campaign)).into_response(),
-        Err(guide_core::GuideError::NotFound(msg)) => (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({ "error": msg })),
-        )
-            .into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response(),
-    }
+    let campaign = repo.update(id, req).await?;
+    Ok(Json(campaign))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/campaigns/{id}",
+    params(
+        ("id" = Uuid, Path, description = "Campaign ID")
+    ),
+    responses(
+        (status = 204, description = "Campaign deleted successfully"),
+        (status = 404, description = "Campaign not found")
+    )
+)]
 async fn delete_campaign(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
-) -> impl IntoResponse {
+) -> Result<impl IntoResponse, crate::error::AppError> {
     let repo = CampaignRepository::new(&state.db);
-    match repo.delete(id).await {
-        Ok(()) => {
-            // Drop Qdrant collection
-            if let Some(qdrant) = &state.qdrant {
-                let campaign_id = id.to_string();
-                let qdrant = qdrant.clone();
-                tokio::spawn(async move {
-                    if let Err(e) =
-                        guide_db::qdrant::delete_campaign_collection(&qdrant, &campaign_id).await
-                    {
-                        tracing::warn!("Failed to delete Qdrant collection: {e}");
-                    }
-                });
-            }
-            StatusCode::NO_CONTENT.into_response()
-        }
-        Err(guide_core::GuideError::NotFound(msg)) => (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({ "error": msg })),
-        )
-            .into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response(),
-    }
+    repo.delete(id).await?;
+    Ok(StatusCode::NO_CONTENT)
 }

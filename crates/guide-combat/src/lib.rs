@@ -9,7 +9,6 @@ use guide_core::{
 };
 use uuid::Uuid;
 
-/// D&D 5e combat state machine. Owns an `Encounter` and drives it forward.
 pub struct CombatEngine {
     pub encounter: Encounter,
 }
@@ -28,7 +27,7 @@ impl CombatEngine {
             ));
         }
 
-        // Sort participants by initiative_total descending (ties broken by DEX modifier, then id)
+        // Sort participants by initiative_total DESC, modifier DESC, then id ASC for tiebreak
         self.encounter.participants.sort_by(|a, b| {
             b.initiative_total
                 .cmp(&a.initiative_total)
@@ -40,11 +39,6 @@ impl CombatEngine {
         self.encounter.round = 1;
         self.encounter.current_turn_index = 0;
         self.encounter.updated_at = Utc::now();
-
-        // Reset action budgets for the first turn
-        if let Some(p) = self.encounter.participants.first_mut() {
-            p.has_taken_turn = false;
-        }
 
         Ok(())
     }
@@ -61,33 +55,26 @@ impl CombatEngine {
             return Err(GuideError::InvalidInput("No participants in encounter".into()));
         }
 
-        // Mark current participant as having taken their turn
         let current_idx = self.encounter.current_turn_index as usize;
         if let Some(p) = self.encounter.participants.get_mut(current_idx) {
             p.has_taken_turn = true;
         }
 
-        // Advance index
         let next_idx = (current_idx + 1) % n;
         self.encounter.current_turn_index = next_idx as i32;
 
-        // New round when we wrap around
         if next_idx == 0 {
             self.encounter.round += 1;
-            // Reset all participants for new round
             for p in &mut self.encounter.participants {
                 p.has_taken_turn = false;
-                // Speed defaults to 30 for participants without full character data
                 p.action_budget.reset(30);
             }
         }
 
         self.encounter.updated_at = Utc::now();
-
         Ok(&self.encounter.participants[next_idx])
     }
 
-    /// Apply HP change to a participant.
     pub fn apply_hp_change(&mut self, participant_id: Uuid, delta: i32) -> Result<i32> {
         let participant = self
             .encounter
@@ -100,18 +87,17 @@ impl CombatEngine {
 
         if participant.current_hp == 0 {
             participant.is_defeated = true;
-            participant
-                .conditions
-                .push(Condition::Unconscious);
+            if !participant.conditions.contains(&Condition::Unconscious) {
+                participant.conditions.push(Condition::Unconscious);
+            }
         }
 
         self.encounter.updated_at = Utc::now();
         Ok(participant.current_hp)
     }
 
-    /// Set HP to an exact value (e.g. after healing).
     pub fn set_hp(&mut self, participant_id: Uuid, hp: i32) -> Result<i32> {
-        let delta = hp - self
+        let current = self
             .encounter
             .participants
             .iter()
@@ -119,10 +105,9 @@ impl CombatEngine {
             .map(|p| p.current_hp)
             .ok_or_else(|| GuideError::NotFound(format!("Participant {participant_id}")))?;
 
-        self.apply_hp_change(participant_id, delta)
+        self.apply_hp_change(participant_id, hp - current)
     }
 
-    /// Add a condition to a participant.
     pub fn add_condition(&mut self, participant_id: Uuid, condition: Condition) -> Result<()> {
         let participant = self
             .encounter
@@ -138,7 +123,6 @@ impl CombatEngine {
         Ok(())
     }
 
-    /// Remove a condition from a participant.
     pub fn remove_condition(&mut self, participant_id: Uuid, condition: &Condition) -> Result<()> {
         let participant = self
             .encounter
@@ -152,7 +136,6 @@ impl CombatEngine {
         Ok(())
     }
 
-    /// End the encounter.
     pub fn end(&mut self) -> Result<()> {
         if self.encounter.status == EncounterStatus::Completed {
             return Err(GuideError::InvalidInput("Encounter already ended".into()));
@@ -162,7 +145,6 @@ impl CombatEngine {
         Ok(())
     }
 
-    /// Returns the participant whose turn it currently is.
     pub fn current_participant(&self) -> Option<&CombatParticipant> {
         self.encounter
             .participants
@@ -170,7 +152,7 @@ impl CombatEngine {
     }
 }
 
-/// Build a `CombatParticipant` from a character with a given initiative roll.
+#[allow(clippy::too_many_arguments)]
 pub fn build_participant(
     character_id: Uuid,
     encounter_id: Uuid,

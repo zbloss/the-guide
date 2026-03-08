@@ -2,9 +2,9 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::GameSystem;
+use super::shared::GameSystem;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct Campaign {
     pub id: Uuid,
     pub name: String,
@@ -15,8 +15,7 @@ pub struct Campaign {
     pub updated_at: DateTime<Utc>,
 }
 
-/// High-level persistent world metadata attached to a campaign.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct WorldState {
     pub current_location: Option<String>,
     pub current_date_in_world: Option<String>,
@@ -25,14 +24,14 @@ pub struct WorldState {
     pub custom_notes: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct CreateCampaignRequest {
     pub name: String,
     pub description: Option<String>,
     pub game_system: Option<GameSystem>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct UpdateCampaignRequest {
     pub name: Option<String>,
     pub description: Option<String>,

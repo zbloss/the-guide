@@ -4,8 +4,8 @@ use uuid::Uuid;
 
 use guide_core::{
     models::{
-        ActionBudget, CombatParticipant, Condition, Encounter, EncounterStatus,
-        CreateEncounterRequest,
+        ActionBudget, CombatParticipant, CreateEncounterRequest, Encounter,
+        EncounterStatus,
     },
     GuideError, Result,
 };
@@ -37,8 +37,7 @@ impl<'a> EncounterRepository<'a> {
         .bind(now.to_rfc3339())
         .bind(now.to_rfc3339())
         .execute(self.pool)
-        .await
-        .map_err(|e: sqlx::Error| GuideError::Database(e.to_string()))?;
+        .await?;
 
         self.get_by_id(id).await
     }
@@ -51,8 +50,7 @@ impl<'a> EncounterRepository<'a> {
         )
         .bind(id.to_string())
         .fetch_optional(self.pool)
-        .await
-        .map_err(|e: sqlx::Error| GuideError::Database(e.to_string()))?
+        .await?
         .ok_or_else(|| GuideError::NotFound(format!("Encounter {id}")))?;
 
         let mut encounter = row_to_encounter(row)?;
@@ -68,8 +66,7 @@ impl<'a> EncounterRepository<'a> {
         )
         .bind(session_id.to_string())
         .fetch_all(self.pool)
-        .await
-        .map_err(|e: sqlx::Error| GuideError::Database(e.to_string()))?;
+        .await?;
 
         let mut encounters = Vec::new();
         for row in rows {
@@ -80,8 +77,10 @@ impl<'a> EncounterRepository<'a> {
         Ok(encounters)
     }
 
-    /// Persist the full encounter state (status, round, turn index).
+    /// Atomically persist encounter status/round/turn and all participant states.
     pub async fn save_state(&self, encounter: &Encounter) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+
         let status_str = status_to_str(&encounter.status);
         sqlx::query(
             "UPDATE encounters SET status = ?, round = ?, current_turn_index = ?, \
@@ -92,22 +91,38 @@ impl<'a> EncounterRepository<'a> {
         .bind(encounter.current_turn_index)
         .bind(Utc::now().to_rfc3339())
         .bind(encounter.id.to_string())
-        .execute(self.pool)
-        .await
-        .map_err(|e: sqlx::Error| GuideError::Database(e.to_string()))?;
+        .execute(&mut *tx)
+        .await?;
 
-        // Upsert all participants
         for p in &encounter.participants {
-            self.save_participant(p).await?;
+            let conditions_json = serde_json::to_string(&p.conditions)?;
+            let budget_json = serde_json::to_string(&p.action_budget)?;
+
+            sqlx::query(
+                "UPDATE combat_participants SET initiative_roll = ?, initiative_modifier = ?, \
+                 initiative_total = ?, current_hp = ?, conditions = ?, action_budget = ?, \
+                 has_taken_turn = ?, is_defeated = ? WHERE id = ?",
+            )
+            .bind(p.initiative_roll)
+            .bind(p.initiative_modifier)
+            .bind(p.initiative_total)
+            .bind(p.current_hp)
+            .bind(&conditions_json)
+            .bind(&budget_json)
+            .bind(p.has_taken_turn as i32)
+            .bind(p.is_defeated as i32)
+            .bind(p.id.to_string())
+            .execute(&mut *tx)
+            .await?;
         }
+
+        tx.commit().await?;
         Ok(())
     }
 
     pub async fn add_participant(&self, participant: &CombatParticipant) -> Result<()> {
-        let conditions_json = serde_json::to_string(&participant.conditions)
-            .map_err(|e| GuideError::Serialization(e.to_string()))?;
-        let budget_json = serde_json::to_string(&participant.action_budget)
-            .map_err(|e| GuideError::Serialization(e.to_string()))?;
+        let conditions_json = serde_json::to_string(&participant.conditions)?;
+        let budget_json = serde_json::to_string(&participant.action_budget)?;
 
         sqlx::query(
             "INSERT INTO combat_participants \
@@ -131,36 +146,21 @@ impl<'a> EncounterRepository<'a> {
         .bind(participant.has_taken_turn as i32)
         .bind(participant.is_defeated as i32)
         .execute(self.pool)
-        .await
-        .map_err(|e: sqlx::Error| GuideError::Database(e.to_string()))?;
+        .await?;
 
         Ok(())
     }
 
-    async fn save_participant(&self, p: &CombatParticipant) -> Result<()> {
-        let conditions_json = serde_json::to_string(&p.conditions)
-            .map_err(|e| GuideError::Serialization(e.to_string()))?;
-        let budget_json = serde_json::to_string(&p.action_budget)
-            .map_err(|e| GuideError::Serialization(e.to_string()))?;
+    pub async fn delete(&self, id: Uuid) -> Result<()> {
+        let affected = sqlx::query("DELETE FROM encounters WHERE id = ?")
+            .bind(id.to_string())
+            .execute(self.pool)
+            .await?
+            .rows_affected();
 
-        sqlx::query(
-            "UPDATE combat_participants SET initiative_roll = ?, initiative_modifier = ?, \
-             initiative_total = ?, current_hp = ?, conditions = ?, action_budget = ?, \
-             has_taken_turn = ?, is_defeated = ? WHERE id = ?",
-        )
-        .bind(p.initiative_roll)
-        .bind(p.initiative_modifier)
-        .bind(p.initiative_total)
-        .bind(p.current_hp)
-        .bind(&conditions_json)
-        .bind(&budget_json)
-        .bind(p.has_taken_turn as i32)
-        .bind(p.is_defeated as i32)
-        .bind(p.id.to_string())
-        .execute(self.pool)
-        .await
-        .map_err(|e: sqlx::Error| GuideError::Database(e.to_string()))?;
-
+        if affected == 0 {
+            return Err(GuideError::NotFound(format!("Encounter {id}")));
+        }
         Ok(())
     }
 
@@ -174,27 +174,19 @@ impl<'a> EncounterRepository<'a> {
         )
         .bind(encounter_id.to_string())
         .fetch_all(self.pool)
-        .await
-        .map_err(|e: sqlx::Error| GuideError::Database(e.to_string()))?;
+        .await?;
 
         rows.into_iter().map(row_to_participant).collect()
     }
 }
 
-// ── Row helpers ───────────────────────────────────────────────────────────────
-
 fn row_to_encounter(row: SqliteRow) -> Result<Encounter> {
-    let id_str: String = row.try_get("id").map_err(|e| GuideError::Database(e.to_string()))?;
-    let session_id_str: String =
-        row.try_get("session_id").map_err(|e| GuideError::Database(e.to_string()))?;
-    let campaign_id_str: String =
-        row.try_get("campaign_id").map_err(|e| GuideError::Database(e.to_string()))?;
-    let status_str: String =
-        row.try_get("status").map_err(|e| GuideError::Database(e.to_string()))?;
-    let created_at_str: String =
-        row.try_get("created_at").map_err(|e| GuideError::Database(e.to_string()))?;
-    let updated_at_str: String =
-        row.try_get("updated_at").map_err(|e| GuideError::Database(e.to_string()))?;
+    let id_str: String = row.try_get("id")?;
+    let session_id_str: String = row.try_get("session_id")?;
+    let campaign_id_str: String = row.try_get("campaign_id")?;
+    let status_str: String = row.try_get("status")?;
+    let created_at_str: String = row.try_get("created_at")?;
+    let updated_at_str: String = row.try_get("updated_at")?;
 
     Ok(Encounter {
         id: Uuid::parse_str(&id_str).map_err(|e| GuideError::Internal(e.to_string()))?,
@@ -202,39 +194,25 @@ fn row_to_encounter(row: SqliteRow) -> Result<Encounter> {
             .map_err(|e| GuideError::Internal(e.to_string()))?,
         campaign_id: Uuid::parse_str(&campaign_id_str)
             .map_err(|e| GuideError::Internal(e.to_string()))?,
-        name: row.try_get("name").map_err(|e| GuideError::Database(e.to_string()))?,
-        description: row
-            .try_get("description")
-            .map_err(|e| GuideError::Database(e.to_string()))?,
+        name: row.try_get("name")?,
+        description: row.try_get("description")?,
         status: parse_status(&status_str),
-        round: row.try_get("round").map_err(|e| GuideError::Database(e.to_string()))?,
-        current_turn_index: row
-            .try_get("current_turn_index")
-            .map_err(|e| GuideError::Database(e.to_string()))?,
-        participants: Vec::new(), // populated by caller
+        round: row.try_get("round")?,
+        current_turn_index: row.try_get("current_turn_index")?,
+        participants: Vec::new(),
         created_at: created_at_str.parse().unwrap_or_else(|_| Utc::now()),
         updated_at: updated_at_str.parse().unwrap_or_else(|_| Utc::now()),
     })
 }
 
 fn row_to_participant(row: SqliteRow) -> Result<CombatParticipant> {
-    let id_str: String = row.try_get("id").map_err(|e| GuideError::Database(e.to_string()))?;
-    let enc_id_str: String =
-        row.try_get("encounter_id").map_err(|e| GuideError::Database(e.to_string()))?;
-    let char_id_str: String =
-        row.try_get("character_id").map_err(|e| GuideError::Database(e.to_string()))?;
-    let conditions_json: String =
-        row.try_get("conditions").map_err(|e| GuideError::Database(e.to_string()))?;
-    let budget_json: String =
-        row.try_get("action_budget").map_err(|e| GuideError::Database(e.to_string()))?;
-    let has_taken_turn_int: i32 =
-        row.try_get("has_taken_turn").map_err(|e| GuideError::Database(e.to_string()))?;
-    let is_defeated_int: i32 =
-        row.try_get("is_defeated").map_err(|e| GuideError::Database(e.to_string()))?;
-
-    let conditions: Vec<Condition> = serde_json::from_str(&conditions_json).unwrap_or_default();
-    let action_budget: ActionBudget =
-        serde_json::from_str(&budget_json).unwrap_or_else(|_| ActionBudget::new(30));
+    let id_str: String = row.try_get("id")?;
+    let enc_id_str: String = row.try_get("encounter_id")?;
+    let char_id_str: String = row.try_get("character_id")?;
+    let conditions_json: String = row.try_get("conditions")?;
+    let budget_json: String = row.try_get("action_budget")?;
+    let has_taken_turn_int: i32 = row.try_get("has_taken_turn")?;
+    let is_defeated_int: i32 = row.try_get("is_defeated")?;
 
     Ok(CombatParticipant {
         id: Uuid::parse_str(&id_str).map_err(|e| GuideError::Internal(e.to_string()))?,
@@ -242,25 +220,16 @@ fn row_to_participant(row: SqliteRow) -> Result<CombatParticipant> {
             .map_err(|e| GuideError::Internal(e.to_string()))?,
         character_id: Uuid::parse_str(&char_id_str)
             .map_err(|e| GuideError::Internal(e.to_string()))?,
-        name: row.try_get("name").map_err(|e| GuideError::Database(e.to_string()))?,
-        initiative_roll: row
-            .try_get("initiative_roll")
-            .map_err(|e| GuideError::Database(e.to_string()))?,
-        initiative_modifier: row
-            .try_get("initiative_modifier")
-            .map_err(|e| GuideError::Database(e.to_string()))?,
-        initiative_total: row
-            .try_get("initiative_total")
-            .map_err(|e| GuideError::Database(e.to_string()))?,
-        current_hp: row
-            .try_get("current_hp")
-            .map_err(|e| GuideError::Database(e.to_string()))?,
-        max_hp: row.try_get("max_hp").map_err(|e| GuideError::Database(e.to_string()))?,
-        armor_class: row
-            .try_get("armor_class")
-            .map_err(|e| GuideError::Database(e.to_string()))?,
-        conditions,
-        action_budget,
+        name: row.try_get("name")?,
+        initiative_roll: row.try_get("initiative_roll")?,
+        initiative_modifier: row.try_get("initiative_modifier")?,
+        initiative_total: row.try_get("initiative_total")?,
+        current_hp: row.try_get("current_hp")?,
+        max_hp: row.try_get("max_hp")?,
+        armor_class: row.try_get("armor_class")?,
+        conditions: serde_json::from_str(&conditions_json).unwrap_or_default(),
+        action_budget: serde_json::from_str(&budget_json)
+            .unwrap_or_else(|_| ActionBudget::new(30)),
         has_taken_turn: has_taken_turn_int != 0,
         is_defeated: is_defeated_int != 0,
     })

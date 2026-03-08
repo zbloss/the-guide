@@ -2,9 +2,9 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::{EventSignificance, EventType, Perspective};
+use super::shared::{EventSignificance, EventType, Perspective};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct Session {
     pub id: Uuid,
     pub campaign_id: Uuid,
@@ -17,7 +17,7 @@ pub struct Session {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct SessionEvent {
     pub id: Uuid,
     pub session_id: Uuid,
@@ -25,13 +25,12 @@ pub struct SessionEvent {
     pub event_type: EventType,
     pub description: String,
     pub significance: EventSignificance,
-    /// Only DMs see events with is_player_visible = false
     pub is_player_visible: bool,
     pub involved_character_ids: Vec<Uuid>,
     pub occurred_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct SessionSummary {
     pub session_id: Uuid,
     pub perspective: Perspective,
@@ -39,15 +38,13 @@ pub struct SessionSummary {
     pub generated_at: DateTime<Utc>,
 }
 
-// ── Request types ─────────────────────────────────────────────────────────────
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct CreateSessionRequest {
     pub title: Option<String>,
     pub notes: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct CreateSessionEventRequest {
     pub event_type: EventType,
     pub description: String,

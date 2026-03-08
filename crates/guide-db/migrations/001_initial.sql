@@ -1,7 +1,5 @@
 -- 001_initial.sql: Core schema for The Guide
-
-PRAGMA journal_mode=WAL;
-PRAGMA foreign_keys=ON;
+-- Note: WAL mode and FK pragmas are set programmatically by init_sqlite().
 
 -- ── Campaigns ────────────────────────────────────────────────────────────────
 

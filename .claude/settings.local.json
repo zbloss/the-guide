@@ -18,7 +18,20 @@
       "Bash(python3:*)",
       "Bash(pdfinfo:*)",
       "Bash(cargo run:*)",
-      "Bash(pkill:*)"
+      "Bash(pkill:*)",
+      "Bash(uv run:*)",
+      "Bash(ss:*)",
+      "Bash(__NEW_LINE_f27aa39fe1bbf648__ curl:*)",
+      "Bash(DOC_ID=\"2040fe0c-adc5-45c6-baa1-6864aeee82f4\")",
+      "Bash(CAMPAIGN_ID=\"112f0747-06a9-4ae0-80a2-14de73ab9051\")",
+      "Bash(INDEX_FILE=\"data/indexes/$CAMPAIGN_ID/$DOC_ID.json\")",
+      "Bash(__NEW_LINE_37e463d8b764b22a__ echo \"=== Index file size ===\")",
+      "Read(//mnt/c/Users/altoz/Projects/the-guide/**)",
+      "Bash(__NEW_LINE_b63b2c5bac0812d8__ echo:*)",
+      "WebFetch(domain:docs.pageindex.ai)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:pypi.org)"
     ]
   }
 }

@@ -1,0 +1,35 @@
+services:
+  guide-api:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - GUIDE__DATABASE_URL=sqlite:///app/data/guide.db
+      - GUIDE__OLLAMA_BASE_URL=http://host.docker.internal:11434/v1
+      - GUIDE__QDRANT_URL=http://qdrant:6334
+      - GUIDE__MAX_UPLOAD_BYTES=524288000
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      qdrant:
+        condition: service_started
+    restart: unless-stopped
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  qdrant_data:

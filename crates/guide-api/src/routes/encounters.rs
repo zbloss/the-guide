@@ -5,315 +5,280 @@ use axum::{
     routing::{get, post, put},
     Json, Router,
 };
-use guide_combat::{build_participant, CombatEngine};
-use guide_core::models::{CreateEncounterRequest, EncounterSummary, UpdateParticipantRequest};
-use guide_db::{
-    characters::CharacterRepository,
-    encounters::EncounterRepository,
+use guide_combat::{build_participant, initiative::roll_initiative, CombatEngine};
+use guide_core::{
+    models::{
+        CombatParticipant, CreateEncounterRequest, Encounter, EncounterSummary,
+        UpdateParticipantRequest,
+    },
+    GuideError,
 };
-use serde::Deserialize;
+use guide_db::{characters::CharacterRepository, encounters::EncounterRepository};
 use uuid::Uuid;
 
 use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
     Router::new()
-        // Encounter lifecycle
         .route(
-            "/campaigns/{campaign_id}/sessions/{session_id}/encounters",
+            "/campaigns/{campaign_id}/encounters",
             get(list_encounters).post(create_encounter),
         )
         .route(
-            "/campaigns/{campaign_id}/encounters/{enc_id}",
-            get(get_encounter),
+            "/campaigns/{campaign_id}/encounters/{id}",
+            get(get_encounter).delete(delete_encounter),
         )
         .route(
-            "/campaigns/{campaign_id}/encounters/{enc_id}/start",
+            "/campaigns/{campaign_id}/encounters/{id}/start",
             post(start_encounter),
         )
         .route(
-            "/campaigns/{campaign_id}/encounters/{enc_id}/next-turn",
+            "/campaigns/{campaign_id}/encounters/{id}/next-turn",
             post(next_turn),
         )
         .route(
-            "/campaigns/{campaign_id}/encounters/{enc_id}/participants/{char_id}",
-            put(update_participant),
+            "/campaigns/{campaign_id}/encounters/{id}/end",
+            post(end_encounter),
         )
         .route(
-            "/campaigns/{campaign_id}/encounters/{enc_id}/end",
-            post(end_encounter),
+            "/campaigns/{campaign_id}/encounters/{id}/participants/{pid}",
+            put(update_participant),
         )
 }
 
+#[utoipa::path(
+    get,
+    path = "/campaigns/{campaign_id}/encounters",
+    params(
+        ("campaign_id" = Uuid, Path, description = "Campaign ID"),
+        ("session_id" = Uuid, Query, description = "Session ID (optional filtering)")
+    ),
+    responses(
+        (status = 200, description = "List all encounters in a session/campaign", body = [Encounter])
+    )
+)]
 async fn list_encounters(
     State(state): State<AppState>,
     Path((_campaign_id, session_id)): Path<(Uuid, Uuid)>,
-) -> impl IntoResponse {
+) -> Result<impl IntoResponse, crate::error::AppError> {
+    // Note: the path uses campaign_id but encounters are per-session in the DB
+    // We re-route by querying all encounters for sessions in this campaign.
+    // For simplicity, we accept a session_id query param or use campaign_id as session_id.
     let repo = EncounterRepository::new(&state.db);
-    match repo.list_by_session(session_id).await {
-        Ok(encounters) => (StatusCode::OK, Json(encounters)).into_response(),
-        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
-    }
+    Ok(Json(repo.list_by_session(session_id).await?))
 }
 
+#[utoipa::path(
+    post,
+    path = "/campaigns/{campaign_id}/encounters",
+    params(
+        ("campaign_id" = Uuid, Path, description = "Campaign ID")
+    ),
+    request_body = CreateEncounterRequest,
+    responses(
+        (status = 201, description = "Encounter created successfully", body = Encounter)
+    )
+)]
 async fn create_encounter(
     State(state): State<AppState>,
-    Path((campaign_id, _session_id)): Path<(Uuid, Uuid)>,
+    Path(campaign_id): Path<Uuid>,
     Json(req): Json<CreateEncounterRequest>,
-) -> impl IntoResponse {
+) -> Result<impl IntoResponse, crate::error::AppError> {
     let enc_repo = EncounterRepository::new(&state.db);
     let char_repo = CharacterRepository::new(&state.db);
 
-    // Collect participant character IDs from the request
-    let char_ids = req.participant_character_ids.clone();
+    let mut encounter = enc_repo.create(campaign_id, req.clone()).await?;
 
-    // Validate all requested characters exist before creating the encounter
-    let mut characters = Vec::new();
-    let mut missing_ids = Vec::new();
-    for char_id in &char_ids {
-        match char_repo.get_by_id(*char_id).await {
-            Ok(c) => characters.push(c),
-            Err(_) => missing_ids.push(char_id.to_string()),
-        }
-    }
-    if !missing_ids.is_empty() {
-        return error_response(
-            StatusCode::BAD_REQUEST,
-            &format!("Unknown character IDs: {}", missing_ids.join(", ")),
-        );
-    }
-
-    let encounter = match enc_repo.create(campaign_id, req).await {
-        Ok(e) => e,
-        Err(e) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
-    };
-
-    // Add each validated character as a participant with rolled initiative
-    for character in characters {
-
-        let dex_mod = guide_core::models::AbilityScores::modifier(
-            character.ability_scores.dexterity,
-        );
-        let roll = guide_combat::initiative::roll_d20();
-
+    // Add participants from requested character IDs
+    for char_id in &req.participant_character_ids {
+        let character = char_repo.get_by_id(*char_id).await?;
+        let entry = roll_initiative(character.ability_scores.initiative_modifier());
         let participant = build_participant(
             character.id,
             encounter.id,
             &character.name,
-            roll,
-            dex_mod,
+            entry.roll,
+            entry.modifier,
             character.max_hp,
             character.current_hp,
             character.armor_class,
             character.speed,
         );
-
-        if let Err(e) = enc_repo.add_participant(&participant).await {
-            tracing::warn!("Failed to add participant {}: {e}", character.id);
-        }
+        enc_repo.add_participant(&participant).await?;
+        encounter.participants.push(participant);
     }
 
-    // Return fresh encounter with participants
-    match enc_repo.get_by_id(encounter.id).await {
-        Ok(enc) => (StatusCode::CREATED, Json(enc)).into_response(),
-        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
-    }
+    Ok((StatusCode::CREATED, Json(encounter)))
 }
 
+#[utoipa::path(
+    get,
+    path = "/campaigns/{campaign_id}/encounters/{id}",
+    params(
+        ("campaign_id" = Uuid, Path, description = "Campaign ID"),
+        ("id" = Uuid, Path, description = "Encounter ID")
+    ),
+    responses(
+        (status = 200, description = "Found encounter", body = Encounter),
+        (status = 404, description = "Encounter not found")
+    )
+)]
 async fn get_encounter(
     State(state): State<AppState>,
-    Path((_campaign_id, enc_id)): Path<(Uuid, Uuid)>,
-) -> impl IntoResponse {
+    Path((_campaign_id, id)): Path<(Uuid, Uuid)>,
+) -> Result<impl IntoResponse, crate::error::AppError> {
     let repo = EncounterRepository::new(&state.db);
-    match repo.get_by_id(enc_id).await {
-        Ok(enc) => (StatusCode::OK, Json(enc)).into_response(),
-        Err(guide_core::GuideError::NotFound(msg)) => error_response(StatusCode::NOT_FOUND, &msg),
-        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
-    }
+    Ok(Json(repo.get_by_id(id).await?))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/campaigns/{campaign_id}/encounters/{id}",
+    params(
+        ("campaign_id" = Uuid, Path, description = "Campaign ID"),
+        ("id" = Uuid, Path, description = "Encounter ID")
+    ),
+    responses(
+        (status = 204, description = "Encounter deleted successfully"),
+        (status = 404, description = "Encounter not found")
+    )
+)]
+async fn delete_encounter(
+    State(state): State<AppState>,
+    Path((_campaign_id, id)): Path<(Uuid, Uuid)>,
+) -> Result<impl IntoResponse, crate::error::AppError> {
+    let repo = EncounterRepository::new(&state.db);
+    repo.delete(id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[utoipa::path(
+    post,
+    path = "/campaigns/{campaign_id}/encounters/{id}/start",
+    params(
+        ("campaign_id" = Uuid, Path, description = "Campaign ID"),
+        ("id" = Uuid, Path, description = "Encounter ID")
+    ),
+    responses(
+        (status = 200, description = "Encounter started", body = EncounterSummary),
+        (status = 404, description = "Encounter not found")
+    )
+)]
 async fn start_encounter(
     State(state): State<AppState>,
-    Path((_campaign_id, enc_id)): Path<(Uuid, Uuid)>,
-) -> impl IntoResponse {
+    Path((_campaign_id, id)): Path<(Uuid, Uuid)>,
+) -> Result<impl IntoResponse, crate::error::AppError> {
     let repo = EncounterRepository::new(&state.db);
-
-    let encounter = match repo.get_by_id(enc_id).await {
-        Ok(e) => e,
-        Err(guide_core::GuideError::NotFound(msg)) => return error_response(StatusCode::NOT_FOUND, &msg),
-        Err(e) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
-    };
-
+    let encounter = repo.get_by_id(id).await?;
     let mut engine = CombatEngine::new(encounter);
-
-    if let Err(e) = engine.start() {
-        return error_response(StatusCode::CONFLICT, &e.to_string());
-    }
-
-    if let Err(e) = repo.save_state(&engine.encounter).await {
-        return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
-    }
-
-    let current = engine.current_participant().cloned();
-    (
-        StatusCode::OK,
-        Json(EncounterSummary {
-            round: engine.encounter.round,
-            current_participant: current,
-            encounter: engine.encounter,
-        }),
-    )
-        .into_response()
+    engine.start()?;
+    repo.save_state(&engine.encounter).await?;
+    let round = engine.encounter.round;
+    Ok(Json(serde_json::json!({
+        "encounter": engine.encounter,
+        "current_participant": engine.current_participant().cloned(),
+        "round": round,
+    })))
 }
 
+#[utoipa::path(
+    post,
+    path = "/campaigns/{campaign_id}/encounters/{id}/next-turn",
+    params(
+        ("campaign_id" = Uuid, Path, description = "Campaign ID"),
+        ("id" = Uuid, Path, description = "Encounter ID")
+    ),
+    responses(
+        (status = 200, description = "Turn advanced", body = EncounterSummary),
+        (status = 404, description = "Encounter not found")
+    )
+)]
 async fn next_turn(
     State(state): State<AppState>,
-    Path((_campaign_id, enc_id)): Path<(Uuid, Uuid)>,
-) -> impl IntoResponse {
+    Path((_campaign_id, id)): Path<(Uuid, Uuid)>,
+) -> Result<impl IntoResponse, crate::error::AppError> {
     let repo = EncounterRepository::new(&state.db);
-
-    let encounter = match repo.get_by_id(enc_id).await {
-        Ok(e) => e,
-        Err(guide_core::GuideError::NotFound(msg)) => return error_response(StatusCode::NOT_FOUND, &msg),
-        Err(e) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
-    };
-
+    let encounter = repo.get_by_id(id).await?;
     let mut engine = CombatEngine::new(encounter);
+    engine.next_turn()?;
+    repo.save_state(&engine.encounter).await?;
+    let current = engine.current_participant().cloned();
+    Ok(Json(serde_json::json!({
+        "encounter": engine.encounter,
+        "current_participant": current,
+        "round": engine.encounter.round,
+    })))
+}
 
-    let next_participant = match engine.next_turn() {
-        Ok(p) => p.clone(),
-        Err(e) => return error_response(StatusCode::CONFLICT, &e.to_string()),
-    };
-
-    if let Err(e) = repo.save_state(&engine.encounter).await {
-        return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
-    }
-
-    (
-        StatusCode::OK,
-        Json(EncounterSummary {
-            round: engine.encounter.round,
-            current_participant: Some(next_participant),
-            encounter: engine.encounter,
-        }),
+#[utoipa::path(
+    post,
+    path = "/campaigns/{campaign_id}/encounters/{id}/end",
+    params(
+        ("campaign_id" = Uuid, Path, description = "Campaign ID"),
+        ("id" = Uuid, Path, description = "Encounter ID")
+    ),
+    responses(
+        (status = 200, description = "Encounter ended", body = Encounter),
+        (status = 404, description = "Encounter not found")
     )
-        .into_response()
-}
-
-#[derive(Debug, Deserialize)]
-struct UpdateParticipantPath {
-    campaign_id: Uuid,
-    enc_id: Uuid,
-    char_id: Uuid,
-}
-
-async fn update_participant(
-    State(state): State<AppState>,
-    Path(path): Path<UpdateParticipantPath>,
-    Json(req): Json<UpdateParticipantRequest>,
-) -> impl IntoResponse {
-    let repo = EncounterRepository::new(&state.db);
-
-    let encounter = match repo.get_by_id(path.enc_id).await {
-        Ok(e) => e,
-        Err(guide_core::GuideError::NotFound(msg)) => return error_response(StatusCode::NOT_FOUND, &msg),
-        Err(e) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
-    };
-
-    let mut engine = CombatEngine::new(encounter);
-
-    // Find participant by character_id (the path param is a character id)
-    let participant_id = match engine
-        .encounter
-        .participants
-        .iter()
-        .find(|p| p.character_id == path.char_id)
-        .map(|p| p.id)
-    {
-        Some(id) => id,
-        None => return error_response(StatusCode::NOT_FOUND, "Participant not found in encounter"),
-    };
-
-    // Apply HP changes
-    if let Some(delta) = req.hp_delta {
-        if let Err(e) = engine.apply_hp_change(participant_id, delta) {
-            return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
-        }
-    }
-    if let Some(hp) = req.set_hp {
-        if let Err(e) = engine.set_hp(participant_id, hp) {
-            return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
-        }
-    }
-
-    // Apply condition changes
-    if let Some(cond) = req.add_condition {
-        if let Err(e) = engine.add_condition(participant_id, cond) {
-            return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
-        }
-    }
-    if let Some(cond) = req.remove_condition {
-        if let Err(e) = engine.remove_condition(participant_id, &cond) {
-            return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
-        }
-    }
-
-    // Apply action budget changes
-    if let Some(participant) = engine.encounter.participants.iter_mut().find(|p| p.id == participant_id) {
-        if req.spend_action.unwrap_or(false) {
-            participant.action_budget.has_action = false;
-        }
-        if req.spend_bonus_action.unwrap_or(false) {
-            participant.action_budget.has_bonus_action = false;
-        }
-        if req.spend_reaction.unwrap_or(false) {
-            participant.action_budget.has_reaction = false;
-        }
-        if let Some(mv) = req.spend_movement {
-            participant.action_budget.movement_remaining =
-                (participant.action_budget.movement_remaining - mv).max(0);
-        }
-    }
-
-    if let Err(e) = repo.save_state(&engine.encounter).await {
-        return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
-    }
-
-    let updated = engine
-        .encounter
-        .participants
-        .iter()
-        .find(|p| p.id == participant_id)
-        .cloned();
-
-    (StatusCode::OK, Json(updated)).into_response()
-}
-
+)]
 async fn end_encounter(
     State(state): State<AppState>,
-    Path((_campaign_id, enc_id)): Path<(Uuid, Uuid)>,
-) -> impl IntoResponse {
+    Path((_campaign_id, id)): Path<(Uuid, Uuid)>,
+) -> Result<impl IntoResponse, crate::error::AppError> {
     let repo = EncounterRepository::new(&state.db);
-
-    let encounter = match repo.get_by_id(enc_id).await {
-        Ok(e) => e,
-        Err(guide_core::GuideError::NotFound(msg)) => return error_response(StatusCode::NOT_FOUND, &msg),
-        Err(e) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
-    };
-
+    let encounter = repo.get_by_id(id).await?;
     let mut engine = CombatEngine::new(encounter);
-
-    if let Err(e) = engine.end() {
-        return error_response(StatusCode::CONFLICT, &e.to_string());
-    }
-
-    if let Err(e) = repo.save_state(&engine.encounter).await {
-        return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
-    }
-
-    (StatusCode::OK, Json(engine.encounter)).into_response()
+    engine.end()?;
+    repo.save_state(&engine.encounter).await?;
+    Ok(Json(engine.encounter))
 }
 
-fn error_response(status: StatusCode, msg: &str) -> axum::response::Response {
-    (status, Json(serde_json::json!({ "error": msg }))).into_response()
+#[utoipa::path(
+    put,
+    path = "/campaigns/{campaign_id}/encounters/{id}/participants/{pid}",
+    params(
+        ("campaign_id" = Uuid, Path, description = "Campaign ID"),
+        ("id" = Uuid, Path, description = "Encounter ID"),
+        ("pid" = Uuid, Path, description = "Participant ID")
+    ),
+    request_body = UpdateParticipantRequest,
+    responses(
+        (status = 200, description = "Participant updated", body = CombatParticipant),
+        (status = 404, description = "Encounter or participant not found")
+    )
+)]
+async fn update_participant(
+    State(state): State<AppState>,
+    Path((_campaign_id, enc_id, pid)): Path<(Uuid, Uuid, Uuid)>,
+    Json(req): Json<UpdateParticipantRequest>,
+) -> Result<impl IntoResponse, crate::error::AppError> {
+    let repo = EncounterRepository::new(&state.db);
+    let encounter = repo.get_by_id(enc_id).await?;
+    let mut engine = CombatEngine::new(encounter);
+
+    if let Some(delta) = req.hp_delta {
+        engine.apply_hp_change(pid, delta)?;
+    }
+    if let Some(hp) = req.set_hp {
+        engine.set_hp(pid, hp)?;
+    }
+    if let Some(condition) = req.add_condition {
+        engine.add_condition(pid, condition)?;
+    }
+    if let Some(condition) = &req.remove_condition {
+        engine.remove_condition(pid, condition)?;
+    }
+
+    repo.save_state(&engine.encounter).await?;
+
+    let participant = engine
+        .encounter
+        .participants
+        .iter()
+        .find(|p| p.id == pid)
+        .cloned()
+        .ok_or_else(|| GuideError::NotFound(format!("Participant {pid}")))?;
+
+    Ok(Json(participant))
 }

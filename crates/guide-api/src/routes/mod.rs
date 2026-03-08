@@ -4,13 +4,16 @@ pub mod chat;
 pub mod documents;
 pub mod encounters;
 pub mod generate;
-pub mod global_documents;
 pub mod health;
+pub mod openapi;
 pub mod sessions;
 
 use axum::Router;
+use tower_http::cors::CorsLayer;
 
 use crate::state::AppState;
+use utoipa_swagger_ui::SwaggerUi;
+use utoipa::OpenApi;
 
 pub fn all_routes(state: AppState) -> Router {
     Router::new()
@@ -20,8 +23,9 @@ pub fn all_routes(state: AppState) -> Router {
         .merge(sessions::router())
         .merge(encounters::router())
         .merge(documents::router())
-        .merge(global_documents::router())
         .merge(generate::router())
         .merge(chat::router())
+        .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", openapi::ApiDoc::openapi()))
+        .layer(CorsLayer::permissive())
         .with_state(state)
 }

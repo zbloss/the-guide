@@ -2,9 +2,9 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::{Condition, EncounterStatus};
+use super::shared::{Condition, EncounterStatus};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct Encounter {
     pub id: Uuid,
     pub session_id: Uuid,
@@ -13,24 +13,20 @@ pub struct Encounter {
     pub description: Option<String>,
     pub status: EncounterStatus,
     pub round: i32,
-    /// Index into `participants` (sorted by initiative) for the current turn.
     pub current_turn_index: i32,
     pub participants: Vec<CombatParticipant>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct CombatParticipant {
     pub id: Uuid,
     pub encounter_id: Uuid,
     pub character_id: Uuid,
     pub name: String,
-    /// The raw d20 roll (stored for transparency)
     pub initiative_roll: i32,
-    /// Dexterity modifier applied
     pub initiative_modifier: i32,
-    /// initiative_roll + initiative_modifier
     pub initiative_total: i32,
     pub current_hp: i32,
     pub max_hp: i32,
@@ -41,16 +37,11 @@ pub struct CombatParticipant {
     pub is_defeated: bool,
 }
 
-/// Tracks what a combatant can still do on their turn.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ActionBudget {
-    /// Standard action (Attack, Dash, Dodge, Help, Hide, Ready, Search, Use Object, Cast a spell)
     pub has_action: bool,
-    /// Bonus action (class features, certain spells, off-hand attack, etc.)
     pub has_bonus_action: bool,
-    /// Reaction (opportunity attack, shield spell, etc.) — resets at start of each turn
     pub has_reaction: bool,
-    /// Remaining movement in feet
     pub movement_remaining: i32,
 }
 
@@ -72,9 +63,7 @@ impl ActionBudget {
     }
 }
 
-// ── Request/Response types ────────────────────────────────────────────────────
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct CreateEncounterRequest {
     pub session_id: Uuid,
     pub name: Option<String>,
@@ -82,13 +71,13 @@ pub struct CreateEncounterRequest {
     pub participant_character_ids: Vec<Uuid>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct AddParticipantRequest {
     pub character_id: Uuid,
     pub initiative_roll: Option<i32>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct UpdateParticipantRequest {
     pub hp_delta: Option<i32>,
     pub set_hp: Option<i32>,
@@ -100,9 +89,37 @@ pub struct UpdateParticipantRequest {
     pub spend_movement: Option<i32>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct EncounterSummary {
     pub encounter: Encounter,
     pub current_participant: Option<CombatParticipant>,
     pub round: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct GeneratedEncounter {
+    pub title: String,
+    pub description: String,
+    pub encounter_type: GeneratedEncounterType,
+    pub challenge_rating: Option<f32>,
+    pub suggested_enemies: Vec<EnemySuggestion>,
+    pub narrative_hook: String,
+    pub alternative: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum GeneratedEncounterType {
+    Combat,
+    Social,
+    Exploration,
+    Puzzle,
+    Mixed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct EnemySuggestion {
+    pub name: String,
+    pub count: u32,
+    pub cr: Option<f32>,
 }

@@ -15,16 +15,16 @@ pub enum GuideError {
     Qdrant(String),
 
     #[error("Database error: {0}")]
-    Database(String),
+    Database(#[from] sqlx::Error),
 
     #[error("PDF processing error: {0}")]
     PdfProcessing(String),
 
     #[error("Configuration error: {0}")]
-    Config(String),
+    Config(#[from] config::ConfigError),
 
     #[error("Serialization error: {0}")]
-    Serialization(String),
+    Serialization(#[from] serde_json::Error),
 
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
@@ -34,15 +34,3 @@ pub enum GuideError {
 }
 
 pub type Result<T> = std::result::Result<T, GuideError>;
-
-impl From<serde_json::Error> for GuideError {
-    fn from(e: serde_json::Error) -> Self {
-        GuideError::Serialization(e.to_string())
-    }
-}
-
-impl From<config::ConfigError> for GuideError {
-    fn from(e: config::ConfigError) -> Self {
-        GuideError::Config(e.to_string())
-    }
-}
