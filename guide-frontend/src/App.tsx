@@ -1,50 +1,41 @@
-import { useState } from "react";
-import reactLogo from "./assets/react.svg";
-import { invoke } from "@tauri-apps/api/core";
-import "./App.css";
+import { Routes, Route } from "react-router-dom";
+import { Layout } from "./components/layout/Layout";
+import { CampaignsPage } from "./pages/CampaignsPage";
+import { CampaignDetailPage } from "./pages/CampaignDetailPage";
+import { CharactersPage } from "./pages/CharactersPage";
+import { CharacterDetailPage } from "./pages/CharacterDetailPage";
+import { SessionsPage } from "./pages/SessionsPage";
+import { SessionDetailPage } from "./pages/SessionDetailPage";
+import { EncountersPage } from "./pages/EncountersPage";
+import { EncounterDetailPage } from "./pages/EncounterDetailPage";
+import { DocumentsPage } from "./pages/DocumentsPage";
+import { GlobalDocumentsPage } from "./pages/GlobalDocumentsPage";
+import { ChatPage } from "./pages/ChatPage";
+import { HealthPage } from "./pages/HealthPage";
+import { NotFoundPage } from "./pages/NotFoundPage";
 
 function App() {
-  const [greetMsg, setGreetMsg] = useState("");
-  const [name, setName] = useState("");
-
-  async function greet() {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    setGreetMsg(await invoke("greet", { name }));
-  }
-
   return (
-    <main className="container">
-      <h1>Welcome to Tauri + React</h1>
+    <Routes>
+      <Route element={<Layout />}>
+        <Route index element={<CampaignsPage />} />
 
-      <div className="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/vite.svg" className="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img src="/tauri.svg" className="logo tauri" alt="Tauri logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <p>Click on the Tauri, Vite, and React logos to learn more.</p>
+        <Route path="campaigns/:campaignId" element={<CampaignDetailPage />}>
+          <Route path="characters" element={<CharactersPage />} />
+          <Route path="characters/:charId" element={<CharacterDetailPage />} />
+          <Route path="sessions" element={<SessionsPage />} />
+          <Route path="sessions/:sessionId" element={<SessionDetailPage />} />
+          <Route path="encounters" element={<EncountersPage />} />
+          <Route path="encounters/:encId" element={<EncounterDetailPage />} />
+          <Route path="documents" element={<DocumentsPage />} />
+          <Route path="chat" element={<ChatPage />} />
+        </Route>
 
-      <form
-        className="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          greet();
-        }}
-      >
-        <input
-          id="greet-input"
-          onChange={(e) => setName(e.currentTarget.value)}
-          placeholder="Enter a name..."
-        />
-        <button type="submit">Greet</button>
-      </form>
-      <p>{greetMsg}</p>
-    </main>
+        <Route path="documents" element={<GlobalDocumentsPage />} />
+        <Route path="health" element={<HealthPage />} />
+        <Route path="*" element={<NotFoundPage />} />
+      </Route>
+    </Routes>
   );
 }
 

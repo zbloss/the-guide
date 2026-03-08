@@ -12,9 +12,11 @@
   "app": {
     "windows": [
       {
-        "title": "guide-frontend",
-        "width": 800,
-        "height": 600
+        "title": "The Guide",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 1024,
+        "minHeight": 700
       }
     ],
     "security": {
