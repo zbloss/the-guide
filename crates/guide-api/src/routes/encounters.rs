@@ -8,7 +8,7 @@ use axum::{
 use guide_combat::{build_participant, initiative::roll_initiative, CombatEngine};
 use guide_core::{
     models::{
-        CombatParticipant, CreateEncounterRequest, Encounter, EncounterSummary,
+        CombatParticipant, CreateEncounterRequest, Encounter,
         UpdateParticipantRequest,
     },
     GuideError,
@@ -59,13 +59,10 @@ pub fn router() -> Router<AppState> {
 )]
 async fn list_encounters(
     State(state): State<AppState>,
-    Path((_campaign_id, session_id)): Path<(Uuid, Uuid)>,
+    Path(campaign_id): Path<Uuid>,
 ) -> Result<impl IntoResponse, crate::error::AppError> {
-    // Note: the path uses campaign_id but encounters are per-session in the DB
-    // We re-route by querying all encounters for sessions in this campaign.
-    // For simplicity, we accept a session_id query param or use campaign_id as session_id.
     let repo = EncounterRepository::new(&state.db);
-    Ok(Json(repo.list_by_session(session_id).await?))
+    Ok(Json(repo.list_by_campaign(campaign_id).await?))
 }
 
 #[utoipa::path(
@@ -160,7 +157,7 @@ async fn delete_encounter(
         ("id" = Uuid, Path, description = "Encounter ID")
     ),
     responses(
-        (status = 200, description = "Encounter started", body = EncounterSummary),
+        (status = 200, description = "Encounter started", body = Encounter),
         (status = 404, description = "Encounter not found")
     )
 )]
@@ -173,12 +170,7 @@ async fn start_encounter(
     let mut engine = CombatEngine::new(encounter);
     engine.start()?;
     repo.save_state(&engine.encounter).await?;
-    let round = engine.encounter.round;
-    Ok(Json(serde_json::json!({
-        "encounter": engine.encounter,
-        "current_participant": engine.current_participant().cloned(),
-        "round": round,
-    })))
+    Ok(Json(engine.encounter))
 }
 
 #[utoipa::path(
@@ -189,7 +181,7 @@ async fn start_encounter(
         ("id" = Uuid, Path, description = "Encounter ID")
     ),
     responses(
-        (status = 200, description = "Turn advanced", body = EncounterSummary),
+        (status = 200, description = "Turn advanced", body = Encounter),
         (status = 404, description = "Encounter not found")
     )
 )]
@@ -202,12 +194,7 @@ async fn next_turn(
     let mut engine = CombatEngine::new(encounter);
     engine.next_turn()?;
     repo.save_state(&engine.encounter).await?;
-    let current = engine.current_participant().cloned();
-    Ok(Json(serde_json::json!({
-        "encounter": engine.encounter,
-        "current_participant": current,
-        "round": engine.encounter.round,
-    })))
+    Ok(Json(engine.encounter))
 }
 
 #[utoipa::path(

@@ -49,7 +49,7 @@ export function useChat(campaignId: string) {
           const eventLine = part.split('\n').find((l) => l.startsWith('event:'));
           const dataLine = part.split('\n').find((l) => l.startsWith('data:'));
           const event = eventLine?.slice(7).trim();
-          const data = dataLine?.slice(5).trim();
+          const data = dataLine?.slice(5).replace(/^ /, '');
 
           if (event === 'token' && data) {
             setMessages((prev) => {

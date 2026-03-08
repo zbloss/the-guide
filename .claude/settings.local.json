@@ -31,7 +31,12 @@
       "WebFetch(domain:docs.pageindex.ai)",
       "WebFetch(domain:github.com)",
       "WebFetch(domain:raw.githubusercontent.com)",
-      "WebFetch(domain:pypi.org)"
+      "WebFetch(domain:pypi.org)",
+      "Bash(npm install:*)",
+      "Bash(bun add:*)",
+      "Read(//c/Users/altoz/.bun/bin//**)",
+      "Bash(command -v bun)",
+      "Bash(bun.exe add:*)"
     ]
   }
 }

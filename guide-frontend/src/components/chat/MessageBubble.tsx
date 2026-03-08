@@ -1,3 +1,4 @@
+import Markdown from 'react-markdown';
 import type { ChatMessage } from '../../hooks/useChat';
 
 interface MessageBubbleProps {
@@ -9,7 +10,10 @@ export function MessageBubble({ message }: MessageBubbleProps) {
   return (
     <div className={`message-bubble ${isUser ? 'message-user' : 'message-assistant'}`}>
       <div className="message-content">
-        {message.content || (message.streaming ? <span className="streaming-dots">…</span> : '')}
+        {message.streaming && !message.content
+          ? <span className="streaming-dots">…</span>
+          : <Markdown>{message.content}</Markdown>
+        }
       </div>
     </div>
   );

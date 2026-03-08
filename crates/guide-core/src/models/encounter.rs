@@ -7,7 +7,7 @@ use super::shared::{Condition, EncounterStatus};
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct Encounter {
     pub id: Uuid,
-    pub session_id: Uuid,
+    pub session_id: Option<Uuid>,
     pub campaign_id: Uuid,
     pub name: Option<String>,
     pub description: Option<String>,
@@ -65,7 +65,7 @@ impl ActionBudget {
 
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct CreateEncounterRequest {
-    pub session_id: Uuid,
+    pub session_id: Option<Uuid>,
     pub name: Option<String>,
     pub description: Option<String>,
     pub participant_character_ids: Vec<Uuid>,

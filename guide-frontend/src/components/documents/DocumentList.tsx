@@ -33,8 +33,8 @@ export function DocumentList({ documents, renderActions }: DocumentListProps) {
         {documents.map((doc) => (
           <tr key={doc.id}>
             <td>{doc.filename}</td>
-            <td>{formatBytes(doc.file_size)}</td>
-            <td><StatusBadge status={doc.status} /></td>
+            <td>{formatBytes(doc.file_size_bytes)}</td>
+            <td><StatusBadge status={doc.ingestion_status} /></td>
             <td>{new Date(doc.uploaded_at).toLocaleDateString()}</td>
             <td>{renderActions?.(doc)}</td>
           </tr>

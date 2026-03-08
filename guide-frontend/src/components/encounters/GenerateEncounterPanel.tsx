@@ -68,36 +68,21 @@ export function GenerateEncounterPanel({ campaignId }: GenerateEncounterPanelPro
           <p>{result.description}</p>
           <p className="narrative-hook">"{result.narrative_hook}"</p>
 
-          {result.enemies.length > 0 && (
+          {result.suggested_enemies.length > 0 && (
             <div>
               <h5>Enemies</h5>
               <table className="data-table">
-                <thead><tr><th>Name</th><th>Count</th><th>CR</th><th>Notes</th></tr></thead>
+                <thead><tr><th>Name</th><th>Count</th><th>CR</th></tr></thead>
                 <tbody>
-                  {result.enemies.map((e, i) => (
+                  {result.suggested_enemies.map((e, i) => (
                     <tr key={i}>
                       <td>{e.name}</td>
                       <td>{e.count}</td>
-                      <td>{e.challenge_rating}</td>
-                      <td>{e.notes ?? '—'}</td>
+                      <td>{e.cr ?? '—'}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-            </div>
-          )}
-
-          {result.terrain_features.length > 0 && (
-            <div>
-              <h5>Terrain Features</h5>
-              <ul>{result.terrain_features.map((t, i) => <li key={i}>{t}</li>)}</ul>
-            </div>
-          )}
-
-          {result.suggested_rewards.length > 0 && (
-            <div>
-              <h5>Suggested Rewards</h5>
-              <ul>{result.suggested_rewards.map((r, i) => <li key={i}>{r}</li>)}</ul>
             </div>
           )}
         </div>

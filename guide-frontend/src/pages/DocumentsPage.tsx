@@ -39,7 +39,7 @@ export function DocumentsPage() {
             return (
               <IngestButton
                 docId={d.id}
-                currentStatus={d.status}
+                currentStatus={d.ingestion_status}
                 onIngest={() => ingestCampaignDoc(campaignId!, d.id).then(() => {})}
                 onPoll={() => getCampaignDoc(campaignId!, d.id)}
               />

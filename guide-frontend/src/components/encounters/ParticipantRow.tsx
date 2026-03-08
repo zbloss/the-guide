@@ -55,14 +55,14 @@ export function ParticipantRow({ participant: p, isCurrentTurn, campaignId, enco
           <ConditionBadge
             key={c}
             condition={c}
-            onRemove={() => doUpdate({ conditions: p.conditions.filter((x) => x !== c) })}
+            onRemove={() => doUpdate({ remove_condition: c })}
           />
         ))}
       </td>
       <td className="participant-budget">
-        <span className={`budget-icon ${p.action_budget.action ? '' : 'spent'}`} title="Action">A</span>
-        <span className={`budget-icon ${p.action_budget.bonus_action ? '' : 'spent'}`} title="Bonus">B</span>
-        <span className={`budget-icon ${p.action_budget.reaction ? '' : 'spent'}`} title="Reaction">R</span>
+        <span className={`budget-icon ${p.action_budget.has_action ? '' : 'spent'}`} title="Action">A</span>
+        <span className={`budget-icon ${p.action_budget.has_bonus_action ? '' : 'spent'}`} title="Bonus">B</span>
+        <span className={`budget-icon ${p.action_budget.has_reaction ? '' : 'spent'}`} title="Reaction">R</span>
         <span className={`budget-icon ${p.action_budget.movement_remaining > 0 ? '' : 'spent'}`} title={`Move: ${p.action_budget.movement_remaining}ft`}>M</span>
       </td>
       <td className="participant-controls">
@@ -79,7 +79,7 @@ export function ParticipantRow({ participant: p, isCurrentTurn, campaignId, enco
         {/* Set HP */}
         <div className="control-row">
           <input className="control-input" type="number" min={0} placeholder="Set HP" value={setHpVal} onChange={(e) => setSetHpVal(e.target.value)} />
-          <button className="btn btn-sm" onClick={() => { doUpdate({ current_hp: Number(setHpVal) }); setSetHpVal(''); }} disabled={!setHpVal || loading}>Set</button>
+          <button className="btn btn-sm" onClick={() => { doUpdate({ set_hp: Number(setHpVal) }); setSetHpVal(''); }} disabled={!setHpVal || loading}>Set</button>
         </div>
         {/* Add condition */}
         {availableToAdd.length > 0 && (
@@ -87,21 +87,21 @@ export function ParticipantRow({ participant: p, isCurrentTurn, campaignId, enco
             <select className="control-select" value={addCond} onChange={(e) => setAddCond(e.target.value as Condition)}>
               {availableToAdd.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
-            <button className="btn btn-sm" onClick={() => doUpdate({ conditions: [...p.conditions, addCond] })} disabled={loading}>+Cond</button>
+            <button className="btn btn-sm" onClick={() => doUpdate({ add_condition: addCond })} disabled={loading}>+Cond</button>
           </div>
         )}
         {/* Spend action budget */}
         <div className="control-row budget-controls">
           <label className="checkbox-label">
-            <input type="checkbox" checked={!p.action_budget.action} onChange={() => doUpdate({ action_budget: { action: p.action_budget.action ? false : true } })} />
+            <input type="checkbox" checked={!p.action_budget.has_action} onChange={() => doUpdate({ spend_action: !p.action_budget.has_action })} />
             <span>Action</span>
           </label>
           <label className="checkbox-label">
-            <input type="checkbox" checked={!p.action_budget.bonus_action} onChange={() => doUpdate({ action_budget: { bonus_action: p.action_budget.bonus_action ? false : true } })} />
+            <input type="checkbox" checked={!p.action_budget.has_bonus_action} onChange={() => doUpdate({ spend_bonus_action: !p.action_budget.has_bonus_action })} />
             <span>Bonus</span>
           </label>
           <label className="checkbox-label">
-            <input type="checkbox" checked={!p.action_budget.reaction} onChange={() => doUpdate({ action_budget: { reaction: p.action_budget.reaction ? false : true } })} />
+            <input type="checkbox" checked={!p.action_budget.has_reaction} onChange={() => doUpdate({ spend_reaction: !p.action_budget.has_reaction })} />
             <span>Reaction</span>
           </label>
         </div>

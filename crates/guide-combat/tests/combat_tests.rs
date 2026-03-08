@@ -24,7 +24,7 @@ fn make_encounter(participants: &[(&str, i32, i32, i32)]) -> Encounter {
 
     Encounter {
         id: enc_id,
-        session_id: Uuid::new_v4(),
+        session_id: Some(Uuid::new_v4()),
         campaign_id: Uuid::new_v4(),
         name: Some("Test Encounter".to_string()),
         description: None,

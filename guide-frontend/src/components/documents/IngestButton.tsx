@@ -6,7 +6,7 @@ interface IngestButtonProps {
   docId: string;
   currentStatus: IngestionStatus;
   onIngest: () => Promise<void>;
-  onPoll: () => Promise<{ status: IngestionStatus }>;
+  onPoll: () => Promise<{ ingestion_status: IngestionStatus }>;
 }
 
 export function IngestButton({ docId, currentStatus, onIngest, onPoll }: IngestButtonProps) {
@@ -35,8 +35,8 @@ export function IngestButton({ docId, currentStatus, onIngest, onPoll }: IngestB
     intervalRef.current = setInterval(async () => {
       try {
         const doc = await onPoll();
-        setStatus(doc.status);
-        if (doc.status === 'completed' || doc.status === 'failed') {
+        setStatus(doc.ingestion_status);
+        if (doc.ingestion_status === 'completed' || doc.ingestion_status === 'failed') {
           clearPoller();
         }
       } catch {

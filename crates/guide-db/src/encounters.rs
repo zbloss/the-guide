@@ -30,7 +30,7 @@ impl<'a> EncounterRepository<'a> {
              VALUES (?, ?, ?, ?, ?, 'pending', 0, 0, ?, ?)",
         )
         .bind(id.to_string())
-        .bind(req.session_id.to_string())
+        .bind(req.session_id.map(|sid| sid.to_string()))
         .bind(campaign_id.to_string())
         .bind(&req.name)
         .bind(&req.description)
@@ -56,6 +56,25 @@ impl<'a> EncounterRepository<'a> {
         let mut encounter = row_to_encounter(row)?;
         encounter.participants = self.list_participants(id).await?;
         Ok(encounter)
+    }
+
+    pub async fn list_by_campaign(&self, campaign_id: Uuid) -> Result<Vec<Encounter>> {
+        let rows = sqlx::query(
+            "SELECT id, session_id, campaign_id, name, description, status, round, \
+             current_turn_index, created_at, updated_at \
+             FROM encounters WHERE campaign_id = ? ORDER BY created_at ASC",
+        )
+        .bind(campaign_id.to_string())
+        .fetch_all(self.pool)
+        .await?;
+
+        let mut encounters = Vec::new();
+        for row in rows {
+            let mut enc = row_to_encounter(row)?;
+            enc.participants = self.list_participants(enc.id).await?;
+            encounters.push(enc);
+        }
+        Ok(encounters)
     }
 
     pub async fn list_by_session(&self, session_id: Uuid) -> Result<Vec<Encounter>> {
@@ -182,16 +201,20 @@ impl<'a> EncounterRepository<'a> {
 
 fn row_to_encounter(row: SqliteRow) -> Result<Encounter> {
     let id_str: String = row.try_get("id")?;
-    let session_id_str: String = row.try_get("session_id")?;
+    let session_id_str: Option<String> = row.try_get("session_id")?;
     let campaign_id_str: String = row.try_get("campaign_id")?;
     let status_str: String = row.try_get("status")?;
     let created_at_str: String = row.try_get("created_at")?;
     let updated_at_str: String = row.try_get("updated_at")?;
 
+    let session_id = session_id_str
+        .as_deref()
+        .map(|s| Uuid::parse_str(s).map_err(|e| GuideError::Internal(e.to_string())))
+        .transpose()?;
+
     Ok(Encounter {
         id: Uuid::parse_str(&id_str).map_err(|e| GuideError::Internal(e.to_string()))?,
-        session_id: Uuid::parse_str(&session_id_str)
-            .map_err(|e| GuideError::Internal(e.to_string()))?,
+        session_id,
         campaign_id: Uuid::parse_str(&campaign_id_str)
             .map_err(|e| GuideError::Internal(e.to_string()))?,
         name: row.try_get("name")?,

@@ -123,9 +123,9 @@ export interface Character {
 }
 
 export interface ActionBudget {
-  action: boolean;
-  bonus_action: boolean;
-  reaction: boolean;
+  has_action: boolean;
+  has_bonus_action: boolean;
+  has_reaction: boolean;
   movement_remaining: number;
 }
 
@@ -149,10 +149,10 @@ export interface EncounterSummary {
   id: string;
   campaign_id: string;
   session_id: string | null;
-  name: string;
+  name: string | null;
   description: string | null;
   status: EncounterStatus;
-  current_round: number;
+  round: number;
   current_turn_index: number;
   participants: CombatParticipant[];
   created_at: string;
@@ -193,8 +193,8 @@ export interface CampaignDocument {
   id: string;
   campaign_id: string;
   filename: string;
-  file_size: number;
-  status: IngestionStatus;
+  file_size_bytes: number;
+  ingestion_status: IngestionStatus;
   uploaded_at: string;
   ingested_at: string | null;
 }
@@ -202,8 +202,8 @@ export interface CampaignDocument {
 export interface GlobalDocument {
   id: string;
   filename: string;
-  file_size: number;
-  status: IngestionStatus;
+  file_size_bytes: number;
+  ingestion_status: IngestionStatus;
   uploaded_at: string;
   ingested_at: string | null;
 }
@@ -211,18 +211,16 @@ export interface GlobalDocument {
 export interface EnemySuggestion {
   name: string;
   count: number;
-  challenge_rating: string;
-  notes: string | null;
+  cr: number | null;
 }
 
 export interface GeneratedEncounter {
   title: string;
   encounter_type: GeneratedEncounterType;
   description: string;
-  enemies: EnemySuggestion[];
+  suggested_enemies: EnemySuggestion[];
   narrative_hook: string;
-  terrain_features: string[];
-  suggested_rewards: string[];
+  alternative: string | null;
 }
 
 // ==================== Request Types ====================
@@ -287,10 +285,14 @@ export interface CreateEncounterRequest {
 }
 
 export interface UpdateParticipantRequest {
-  current_hp?: number;
   hp_delta?: number;
-  conditions?: Condition[];
-  action_budget?: Partial<ActionBudget>;
+  set_hp?: number;
+  add_condition?: Condition;
+  remove_condition?: Condition;
+  spend_action?: boolean;
+  spend_bonus_action?: boolean;
+  spend_reaction?: boolean;
+  spend_movement?: number;
 }
 
 export interface GenerateRequest {
