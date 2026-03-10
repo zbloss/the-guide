@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { Badge } from '../common/Badge';
 import { ConditionBadge } from './ConditionBadge';
+import { ConfirmButton } from '../common/ConfirmButton';
 import type { Character } from '../../api/types';
 
 function HpBar({ current, max }: { current: number; max: number }) {
@@ -17,9 +18,10 @@ function HpBar({ current, max }: { current: number; max: number }) {
 interface CharacterCardProps {
   character: Character;
   campaignId: string;
+  onDelete?: (id: string) => void;
 }
 
-export function CharacterCard({ character, campaignId }: CharacterCardProps) {
+export function CharacterCard({ character, campaignId, onDelete }: CharacterCardProps) {
   return (
     <div className={`card character-card ${!character.is_alive ? 'character-dead' : ''}`}>
       <div className="card-header">
@@ -41,6 +43,11 @@ export function CharacterCard({ character, campaignId }: CharacterCardProps) {
       {character.conditions.length > 0 && (
         <div className="condition-list">
           {character.conditions.map((c) => <ConditionBadge key={c} condition={c} />)}
+        </div>
+      )}
+      {onDelete && (
+        <div className="card-footer">
+          <ConfirmButton label="Delete" variant="danger" onConfirm={() => onDelete(character.id)} />
         </div>
       )}
     </div>

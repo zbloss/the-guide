@@ -14,9 +14,12 @@ export function CombatTracker({ encounter, campaignId, onUpdate }: CombatTracker
   return (
     <div className="combat-tracker">
       <div className="combat-header">
-        <span className="round-counter">Round {encounter.current_round}</span>
+        <span className="round-counter">Round {encounter.round}</span>
         {currentParticipant && (
           <span className="current-turn-name">Current Turn: <strong>{currentParticipant.name}</strong></span>
+        )}
+        {encounter.status === 'active' && (
+          <span className="keyboard-hint">Press <kbd>Space</kbd> for next turn</span>
         )}
       </div>
 

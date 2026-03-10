@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { analyzeBackstory } from '../../api/characters';
+import { analyzeBackstory, updateCharacter } from '../../api/characters';
 import type { Backstory } from '../../api/types';
 import { LoadingSpinner } from '../common/LoadingSpinner';
 
@@ -13,8 +13,29 @@ interface BackstoryPanelProps {
 export function BackstoryPanel({ campaignId, characterId, backstory, onAnalyzed }: BackstoryPanelProps) {
   const [analyzing, setAnalyzing] = useState(false);
   const [error, setError] = useState('');
+  const [editingText, setEditingText] = useState(false);
+  const [backstoryText, setBackstoryText] = useState(backstory?.raw_text ?? '');
+  const [saving, setSaving] = useState(false);
+
+  const handleSaveText = async () => {
+    setSaving(true);
+    setError('');
+    try {
+      await updateCharacter(campaignId, characterId, { backstory_text: backstoryText });
+      setEditingText(false);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const handleAnalyze = async () => {
+    const currentText = backstoryText.trim() || backstory?.raw_text?.trim();
+    if (!currentText) {
+      setError('Enter backstory text first, then click Save before analyzing.');
+      return;
+    }
     setAnalyzing(true);
     setError('');
     try {
@@ -27,19 +48,53 @@ export function BackstoryPanel({ campaignId, characterId, backstory, onAnalyzed 
     }
   };
 
+  const displayText = backstory?.raw_text ?? '';
+
   return (
     <div className="backstory-panel">
       <div className="section-header">
         <h3>Backstory</h3>
-        <button className="btn btn-sm btn-primary" onClick={handleAnalyze} disabled={analyzing}>
-          {analyzing ? <><LoadingSpinner size={14} /> Analyzing…</> : 'Analyze with AI'}
-        </button>
+        <div className="btn-group">
+          <button className="btn btn-sm" onClick={() => { setEditingText(!editingText); setBackstoryText(displayText); }}>
+            {editingText ? 'Cancel' : 'Edit Text'}
+          </button>
+          <button
+            className="btn btn-sm btn-primary"
+            onClick={handleAnalyze}
+            disabled={analyzing || (!backstoryText.trim() && !displayText.trim())}
+            title={!backstoryText.trim() && !displayText.trim() ? 'Enter backstory text first' : 'Analyze with AI'}
+          >
+            {analyzing ? <><LoadingSpinner size={14} /> Analyzing…</> : 'Analyze with AI'}
+          </button>
+        </div>
       </div>
 
       {error && <div className="form-error-banner">{error}</div>}
 
-      {backstory?.raw_text && (
-        <div className="backstory-text">{backstory.raw_text}</div>
+      {editingText ? (
+        <div className="backstory-edit">
+          <textarea
+            className="form-input backstory-textarea"
+            value={backstoryText}
+            onChange={(e) => setBackstoryText(e.target.value)}
+            placeholder="Enter character backstory here…"
+            rows={8}
+          />
+          <div className="form-actions">
+            <button className="btn btn-sm btn-primary" onClick={handleSaveText} disabled={saving}>
+              {saving ? 'Saving…' : 'Save Text'}
+            </button>
+            <button className="btn btn-sm" onClick={() => setEditingText(false)}>Cancel</button>
+          </div>
+        </div>
+      ) : (
+        <>
+          {displayText ? (
+            <div className="backstory-text">{displayText}</div>
+          ) : (
+            <p className="empty-state">No backstory text yet. Click "Edit Text" to add one.</p>
+          )}
+        </>
       )}
 
       {backstory && (
@@ -79,10 +134,6 @@ export function BackstoryPanel({ campaignId, characterId, backstory, onAnalyzed 
             </div>
           )}
         </div>
-      )}
-
-      {!backstory && !analyzing && (
-        <p className="empty-state">No backstory analysis yet. Click "Analyze with AI" to extract plot hooks and motivations.</p>
       )}
     </div>
   );

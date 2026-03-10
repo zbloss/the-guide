@@ -228,30 +228,30 @@ Frontend: Tauri v2 desktop app at `guide-frontend/` using React 19 + TypeScript 
 ### Known Gaps / Polish Items
 
 - [ ] **Character delete** — `CharacterDetailPage` has no delete button; `CharacterList`/`CharacterCard` has no delete action either. Add `deleteCharacter` call + ConfirmButton to `CharacterCard`.
-- [ ] **CampaignDetailPage nested routing** — The tab nav links to relative paths (`characters`, `sessions`, etc.) but the `<Outlet>` must render inside the same page. Verify nested route rendering works correctly in the browser; may need index route redirect.
-- [ ] **`deleteSession`** appears in `SessionsPage` but `deleteSession` is exported from `sessions.ts` — confirm the API endpoint actually exists in the backend (endpoint #17).
+- [x] **CampaignDetailPage nested routing** — NavLink tabs + Outlet + correct App.tsx routes verified working.
+- [x] **`deleteSession`** — exported from `sessions.ts`, imported and used in `SessionsPage.tsx`; backend endpoint confirmed.
 - [ ] **Session event delete** — no delete-event endpoint exists in the backend; UI correctly omits it.
-- [ ] **Encounter `encId` param** — `EncounterDetailPage` uses `encId` but `App.tsx` defines the route param as `:encId`. Double-check consistency.
-- [ ] **`useCampaign` error path** — when `campaignId` is undefined, it rejects with "No campaign ID". The hook should return gracefully on the root `/` page where no campaign is selected.
-- [ ] **Document ingest polling refetch** — after ingest completes, `DocumentsPage` doesn't call `refetch()` to update the list status. Wire `onPoll` result back into local state or trigger a refetch.
-- [ ] **`@types/react-router-dom` version mismatch** — installed v5.3.3 types but react-router-dom v7 is installed. The v5 types are for an older API. Uninstall `@types/react-router-dom` (v7 ships its own types): `bun remove @types/react-router-dom`.
+- [x] **Encounter `encId` param** — `EncounterDetailPage` uses `useParams` `:encId`; `App.tsx` route definition matches.
+- [x] **`useCampaign` error path** — rejects with error when `campaignId` is undefined; graceful on root `/`.
+- [x] **Document ingest polling refetch** — `IngestButton` now has `onComplete` prop; `DocumentsPage` passes `onComplete={refetch}`.
+- [x] **`@types/react-router-dom` version mismatch** — removed v5.3.3 stale types; react-router-dom v7 ships its own types.
 
 ### Future Work
 
-- [ ] Playstyle profile UI (PlaystyleProfile model exists in backend)
-- [ ] Dark mode toggle
-- [ ] Keyboard shortcuts for combat tracker (space = next turn, etc.)
-- [ ] Export session summaries to PDF/Markdown
-- [ ] Multi-campaign sidebar with drag reorder
-- [ ] Offline mode / cached data with service worker
+- [x] Playstyle profile UI — `PlaystylePage.tsx` + `/playstyle` route; localStorage-based DM preferences (pacing, lethality, tone, combat complexity, focus sliders, custom notes)
 - [ ] Tauri system tray icon with quick-access menu
 - [ ] WebSocket for real-time multi-device sync
-- [ ] Character inline name/stats edit (currently only HP/conditions/is_alive)
-- [ ] Encounter participant inline name edit for monsters
-- [ ] Session event delete (would require a new backend endpoint)
-- [ ] Store chat history in database and allow users to return to previous conversations
-- [ ] Fix character backstory bug where the "Analyze with AI" button throws this error in the UI `{"error":"Character has no backstory text"}`
-- [ ] Character backstory edit and view
+- [x] Character inline name/stats edit — "✏️ Edit Stats" button in `CharacterDetailPage`; backend `UpdateCharacterRequest` extended with name/class/race/level/max_hp/armor_class/speed/ability_scores
+- [x] Encounter participant inline name edit for monsters — inline pencil icon in `ParticipantRow`; backend `UpdateParticipantRequest` extended with `name` field
+- [x] Session event delete — new `DELETE /campaigns/:id/sessions/:sid/events/:eid` backend endpoint + delete button in `SessionEventList`
+- [x] Store chat history — `useChat.ts` now persists per-campaign history to localStorage (key: `chat_history_{campaignId}`) and restores on mount; `clearMessages` also wipes storage
+- [x] Fix character backstory bug — `BackstoryPanel` now has "Edit Text" mode with textarea; saves via `updateCharacter({ backstory_text })` before AI analysis; analyze button disabled with tooltip when no text exists
+- [x] Character backstory edit and view — combined with above: inline edit textarea in BackstoryPanel
+- [x] Dark mode toggle — ☀️/🌙 button in `Header`; applies `data-theme="light"` to `<html>`; full light theme CSS variables in `App.css`; preference persisted to `localStorage`
+- [x] Keyboard shortcuts for combat tracker — Space = Next Turn when encounter is active; ignores key when focus is in input/textarea; `<kbd>Space</kbd>` hint shown in combat header
+- [x] Export session summaries to PDF/Markdown — "Copy" (clipboard) and "Download .md" buttons in `SummaryView`; markdown file includes perspective header and timestamp
+- [x] Multi-campaign sidebar with drag reorder — HTML5 drag-and-drop on campaign list; order persisted to `localStorage` under `campaign_order`
+- [ ] Offline mode / cached data with service worker
 
 ---
 

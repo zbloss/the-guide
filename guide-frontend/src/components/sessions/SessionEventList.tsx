@@ -1,8 +1,10 @@
 import { Badge } from '../common/Badge';
+import { ConfirmButton } from '../common/ConfirmButton';
 import type { SessionEvent } from '../../api/types';
 
 interface SessionEventListProps {
   events: SessionEvent[];
+  onDelete?: (eventId: string) => void;
 }
 
 const SIG_VARIANT: Record<string, 'default' | 'info' | 'warning' | 'danger'> = {
@@ -12,7 +14,7 @@ const SIG_VARIANT: Record<string, 'default' | 'info' | 'warning' | 'danger'> = {
   critical: 'danger',
 };
 
-export function SessionEventList({ events }: SessionEventListProps) {
+export function SessionEventList({ events, onDelete }: SessionEventListProps) {
   if (events.length === 0) {
     return <p className="empty-state">No events recorded yet.</p>;
   }
@@ -25,6 +27,7 @@ export function SessionEventList({ events }: SessionEventListProps) {
           <th>Significance</th>
           <th>Visible</th>
           <th>Time</th>
+          {onDelete && <th></th>}
         </tr>
       </thead>
       <tbody>
@@ -35,6 +38,11 @@ export function SessionEventList({ events }: SessionEventListProps) {
             <td><Badge label={ev.significance} variant={SIG_VARIANT[ev.significance] ?? 'default'} /></td>
             <td>{ev.is_player_visible ? '✓' : '—'}</td>
             <td>{new Date(ev.created_at).toLocaleTimeString()}</td>
+            {onDelete && (
+              <td>
+                <ConfirmButton label="Delete" variant="danger" onConfirm={() => onDelete(ev.id)} />
+              </td>
+            )}
           </tr>
         ))}
       </tbody>

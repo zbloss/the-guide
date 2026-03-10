@@ -90,9 +90,82 @@ impl<'a> CharacterRepository<'a> {
         let now = Utc::now().to_rfc3339();
         let id_str = id.to_string();
 
+        if let Some(name) = &req.name {
+            sqlx::query("UPDATE characters SET name = ?, updated_at = ? WHERE id = ?")
+                .bind(name)
+                .bind(&now)
+                .bind(&id_str)
+                .execute(self.pool)
+                .await?;
+        }
+
+        if let Some(class) = &req.class {
+            sqlx::query("UPDATE characters SET class = ?, updated_at = ? WHERE id = ?")
+                .bind(class)
+                .bind(&now)
+                .bind(&id_str)
+                .execute(self.pool)
+                .await?;
+        }
+
+        if let Some(race) = &req.race {
+            sqlx::query("UPDATE characters SET race = ?, updated_at = ? WHERE id = ?")
+                .bind(race)
+                .bind(&now)
+                .bind(&id_str)
+                .execute(self.pool)
+                .await?;
+        }
+
+        if let Some(level) = req.level {
+            sqlx::query("UPDATE characters SET level = ?, updated_at = ? WHERE id = ?")
+                .bind(level)
+                .bind(&now)
+                .bind(&id_str)
+                .execute(self.pool)
+                .await?;
+        }
+
+        if let Some(max_hp) = req.max_hp {
+            sqlx::query("UPDATE characters SET max_hp = ?, updated_at = ? WHERE id = ?")
+                .bind(max_hp)
+                .bind(&now)
+                .bind(&id_str)
+                .execute(self.pool)
+                .await?;
+        }
+
         if let Some(hp) = req.current_hp {
             sqlx::query("UPDATE characters SET current_hp = ?, updated_at = ? WHERE id = ?")
                 .bind(hp)
+                .bind(&now)
+                .bind(&id_str)
+                .execute(self.pool)
+                .await?;
+        }
+
+        if let Some(ac) = req.armor_class {
+            sqlx::query("UPDATE characters SET armor_class = ?, updated_at = ? WHERE id = ?")
+                .bind(ac)
+                .bind(&now)
+                .bind(&id_str)
+                .execute(self.pool)
+                .await?;
+        }
+
+        if let Some(speed) = req.speed {
+            sqlx::query("UPDATE characters SET speed = ?, updated_at = ? WHERE id = ?")
+                .bind(speed)
+                .bind(&now)
+                .bind(&id_str)
+                .execute(self.pool)
+                .await?;
+        }
+
+        if let Some(ability_scores) = &req.ability_scores {
+            let json = serde_json::to_string(ability_scores)?;
+            sqlx::query("UPDATE characters SET ability_scores = ?, updated_at = ? WHERE id = ?")
+                .bind(&json)
                 .bind(&now)
                 .bind(&id_str)
                 .execute(self.pool)
@@ -112,6 +185,30 @@ impl<'a> CharacterRepository<'a> {
         if let Some(alive) = req.is_alive {
             sqlx::query("UPDATE characters SET is_alive = ?, updated_at = ? WHERE id = ?")
                 .bind(alive as i32)
+                .bind(&now)
+                .bind(&id_str)
+                .execute(self.pool)
+                .await?;
+        }
+
+        if let Some(backstory_text) = &req.backstory_text {
+            let char = self.get_by_id(id).await?;
+            let backstory = match char.backstory {
+                Some(mut b) => {
+                    b.raw_text = backstory_text.clone();
+                    b
+                }
+                None => Backstory {
+                    raw_text: backstory_text.clone(),
+                    extracted_hooks: vec![],
+                    motivations: vec![],
+                    key_relationships: vec![],
+                    secrets: vec![],
+                },
+            };
+            let json = serde_json::to_string(&backstory)?;
+            sqlx::query("UPDATE characters SET backstory = ?, updated_at = ? WHERE id = ?")
+                .bind(&json)
                 .bind(&now)
                 .bind(&id_str)
                 .execute(self.pool)

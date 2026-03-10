@@ -263,6 +263,7 @@ export interface UpdateCharacterRequest {
   ability_scores?: Partial<AbilityScores>;
   conditions?: Condition[];
   is_alive?: boolean;
+  backstory_text?: string;
 }
 
 export interface CreateSessionRequest {
@@ -285,6 +286,7 @@ export interface CreateEncounterRequest {
 }
 
 export interface UpdateParticipantRequest {
+  name?: string;
   hp_delta?: number;
   set_hp?: number;
   add_condition?: Condition;
@@ -293,6 +295,23 @@ export interface UpdateParticipantRequest {
   spend_bonus_action?: boolean;
   spend_reaction?: boolean;
   spend_movement?: number;
+}
+
+// ==================== Playstyle Profile ====================
+
+export type Pacing = 'fast' | 'moderate' | 'slow';
+export type Lethality = 'lethal' | 'moderate' | 'forgiving';
+export type TonePreference = 'dark' | 'balanced' | 'heroic';
+export type CombatComplexity = 'high' | 'moderate' | 'simple';
+
+export interface PlaystyleProfile {
+  pacing: Pacing;
+  lethality: Lethality;
+  tone: TonePreference;
+  combat_complexity: CombatComplexity;
+  roleplay_focus: number; // 1-10
+  exploration_focus: number; // 1-10
+  custom_notes: string;
 }
 
 export interface GenerateRequest {

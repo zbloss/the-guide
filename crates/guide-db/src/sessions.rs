@@ -189,6 +189,19 @@ impl<'a> SessionEventRepository<'a> {
         rows.into_iter().map(row_to_event).collect()
     }
 
+    pub async fn delete_event(&self, event_id: Uuid) -> Result<()> {
+        let affected = sqlx::query("DELETE FROM session_events WHERE id = ?")
+            .bind(event_id.to_string())
+            .execute(self.pool)
+            .await?
+            .rows_affected();
+
+        if affected == 0 {
+            return Err(GuideError::NotFound(format!("SessionEvent {event_id}")));
+        }
+        Ok(())
+    }
+
     pub async fn list_visible_by_session(&self, session_id: Uuid) -> Result<Vec<SessionEvent>> {
         let rows = sqlx::query(
             "SELECT id, session_id, campaign_id, event_type, description, significance, \

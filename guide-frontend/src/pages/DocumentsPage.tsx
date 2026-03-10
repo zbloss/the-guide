@@ -42,6 +42,7 @@ export function DocumentsPage() {
                 currentStatus={d.ingestion_status}
                 onIngest={() => ingestCampaignDoc(campaignId!, d.id).then(() => {})}
                 onPoll={() => getCampaignDoc(campaignId!, d.id)}
+                onComplete={refetch}
               />
             );
           }}

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useApi } from '../hooks/useApi';
-import { listCharacters, createCharacter } from '../api/characters';
+import { listCharacters, createCharacter, deleteCharacter } from '../api/characters';
 import { CharacterList } from '../components/characters/CharacterList';
 import { CharacterForm } from '../components/characters/CharacterForm';
 import { Modal } from '../components/common/Modal';
@@ -23,6 +23,11 @@ export function CharactersPage() {
     refetch();
   };
 
+  const handleDelete = async (charId: string) => {
+    await deleteCharacter(campaignId!, charId);
+    refetch();
+  };
+
   return (
     <div className="page-section">
       <div className="section-header">
@@ -32,7 +37,7 @@ export function CharactersPage() {
 
       {loading && <LoadingSpinner />}
       {error && <ErrorBanner message={error} />}
-      {characters && <CharacterList characters={characters} campaignId={campaignId!} />}
+      {characters && <CharacterList characters={characters} campaignId={campaignId!} onDelete={handleDelete} />}
 
       {showCreate && (
         <Modal title="New Character" onClose={() => setShowCreate(false)}>

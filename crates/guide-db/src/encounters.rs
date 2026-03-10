@@ -170,6 +170,15 @@ impl<'a> EncounterRepository<'a> {
         Ok(())
     }
 
+    pub async fn update_participant_name(&self, participant_id: Uuid, name: &str) -> Result<()> {
+        sqlx::query("UPDATE combat_participants SET name = ? WHERE id = ?")
+            .bind(name)
+            .bind(participant_id.to_string())
+            .execute(self.pool)
+            .await?;
+        Ok(())
+    }
+
     pub async fn delete(&self, id: Uuid) -> Result<()> {
         let affected = sqlx::query("DELETE FROM encounters WHERE id = ?")
             .bind(id.to_string())

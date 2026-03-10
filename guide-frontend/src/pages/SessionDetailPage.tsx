@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useApi } from '../hooks/useApi';
-import { getSession, startSession, endSession, listEvents, createEvent, getSessionSummary } from '../api/sessions';
+import { getSession, startSession, endSession, listEvents, createEvent, getSessionSummary, deleteEvent } from '../api/sessions';
 import { listCharacters } from '../api/characters';
 import { SessionEventList } from '../components/sessions/SessionEventList';
 import { SessionEventForm } from '../components/sessions/SessionEventForm';
@@ -61,6 +61,11 @@ export function SessionDetailPage() {
     refetchEvents();
   };
 
+  const handleDeleteEvent = async (eventId: string) => {
+    await deleteEvent(campaignId!, sessionId!, eventId);
+    refetchEvents();
+  };
+
   const handleGenerateSummary = async () => {
     setSummaryLoading(true);
     setSummaryError('');
@@ -110,7 +115,7 @@ export function SessionDetailPage() {
             <h3>Events</h3>
             <button className="btn btn-sm btn-primary" onClick={() => setShowAddEvent(true)}>+ Add Event</button>
           </div>
-          {events && <SessionEventList events={events} />}
+          {events && <SessionEventList events={events} onDelete={handleDeleteEvent} />}
 
           {showAddEvent && (
             <Modal title="Add Event" onClose={() => setShowAddEvent(false)}>

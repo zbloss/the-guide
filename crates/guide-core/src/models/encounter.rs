@@ -79,6 +79,7 @@ pub struct AddParticipantRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct UpdateParticipantRequest {
+    pub name: Option<String>,
     pub hp_delta: Option<i32>,
     pub set_hp: Option<i32>,
     pub add_condition: Option<Condition>,

@@ -18,6 +18,8 @@ export function ParticipantRow({ participant: p, isCurrentTurn, campaignId, enco
   const [setHpVal, setSetHpVal] = useState('');
   const [addCond, setAddCond] = useState<Condition>('Blinded');
   const [loading, setLoading] = useState(false);
+  const [editingName, setEditingName] = useState(false);
+  const [nameInput, setNameInput] = useState(p.name);
 
   const pct = p.max_hp > 0 ? (p.current_hp / p.max_hp) * 100 : 0;
   const hpClass = pct > 50 ? 'hp-high' : pct > 25 ? 'hp-mid' : 'hp-low';
@@ -34,13 +36,41 @@ export function ParticipantRow({ participant: p, isCurrentTurn, campaignId, enco
     }
   };
 
+  const handleSaveName = async () => {
+    if (!nameInput.trim() || nameInput === p.name) { setEditingName(false); return; }
+    await doUpdate({ name: nameInput.trim() });
+    setEditingName(false);
+  };
+
   const availableToAdd = ALL_CONDITIONS.filter((c) => !p.conditions.includes(c));
 
   return (
     <tr className={`participant-row ${isCurrentTurn ? 'current-turn' : ''} ${loading ? 'row-loading' : ''}`}>
       <td className="participant-name">
         {isCurrentTurn && <span className="turn-indicator">▶ </span>}
-        <strong>{p.name}</strong>
+        {editingName ? (
+          <span className="inline-name-edit">
+            <input
+              className="control-input"
+              style={{ width: 100 }}
+              value={nameInput}
+              onChange={(e) => setNameInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleSaveName(); if (e.key === 'Escape') setEditingName(false); }}
+              autoFocus
+            />
+            <button className="btn btn-sm btn-primary" onClick={handleSaveName}>✓</button>
+            <button className="btn btn-sm" onClick={() => setEditingName(false)}>✕</button>
+          </span>
+        ) : (
+          <span>
+            <strong>{p.name}</strong>
+            <button
+              className="btn-icon-inline"
+              title="Edit name"
+              onClick={() => { setNameInput(p.name); setEditingName(true); }}
+            >✏️</button>
+          </span>
+        )}
       </td>
       <td className="participant-init">{p.initiative_total}</td>
       <td className="participant-hp">

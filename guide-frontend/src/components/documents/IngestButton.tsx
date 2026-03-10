@@ -7,9 +7,10 @@ interface IngestButtonProps {
   currentStatus: IngestionStatus;
   onIngest: () => Promise<void>;
   onPoll: () => Promise<{ ingestion_status: IngestionStatus }>;
+  onComplete?: () => void;
 }
 
-export function IngestButton({ docId, currentStatus, onIngest, onPoll }: IngestButtonProps) {
+export function IngestButton({ docId, currentStatus, onIngest, onPoll, onComplete }: IngestButtonProps) {
   const [status, setStatus] = useState<IngestionStatus>(currentStatus);
   const [error, setError] = useState('');
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -36,7 +37,10 @@ export function IngestButton({ docId, currentStatus, onIngest, onPoll }: IngestB
       try {
         const doc = await onPoll();
         setStatus(doc.ingestion_status);
-        if (doc.ingestion_status === 'completed' || doc.ingestion_status === 'failed') {
+        if (doc.ingestion_status === 'completed') {
+          clearPoller();
+          onComplete?.();
+        } else if (doc.ingestion_status === 'failed') {
           clearPoller();
         }
       } catch {

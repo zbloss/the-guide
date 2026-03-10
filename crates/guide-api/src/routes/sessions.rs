@@ -41,6 +41,10 @@ pub fn router() -> Router<AppState> {
             get(list_events).post(create_event),
         )
         .route(
+            "/campaigns/{campaign_id}/sessions/{id}/events/{event_id}",
+            axum::routing::delete(delete_event),
+        )
+        .route(
             "/campaigns/{campaign_id}/sessions/{id}/summary",
             get(get_summary),
         )
@@ -206,6 +210,15 @@ async fn create_event(
         StatusCode::CREATED,
         Json(repo.create(session_id, campaign_id, req).await?),
     ))
+}
+
+async fn delete_event(
+    State(state): State<AppState>,
+    Path((_campaign_id, _session_id, event_id)): Path<(Uuid, Uuid, Uuid)>,
+) -> Result<impl IntoResponse, crate::error::AppError> {
+    let repo = SessionEventRepository::new(&state.db);
+    repo.delete_event(event_id).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[derive(Deserialize, utoipa::ToSchema, utoipa::IntoParams)]

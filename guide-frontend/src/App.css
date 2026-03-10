@@ -38,6 +38,34 @@
   background: var(--bg);
 }
 
+/* ==================== Light Theme ==================== */
+[data-theme="light"] {
+  --bg: #f5f5f0;
+  --bg-surface: #ffffff;
+  --bg-card: #f0ede8;
+  --accent: #c0392b;
+  --accent-hover: #a93226;
+  --text: #2c2c2c;
+  --text-muted: #6b6b6b;
+  --text-heading: #111111;
+  --border: #d4cfc9;
+  --color-success: #27ae60;
+  --color-warning: #e67e22;
+  --color-danger: #c0392b;
+  --color-info: #2980b9;
+  --hp-high: #27ae60;
+  --hp-mid: #e67e22;
+  --hp-low: #c0392b;
+}
+
+[data-theme="light"] .sidebar {
+  background: var(--bg-surface);
+}
+
+[data-theme="light"] select option {
+  background: #ffffff;
+}
+
 body {
   overflow: hidden;
   height: 100vh;
@@ -132,6 +160,14 @@ body {
   border-top: 1px solid var(--border);
 }
 
+.sidebar-draggable {
+  cursor: grab;
+}
+
+.sidebar-draggable:active {
+  cursor: grabbing;
+}
+
 /* ==================== Header ==================== */
 .header {
   height: var(--header-height);
@@ -148,6 +184,19 @@ body {
   font-size: 16px;
   font-weight: 600;
   color: var(--text-heading);
+}
+
+.header-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.theme-toggle {
+  padding: 4px 8px;
+  font-size: 14px;
+  background: none;
+  border: 1px solid var(--border);
 }
 
 .status-pill {
@@ -1156,6 +1205,121 @@ body {
 }
 
 .confirm-label { color: var(--color-warning); }
+
+/* ==================== Keyboard Hint ==================== */
+.keyboard-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-left: auto;
+}
+
+kbd {
+  display: inline-block;
+  padding: 1px 5px;
+  font-size: 11px;
+  background: rgba(255,255,255,0.1);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-family: monospace;
+}
+
+/* ==================== Summary Export ==================== */
+.summary-export-btns {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+/* ==================== Edit Stats Form ==================== */
+.edit-stats-form {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+/* ==================== Backstory Edit ==================== */
+.backstory-textarea {
+  min-height: 120px;
+  resize: vertical;
+  line-height: 1.6;
+}
+
+.backstory-edit { margin-top: 8px; }
+
+/* ==================== Inline Name Edit ==================== */
+.inline-name-edit {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.btn-icon-inline {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 11px;
+  padding: 0 3px;
+  opacity: 0.4;
+  line-height: 1;
+}
+
+.btn-icon-inline:hover { opacity: 1; }
+
+/* ==================== Playstyle Page ==================== */
+.playstyle-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.card-section-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-heading);
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.radio-group-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.range-input {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.slider-value {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.playstyle-summary {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.playstyle-summary h3 {
+  font-size: 13px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 10px;
+}
+
+.playstyle-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
 
 /* ==================== Misc ==================== */
 .not-found-page {

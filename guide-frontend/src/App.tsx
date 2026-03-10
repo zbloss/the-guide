@@ -13,6 +13,7 @@ import { GlobalDocumentsPage } from "./pages/GlobalDocumentsPage";
 import { ChatPage } from "./pages/ChatPage";
 import { HealthPage } from "./pages/HealthPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
+import { PlaystylePage } from "./pages/PlaystylePage";
 
 function App() {
   return (
@@ -32,6 +33,7 @@ function App() {
         </Route>
 
         <Route path="documents" element={<GlobalDocumentsPage />} />
+        <Route path="playstyle" element={<PlaystylePage />} />
         <Route path="health" element={<HealthPage />} />
         <Route path="*" element={<NotFoundPage />} />
       </Route>

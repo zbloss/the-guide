@@ -36,7 +36,11 @@
       "Bash(bun add:*)",
       "Read(//c/Users/altoz/.bun/bin//**)",
       "Bash(command -v bun)",
-      "Bash(bun.exe add:*)"
+      "Bash(bun.exe add:*)",
+      "Bash(bun remove:*)",
+      "Bash(cargo clippy:*)",
+      "Bash(bun run:*)",
+      "WebFetch(domain:localhost)"
     ]
   }
 }

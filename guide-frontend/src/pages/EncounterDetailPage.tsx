@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useApi } from '../hooks/useApi';
 import { getEncounter, startEncounter, nextTurn, endEncounter } from '../api/encounters';
@@ -21,7 +21,7 @@ export function EncounterDetailPage() {
 
   const displayed = encounter ?? initialEncounter;
 
-  const doAction = async (fn: () => Promise<EncounterSummary>) => {
+  const doAction = useCallback(async (fn: () => Promise<EncounterSummary>) => {
     setActionError('');
     setActionLoading(true);
     try {
@@ -32,7 +32,22 @@ export function EncounterDetailPage() {
     } finally {
       setActionLoading(false);
     }
-  };
+  }, []);
+
+  // Keyboard shortcut: Space → next turn when active
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.code === 'Space' && displayed?.status === 'active' && !actionLoading) {
+        // Don't trigger when typing in an input/textarea
+        const tag = (e.target as HTMLElement).tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+        e.preventDefault();
+        doAction(() => nextTurn(campaignId!, encId!));
+      }
+    };
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, [displayed?.status, actionLoading, campaignId, encId, doAction]);
 
   if (loading) return <div className="page"><LoadingSpinner /></div>;
   if (error) return <div className="page"><ErrorBanner message={error} /></div>;

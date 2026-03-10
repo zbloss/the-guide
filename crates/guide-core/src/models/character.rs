@@ -90,7 +90,16 @@ pub struct CreateCharacterRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct UpdateCharacterRequest {
+    pub name: Option<String>,
+    pub class: Option<String>,
+    pub race: Option<String>,
+    pub level: Option<i32>,
+    pub max_hp: Option<i32>,
     pub current_hp: Option<i32>,
+    pub armor_class: Option<i32>,
+    pub speed: Option<i32>,
+    pub ability_scores: Option<AbilityScores>,
     pub conditions: Option<Vec<Condition>>,
     pub is_alive: Option<bool>,
+    pub backstory_text: Option<String>,
 }

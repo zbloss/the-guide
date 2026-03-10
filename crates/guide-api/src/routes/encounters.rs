@@ -259,13 +259,11 @@ async fn update_participant(
 
     repo.save_state(&engine.encounter).await?;
 
-    let participant = engine
-        .encounter
-        .participants
-        .iter()
-        .find(|p| p.id == pid)
-        .cloned()
-        .ok_or_else(|| GuideError::NotFound(format!("Participant {pid}")))?;
+    if let Some(name) = &req.name {
+        repo.update_participant_name(pid, name).await?;
+    }
 
-    Ok(Json(participant))
+    // Return the full encounter so the frontend can sync all state
+    let updated = repo.get_by_id(enc_id).await?;
+    Ok(Json(updated))
 }

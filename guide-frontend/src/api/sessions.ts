@@ -36,3 +36,7 @@ export function createEvent(campaignId: string, sessionId: string, data: CreateS
 export function getSessionSummary(campaignId: string, sessionId: string, perspective: Perspective): Promise<SessionSummary> {
   return apiGet<SessionSummary>(`/campaigns/${campaignId}/sessions/${sessionId}/summary?perspective=${perspective}`);
 }
+
+export function deleteEvent(campaignId: string, sessionId: string, eventId: string): Promise<void> {
+  return apiDelete(`/campaigns/${campaignId}/sessions/${sessionId}/events/${eventId}`);
+}

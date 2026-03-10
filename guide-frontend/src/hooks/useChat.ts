@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { startChatStream } from '../api/chat';
 import type { Perspective } from '../api/types';
 
@@ -8,11 +8,37 @@ export interface ChatMessage {
   streaming?: boolean;
 }
 
+function historyKey(campaignId: string) {
+  return `chat_history_${campaignId}`;
+}
+
+function loadHistory(campaignId: string): ChatMessage[] {
+  try {
+    const raw = localStorage.getItem(historyKey(campaignId));
+    if (!raw) return [];
+    return (JSON.parse(raw) as ChatMessage[]).filter((m) => !m.streaming);
+  } catch {
+    return [];
+  }
+}
+
+function saveHistory(campaignId: string, messages: ChatMessage[]) {
+  const toSave = messages.filter((m) => !m.streaming);
+  localStorage.setItem(historyKey(campaignId), JSON.stringify(toSave));
+}
+
 export function useChat(campaignId: string) {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>(() => loadHistory(campaignId));
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+
+  // Persist to localStorage whenever messages change (non-streaming)
+  useEffect(() => {
+    if (!streaming) {
+      saveHistory(campaignId, messages);
+    }
+  }, [messages, streaming, campaignId]);
 
   const sendMessage = useCallback(async (message: string, perspective: Perspective) => {
     if (streaming) return;
@@ -117,7 +143,8 @@ export function useChat(campaignId: string) {
   const clearMessages = useCallback(() => {
     setMessages([]);
     setError(null);
-  }, []);
+    localStorage.removeItem(historyKey(campaignId));
+  }, [campaignId]);
 
   return { messages, streaming, error, sendMessage, cancel, clearMessages };
 }
