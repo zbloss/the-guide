@@ -21,6 +21,10 @@ impl AppState {
             .await
             .map(Arc::new);
 
+        use guide_db::documents::{DocumentRepository, GlobalDocumentRepository};
+        DocumentRepository::new(&db).reset_stuck_processing().await?;
+        GlobalDocumentRepository::new(&db).reset_stuck_processing().await?;
+
         Ok(AppState {
             config: Arc::new(config),
             llm,

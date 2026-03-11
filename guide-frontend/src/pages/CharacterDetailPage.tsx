@@ -12,11 +12,15 @@ import { ALL_CONDITIONS } from '../api/types';
 
 function HpBar({ current, max }: { current: number; max: number }) {
   const pct = max > 0 ? (current / max) * 100 : 0;
-  const cls = pct > 50 ? 'hp-high' : pct > 25 ? 'hp-mid' : 'hp-low';
+  const overflow = current > max;
+  const cls = overflow ? 'hp-overflow' : pct > 50 ? 'hp-high' : pct > 25 ? 'hp-mid' : 'hp-low';
+  const label = overflow
+    ? `${current} / ${max} HP (+${current - max})`
+    : `${current} / ${max} HP`;
   return (
     <div className="hp-bar-container hp-bar-large">
       <div className={`hp-bar-fill ${cls}`} style={{ width: `${Math.min(100, pct)}%` }} />
-      <span className="hp-bar-label">{current} / {max} HP</span>
+      <span className="hp-bar-label">{label}</span>
     </div>
   );
 }
@@ -123,15 +127,19 @@ export function CharacterDetailPage() {
   );
 
   const [hpInput, setHpInput] = useState('');
-  const [addCond, setAddCond] = useState<Condition>('Blinded');
+  const [addCond, setAddCond] = useState<Condition>('blinded');
   const [updating, setUpdating] = useState(false);
   const [editingStats, setEditingStats] = useState(false);
+  const [updateError, setUpdateError] = useState('');
 
   const doUpdate = async (changes: Parameters<typeof updateCharacter>[2]) => {
+    setUpdateError('');
     setUpdating(true);
     try {
       await updateCharacter(campaignId!, charId!, changes);
       refetch();
+    } catch (err: unknown) {
+      setUpdateError(err instanceof Error ? err.message : String(err));
     } finally {
       setUpdating(false);
     }
@@ -159,8 +167,12 @@ export function CharacterDetailPage() {
   };
 
   const handleDelete = async () => {
-    await deleteCharacter(campaignId!, charId!);
-    navigate(`/campaigns/${campaignId}/characters`);
+    try {
+      await deleteCharacter(campaignId!, charId!);
+      navigate(`/campaigns/${campaignId}/characters`);
+    } catch (err: unknown) {
+      setUpdateError(err instanceof Error ? err.message : String(err));
+    }
   };
 
   if (loading) return <div className="page"><LoadingSpinner /></div>;
@@ -188,6 +200,8 @@ export function CharacterDetailPage() {
         </div>
       </div>
 
+      {updateError && <ErrorBanner message={updateError} />}
+
       {editingStats ? (
         <EditStatsForm
           character={character}
@@ -209,7 +223,7 @@ export function CharacterDetailPage() {
               <input
                 type="number"
                 className="form-input form-input-num"
-                placeholder="Set HP"
+                placeholder="HP"
                 value={hpInput}
                 onChange={(e) => setHpInput(e.target.value)}
               />
@@ -272,6 +286,7 @@ export function CharacterDetailPage() {
               characterId={charId!}
               backstory={character.backstory}
               onAnalyzed={handleAnalyzed}
+              onSaved={refetch}
             />
           </div>
         </div>

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { LoadingSpinner } from '../common/LoadingSpinner';
 import type { IngestionStatus } from '../../api/types';
 
@@ -14,24 +14,25 @@ export function IngestButton({ docId, currentStatus, onIngest, onPoll, onComplet
   const [status, setStatus] = useState<IngestionStatus>(currentStatus);
   const [error, setError] = useState('');
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const processingStartRef = useRef<number | null>(currentStatus === 'processing' ? Date.now() : null);
 
   // Sync with prop changes
   useEffect(() => {
     setStatus(currentStatus);
   }, [currentStatus]);
 
-  const clearPoller = () => {
+  const clearPoller = useCallback(() => {
     if (intervalRef.current) {
       clearInterval(intervalRef.current);
       intervalRef.current = null;
     }
-  };
+  }, []);
 
   useEffect(() => {
     return () => clearPoller();
-  }, [docId]);
+  }, [docId, clearPoller]);
 
-  const startPolling = () => {
+  const startPolling = useCallback(() => {
     clearPoller();
     intervalRef.current = setInterval(async () => {
       try {
@@ -47,10 +48,18 @@ export function IngestButton({ docId, currentStatus, onIngest, onPoll, onComplet
         clearPoller();
       }
     }, 3000);
-  };
+  }, [clearPoller, onPoll, onComplete]);
+
+  // Auto-start polling if doc was already processing on mount
+  useEffect(() => {
+    if (currentStatus === 'processing') {
+      startPolling();
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleIngest = async () => {
     setError('');
+    processingStartRef.current = Date.now();
     try {
       await onIngest();
       setStatus('processing');
@@ -61,7 +70,15 @@ export function IngestButton({ docId, currentStatus, onIngest, onPoll, onComplet
   };
 
   if (status === 'processing') {
-    return <span className="ingest-status"><LoadingSpinner size={14} /> Processing…</span>;
+    const elapsedSec = processingStartRef.current ? Math.floor((Date.now() - processingStartRef.current) / 1000) : 0;
+    return (
+      <>
+        <span className="ingest-status"><LoadingSpinner size={14} /> Processing…</span>
+        {elapsedSec > 60 && (
+          <button className="btn btn-sm" onClick={handleIngest} style={{ marginLeft: 8 }}>Force Retry</button>
+        )}
+      </>
+    );
   }
   if (status === 'completed') {
     return <span className="badge badge-success">Ingested ✓</span>;

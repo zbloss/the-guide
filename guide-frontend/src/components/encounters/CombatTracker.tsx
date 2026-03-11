@@ -8,8 +8,10 @@ interface CombatTrackerProps {
 }
 
 export function CombatTracker({ encounter, campaignId, onUpdate }: CombatTrackerProps) {
-  const sorted = [...encounter.participants].sort((a, b) => b.initiative_total - a.initiative_total);
-  const currentParticipant = sorted[encounter.current_turn_index % sorted.length];
+  const sorted = [...encounter.participants].sort((a, b) =>
+    b.initiative_total - a.initiative_total || a.id.localeCompare(b.id)
+  );
+  const currentParticipant = sorted.length > 0 ? sorted[encounter.current_turn_index % sorted.length] : undefined;
 
   return (
     <div className="combat-tracker">
@@ -41,7 +43,7 @@ export function CombatTracker({ encounter, campaignId, onUpdate }: CombatTracker
               <ParticipantRow
                 key={p.id}
                 participant={p}
-                isCurrentTurn={idx === encounter.current_turn_index % sorted.length}
+                isCurrentTurn={sorted.length > 0 && idx === encounter.current_turn_index % sorted.length}
                 campaignId={campaignId}
                 encounterId={encounter.id}
                 onUpdate={onUpdate}

@@ -6,12 +6,9 @@ use axum::{
     Json, Router,
 };
 use guide_combat::{build_participant, initiative::roll_initiative, CombatEngine};
-use guide_core::{
-    models::{
-        CombatParticipant, CreateEncounterRequest, Encounter,
-        UpdateParticipantRequest,
-    },
-    GuideError,
+use guide_core::models::{
+    CombatParticipant, CreateEncounterRequest, Encounter,
+    UpdateParticipantRequest,
 };
 use guide_db::{characters::CharacterRepository, encounters::EncounterRepository};
 use uuid::Uuid;
@@ -255,6 +252,31 @@ async fn update_participant(
     }
     if let Some(condition) = &req.remove_condition {
         engine.remove_condition(pid, condition)?;
+    }
+
+    if let Some(spend) = req.spend_action {
+        if let Some(p) = engine.encounter.participants.iter_mut().find(|p| p.id == pid) {
+            p.action_budget.has_action = !spend;
+            engine.encounter.updated_at = chrono::Utc::now();
+        }
+    }
+    if let Some(spend) = req.spend_bonus_action {
+        if let Some(p) = engine.encounter.participants.iter_mut().find(|p| p.id == pid) {
+            p.action_budget.has_bonus_action = !spend;
+            engine.encounter.updated_at = chrono::Utc::now();
+        }
+    }
+    if let Some(spend) = req.spend_reaction {
+        if let Some(p) = engine.encounter.participants.iter_mut().find(|p| p.id == pid) {
+            p.action_budget.has_reaction = !spend;
+            engine.encounter.updated_at = chrono::Utc::now();
+        }
+    }
+    if let Some(movement) = req.spend_movement {
+        if let Some(p) = engine.encounter.participants.iter_mut().find(|p| p.id == pid) {
+            p.action_budget.movement_remaining = (p.action_budget.movement_remaining - movement).max(0);
+            engine.encounter.updated_at = chrono::Utc::now();
+        }
     }
 
     repo.save_state(&engine.encounter).await?;

@@ -195,7 +195,18 @@ async fn analyze_backstory(
     };
 
     let resp = state.llm.complete(req).await?;
-    let parsed: LlmBackstory = serde_json::from_str(resp.content.trim())
+    let raw = resp.content.trim();
+    if raw.is_empty() {
+        return Err(GuideError::Llm(
+            "LLM returned an empty response. Ensure the model is running and configured correctly.".into()
+        ).into());
+    }
+    let json_str = raw
+        .trim_start_matches("```json")
+        .trim_start_matches("```")
+        .trim_end_matches("```")
+        .trim();
+    let parsed: LlmBackstory = serde_json::from_str(json_str)
         .map_err(|e| GuideError::Llm(format!("Failed to parse backstory JSON: {e}")))?;
 
     let hooks: Vec<PlotHook> = parsed

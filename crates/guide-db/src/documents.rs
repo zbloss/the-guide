@@ -98,6 +98,17 @@ impl<'a> DocumentRepository<'a> {
         .await?;
         Ok(())
     }
+
+    pub async fn reset_stuck_processing(&self) -> Result<()> {
+        sqlx::query(
+            "UPDATE campaign_documents SET ingestion_status = 'failed', \
+             ingestion_error = 'Interrupted by server restart' \
+             WHERE ingestion_status = 'processing'",
+        )
+        .execute(self.pool)
+        .await?;
+        Ok(())
+    }
 }
 
 pub struct GlobalDocumentRepository<'a> {
@@ -183,6 +194,17 @@ impl<'a> GlobalDocumentRepository<'a> {
         .bind(Utc::now().to_rfc3339())
         .bind(page_count)
         .bind(doc_id.to_string())
+        .execute(self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn reset_stuck_processing(&self) -> Result<()> {
+        sqlx::query(
+            "UPDATE global_documents SET ingestion_status = 'failed', \
+             ingestion_error = 'Interrupted by server restart' \
+             WHERE ingestion_status = 'processing'",
+        )
         .execute(self.pool)
         .await?;
         Ok(())

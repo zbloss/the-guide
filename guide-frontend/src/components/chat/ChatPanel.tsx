@@ -12,7 +12,7 @@ interface ChatPanelProps {
 export function ChatPanel({ campaignId }: ChatPanelProps) {
   const [input, setInput] = useState('');
   const [perspective, setPerspective] = useState<Perspective>('dm');
-  const { messages, streaming, error, sendMessage, clearMessages } = useChat(campaignId);
+  const { messages, streaming, error, sendMessage, cancel, clearMessages } = useChat(campaignId);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -69,6 +69,7 @@ export function ChatPanel({ campaignId }: ChatPanelProps) {
         >
           {streaming ? '…' : 'Send'}
         </button>
+        {streaming && <button className="btn btn-sm" onClick={cancel}>Cancel</button>}
       </div>
     </div>
   );

@@ -1,426 +1,418 @@
-# Final QA Analysis — The Guide Frontend
-**Date:** 2026-03-09
-**Method:** Full static code review (backend Rust + frontend TypeScript/React)
-**Backend:** Rust/Axum at http://localhost:8000
-**Frontend:** React/Vite (bun) at http://localhost:1421
-**Scope:** All 14 pages, all API client files, all shared components, backend route handlers
+# QA Analysis — The Guide Frontend
+**Date:** 2026-03-10
+**Scope:** Static code review + live API contract verification
+**Backend:** Rust/Axum at http://localhost:8000 (confirmed running)
+**Frontend:** React 19 + TypeScript at http://localhost:1421
+**Note:** Browser extension unavailable during testing; findings are from code review and direct API calls.
 
 ---
 
 ## Executive Summary
 
-The frontend has **5 critical type mismatches** between Rust backend structs and TypeScript interface declarations that will silently break backstory display, combat participant rendering, and hook priority filtering at runtime. Additionally, several medium-severity UI bugs exist around action budget tracking, document ingestion callbacks, and encounter generation types. The playstyle profile is fully disconnected from the backend (localStorage only). UX issues are generally minor. There are no XSS or security concerns.
+5 critical API contract bugs were found that cause functional breakdowns across Sessions, Conditions, and Session Events. These are not UI polish issues — they are hard failures where features don't work at all. Several medium-severity error handling gaps and one missing feature (campaign editing) were also found.
 
 ---
 
-## Bug Reports
+## CRITICAL BUGS
 
-### BUG-001 — `PlotHook` frontend interface completely mismatches backend struct
-**Severity:** Critical
-**File:** `guide-frontend/src/api/types.ts:91–95` vs `crates/guide-core/src/models/character.rs:58–66`
+### BUG-001 — Session Status Field Missing from API Response
+**Severity:** HIGH
+**Affected:** `SessionDetailPage.tsx`, `SessionCard.tsx`, all session lifecycle UI
 
-**Backend sends:**
-```json
-{ "id": "uuid", "character_id": "uuid", "description": "...", "priority": "high", "is_active": true, "llm_extracted": true }
+**Root Cause:**
+The Rust `Session` model (`crates/guide-core/src/models/session.rs`) has no `status` field:
+```rust
+pub struct Session {
+    pub id: Uuid,
+    pub campaign_id: Uuid,
+    pub session_number: i32,
+    pub title: Option<String>,
+    pub notes: Option<String>,
+    pub started_at: Option<DateTime<Utc>>,
+    pub ended_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
 ```
+The backend returns: `{"started_at": null, "ended_at": null, ...}` — no `status` key.
 
-**Frontend expects (`types.ts:91`):**
-```typescript
-interface PlotHook { summary: string; priority: HookPriority; related_npcs: string[]; }
-```
-
-**Impact:** `BackstoryPanel` renders `hook.summary` which is always `undefined` (backend sends `hook.description`). All plot hooks from `analyze-backstory` appear blank. `related_npcs` is always `undefined` (field doesn't exist in backend).
-
-**Steps to reproduce:** Create a character with backstory text, trigger "Analyze with AI" — the extracted plot hooks section will render with empty summaries.
-
-**Fix:** Update `PlotHook` in `types.ts` to match the backend struct.
-
----
-
-### BUG-002 — `Backstory.hooks` field name doesn't match backend `extracted_hooks`
-**Severity:** Critical
-**File:** `guide-frontend/src/api/types.ts:97–103` vs `crates/guide-core/src/models/character.rs:49–56`
-
-**Backend sends:**
-```json
-{ "raw_text": "...", "extracted_hooks": [...], "motivations": [...], "key_relationships": [...], "secrets": [...] }
-```
-
-**Frontend expects:**
-```typescript
-interface Backstory { raw_text: string | null; hooks: PlotHook[]; ... }
-```
-
-**Impact:** `backstory.hooks` is always `undefined` because the backend field is named `extracted_hooks`. The backstory analysis panel renders no hooks even when analysis succeeds. Additionally, backend `raw_text` is `String` (not nullable), so the `| null` check is incorrect but harmless.
-
-**Fix:** Rename `hooks` → `extracted_hooks` in the `Backstory` interface in `types.ts`.
-
----
-
-### BUG-003 — `CombatParticipant.initiative_bonus` vs backend `initiative_modifier`
-**Severity:** Critical
-**File:** `guide-frontend/src/api/types.ts:138` vs `crates/guide-core/src/models/encounter.rs:29`
-
-**Backend sends field:** `initiative_modifier`
-**Frontend declares:** `initiative_bonus: number`
-
-**Impact:** `participant.initiative_bonus` is always `undefined` at runtime. The CombatTracker renders `p.initiative_total` correctly (field name matches), but `initiative_bonus` is displayed as `undefined` in any view that uses it, and the type system provides false confidence.
-
-**Fix:** Rename `initiative_bonus` → `initiative_modifier` in `CombatParticipant` in `types.ts`.
-
----
-
-### BUG-004 — `CombatParticipant.is_active` vs backend `is_defeated` (inverted logic)
-**Severity:** Critical
-**File:** `guide-frontend/src/api/types.ts:145` vs `crates/guide-core/src/models/encounter.rs:37`
-
-**Backend sends:** `is_defeated: bool` (true when HP ≤ 0)
-**Frontend declares:** `is_active: boolean`
-
-**Impact:** `participant.is_active` is always `undefined` because the backend sends `is_defeated`. Any defeated/alive styling or filtering in the combat tracker will silently fail. The two fields also have **inverted semantics** — a component checking `is_active === false` to dim a row would need to check `is_defeated === true` instead.
-
-**Fix:** Replace `is_active: boolean` with `is_defeated: boolean` in `CombatParticipant` in `types.ts`.
-
----
-
-### BUG-005 — `HookPriority` type missing `'critical'` value
-**Severity:** High
-**File:** `guide-frontend/src/api/types.ts:60` vs `crates/guide-core/src/models/character.rs:68–75`
-
-**Backend enum values:** `low | medium | high | critical`
-**Frontend type:** `type HookPriority = 'low' | 'medium' | 'high'`
-
-**Impact:** If the backend returns a hook with `priority: 'critical'`, TypeScript will treat it as an invalid enum member at type-check time, and any switch/conditional that handles hook priority will not have a case for `'critical'`, silently falling through or showing no styling.
-
-**Fix:** Add `'critical'` to the `HookPriority` union type.
-
----
-
-### BUG-006 — `GeneratedEncounterType` missing `'mixed'` variant
-**Severity:** High
-**File:** `guide-frontend/src/api/types.ts:58` vs `crates/guide-core/src/models/encounter.rs:111–119`
-
-**Backend enum values:** `combat | social | exploration | puzzle | mixed`
-**Frontend type:** `'combat' | 'social' | 'exploration' | 'puzzle'`
-
-**Impact:** If the LLM generates a `mixed` encounter type (a valid backend variant), the frontend type is invalid. Any icon/badge rendering that switches on `encounter_type` will have no matching case.
-
-**Fix:** Add `'mixed'` to `GeneratedEncounterType`.
-
----
-
-### BUG-007 — Action budget checkboxes silently do nothing (backend handler ignores `spend_*` fields)
-**Severity:** High
-**File:** `guide-frontend/src/components/encounters/ParticipantRow.tsx:124–137` vs `crates/guide-api/src/routes/encounters.rs:246–268`
-
-**What the UI does:** Lines 126, 130, 134 render checkboxes for Action/Bonus/Reaction and call `doUpdate({ spend_action: bool })` etc.
-
-**What the backend does:** The `update_participant` handler at `encounters.rs:246` processes `hp_delta`, `set_hp`, `add_condition`, `remove_condition`, and `name` only. There is **no code** to handle `spend_action`, `spend_bonus_action`, or `spend_reaction`.
-
-**Impact:** Clicking the Action/Bonus/Reaction checkboxes sends a valid API request which the backend silently ignores. The UI checkbox state appears to toggle but resets when the page re-renders from the server response. Spend movement (`spend_movement`) is also accepted in the request type but never processed.
-
-**Steps to reproduce:** Start an encounter, click the "Action" checkbox for a participant — it reverts immediately on next render.
-
-**Fix:** Implement `spend_action`, `spend_bonus_action`, `spend_reaction`, and `spend_movement` in the Rust `update_participant` handler to call the CombatEngine equivalent methods.
-
----
-
-### BUG-008 — `GlobalDocumentsPage` missing `onComplete` callback causes stale ingestion status
-**Severity:** Medium
-**File:** `guide-frontend/src/pages/GlobalDocumentsPage.tsx:36–41` vs `guide-frontend/src/pages/DocumentsPage.tsx:40–46`
-
-**DocumentsPage (correct):**
+**Frontend Impact:**
+`SessionDetailPage.tsx` conditionally renders Start/End buttons on `session.status`:
 ```tsx
-<IngestButton ... onComplete={refetch} />
+{session.status === 'pending' && <button>Start Session</button>}
+{session.status === 'started' && <button>End Session</button>}
+{session.status === 'ended' && <span>Ended</span>}
 ```
+Since `session.status === undefined`, none of these conditions are ever true. **The Start and End Session buttons never appear.** Sessions are stuck in a perpetual pending-looking state.
 
-**GlobalDocumentsPage (missing):**
-```tsx
-<IngestButton ... onPoll={() => getGlobalDoc(d.id)} />
-// onComplete is absent
+**Verified:** Live API call to `GET /campaigns/{id}/sessions/{id}` confirmed `status` field is absent.
+
+**Repro:**
+1. Navigate to any session detail page
+2. Observe no Start Session / End Session button
+3. Session appears to have no lifecycle controls
+
+**Fix:** Derive status from `started_at`/`ended_at` in the frontend:
+```typescript
+function deriveStatus(session: Session): 'pending' | 'started' | 'ended' {
+  if (session.ended_at) return 'ended';
+  if (session.started_at) return 'started';
+  return 'pending';
+}
 ```
-
-**Impact:** When a global document's ingestion completes, `IngestButton` calls `onComplete?.()` which is `undefined`. The page's document list is never refetched. The "Ingested ✓" badge will appear in the button, but other document metadata (like `ingested_at`) won't update in the list table until the user manually refreshes.
-
-**Fix:** Add `onComplete={refetch}` to the `IngestButton` in `GlobalDocumentsPage.tsx`.
 
 ---
 
-### BUG-009 — `CreateEncounterRequest.name` required in frontend form but optional in backend
-**Severity:** Medium
-**File:** `guide-frontend/src/api/types.ts:281–286` vs `crates/guide-core/src/models/encounter.rs:67–72`
+### BUG-002 — Condition Enum Case Mismatch (snake_case vs PascalCase)
+**Severity:** HIGH
+**Affected:** Character detail page, CombatTracker participant rows, condition management
 
-**Backend:** `name: Option<String>` (optional)
-**Frontend request type:** `name: string` (required, no `?`)
+**Root Cause:**
+The Rust `Condition` enum uses `#[serde(rename_all = "snake_case")]`:
+```rust
+#[serde(rename_all = "snake_case")]
+pub enum Condition {
+    Blinded,   // serialized as "blinded"
+    Charmed,   // serialized as "charmed"
+    Poisoned,  // serialized as "poisoned"
+    // ...
+}
+```
+The backend returns conditions as lowercase: `["blinded", "poisoned"]`.
 
-**Impact:** The frontend `CreateEncounterRequest` forces callers to supply a `name`. This is stricter than the backend requires — if any form omits the name, TypeScript compilation would fail (not a runtime bug). But it also means the form cannot be submitted without a name even though the backend would happily accept a nameless encounter. The `EncounterDetailPage.tsx:61` renders `displayed.name` directly — if the backend allows null names and a nameless encounter is created via API, the page renders `null` literally in the `<h1>`.
+The frontend `ALL_CONDITIONS` and the `Condition` type use **PascalCase**:
+```typescript
+export const ALL_CONDITIONS: Condition[] = ['Blinded', 'Charmed', 'Poisoned', ...];
+```
 
-**Fix:** Change `name: string` to `name?: string` in `CreateEncounterRequest`. Add a null guard in `EncounterDetailPage` for `displayed.name`.
+**Frontend Impact (3 failures):**
+1. **Display broken:** `ConditionBadge` renders the string directly — shows `"blinded"` instead of `"Blinded"`.
+2. **Available conditions broken:** `ALL_CONDITIONS.filter((c) => !character.conditions.includes(c))` — `'Blinded'.includes('blinded')` → `false`. ALL conditions appear as addable even when already applied.
+3. **Adding condition fails:** Frontend sends `add_condition: "Poisoned"` (PascalCase) but backend deserializes with `snake_case`, expecting `"poisoned"`. Backend returns 422 unprocessable entity.
+4. **Removing condition fails:** `character.conditions.filter((x) => x !== c)` where `x='blinded'` and `c='Blinded'` — filter never removes the condition, so PUT sends the full unchanged list.
+
+**Additional:** Frontend `Condition` type includes `'Exhausted'` which does NOT exist in the backend enum. Sending `add_condition: "exhausted"` results in backend deserialization error.
+
+**Repro:**
+1. Navigate to any character with a condition (or add one)
+2. Observe badge shows lowercase condition name
+3. Try to add a condition → 422 error from backend
+4. Try to remove a condition → no-op, condition stays
+
+**Fix (backend option):** Remove `#[serde(rename_all = "snake_case")]` from Condition enum.
+**Fix (frontend option):** Lowercase all condition comparisons; map display to PascalCase labels.
 
 ---
 
-### BUG-010 — `doUpdate` in `CharacterDetailPage` swallows errors silently
-**Severity:** Medium
-**File:** `guide-frontend/src/pages/CharacterDetailPage.tsx:130–138`
+### BUG-003 — EventType Enum Values Don't Match Frontend and Backend
+**Severity:** HIGH
+**Affected:** Session event creation, SessionEventList display
+
+**Root Cause:**
+Backend `EventType` variants (`crates/guide-core/src/models/shared.rs`):
+```
+combat, exploration, social, rest, level_up, item_found, npc_met, plot_revealed, custom
+```
+Frontend `EventType` values (`api/types.ts`):
+```
+combat, roleplay, exploration, skill_challenge, item_found, npc_introduced, quest_update, revelation, other
+```
+
+**Mismatches:**
+| Backend | Frontend | Status |
+|---------|----------|--------|
+| `combat` | `combat` | ✓ Match |
+| `exploration` | `exploration` | ✓ Match |
+| `item_found` | `item_found` | ✓ Match |
+| `social` | `roleplay` | ✗ Mismatch |
+| `rest` | *(missing)* | ✗ Backend only |
+| `level_up` | *(missing)* | ✗ Backend only |
+| `npc_met` | `npc_introduced` | ✗ Mismatch |
+| `plot_revealed` | `revelation` | ✗ Mismatch |
+| `custom` | `other` | ✗ Mismatch |
+| *(missing)* | `skill_challenge` | ✗ Frontend only |
+| *(missing)* | `quest_update` | ✗ Frontend only |
+
+**Impact:** Creating events with types `roleplay`, `skill_challenge`, `npc_introduced`, `quest_update`, `revelation`, or `other` causes backend deserialization failure (422 error). Only `combat`, `exploration`, and `item_found` work.
+
+**Verified:** Live session events show `event_type: "combat"` and `event_type: "exploration"` — the overlapping types. The `SessionEventForm` offers all frontend types including the broken ones.
+
+---
+
+### BUG-004 — EventSignificance Enum Partial Mismatch
+**Severity:** HIGH
+**Affected:** Session event creation
+
+**Root Cause:**
+Backend `EventSignificance`:
+```
+minor, major, milestone
+```
+Frontend `EventSignificance`:
+```
+minor, moderate, major, critical
+```
+
+**Impact:** Creating events with `moderate` or `critical` significance causes backend 422 error. `milestone` exists in backend but is absent from frontend (backend-created milestone events would display the raw string `"milestone"` in frontend).
+
+**Verified:** Live event data shows `"significance": "minor"` and `"significance": "major"` from backend — confirming the overlapping values work, but the default dropdown in SessionEventForm includes all 4 frontend values.
+
+---
+
+### BUG-005 — SessionEvent `occurred_at` vs `created_at` Field Name Mismatch
+**Severity:** MEDIUM
+**Affected:** `SessionEventList.tsx` — event timestamp display
+
+**Root Cause:**
+Backend `SessionEvent` model serializes the timestamp as `"occurred_at"`:
+```rust
+pub occurred_at: DateTime<Utc>,
+```
+Frontend `SessionEvent` type declares `created_at: string`.
+
+**Verified:** Live API response confirmed: `"occurred_at": "2026-03-08T05:07:21.041910686Z"` — no `created_at` field.
+
+**Impact:**
+`SessionEventList.tsx:40`: `new Date(ev.created_at).toLocaleTimeString(...)` — `ev.created_at` is `undefined`, producing `"Invalid Date"` in the Time column.
+
+---
+
+## MEDIUM BUGS
+
+### BUG-006 — `handleAddEvent` Has No Error Handling
+**Severity:** MEDIUM
+**File:** `guide-frontend/src/pages/SessionDetailPage.tsx:60-63`
 
 ```typescript
-const doUpdate = async (changes) => {
-  setUpdating(true);
-  try {
-    await updateCharacter(campaignId!, charId!, changes);
-    refetch();
-  } finally {
-    setUpdating(false);
-  }
+const handleAddEvent = async (data: CreateSessionEventRequest) => {
+  await createEvent(campaignId!, sessionId!, data);  // throws on error, uncaught
+  setShowAddEvent(false);
+  refetchEvents();
 };
 ```
 
-**Impact:** The `try/finally` block has no `catch`. If `updateCharacter` throws (network error, 422, 500), the error is silently swallowed. The spinner stops, `refetch()` is skipped, and the UI shows the old stale data with no error banner. The user has no idea the HP change or condition update failed.
+**Impact:** If `createEvent()` throws (e.g., 422 from EventType/Significance mismatch — see BUG-003/BUG-004), the modal stays open with no error message. User sees nothing happened. The modal can only be closed by clicking Cancel.
 
-**Fix:** Add a `catch` block that sets an error state and displays an `ErrorBanner`.
+**Fix:** Wrap in try/catch and set an error state displayed inside the modal.
 
 ---
 
-### BUG-011 — `ParticipantRow.tsx` error in `doUpdate` is logged but not surfaced to user
-**Severity:** Medium
-**File:** `guide-frontend/src/components/encounters/ParticipantRow.tsx:32–33`
+### BUG-007 — `handleDeleteEvent` Has No Error Handling
+**Severity:** MEDIUM
+**File:** `guide-frontend/src/pages/SessionDetailPage.tsx:66-69`
 
 ```typescript
-} catch (e) {
-  console.error(e);
-}
+const handleDeleteEvent = async (eventId: string) => {
+  await deleteEvent(campaignId!, sessionId!, eventId);  // throws on error, uncaught
+  refetchEvents();
+};
 ```
 
-**Impact:** If a participant update fails (e.g., invalid HP value, network error), the participant row shows no feedback. The `loading` spinner stops and the row returns to its previous state without any error message. DMs have no way to know if a damage/heal action was recorded.
+**Impact:** If delete fails, user sees no error. The event remains in the list but user may believe it was deleted.
 
-**Fix:** Add an error state to `ParticipantRow` and display an inline error message when `doUpdate` fails.
+**Note:** KI-6 is **debunked** — the `DELETE /campaigns/{campaign_id}/sessions/{id}/events/{event_id}` endpoint exists and is correctly implemented in the Rust backend.
 
 ---
 
-### BUG-012 — Session summary endpoint returns 400 if session has no events
-**Severity:** Medium
-**File:** `crates/guide-api/src/routes/sessions.rs:257–260`
-
-```rust
-if events.is_empty() {
-    return Err(GuideError::InvalidInput("Session has no events to summarize".into()).into());
-}
-```
-
-**Impact:** Clicking "Generate Summary" on a session with no events shows a raw error banner `"Session has no events to summarize"`. The `summaryError` state shows this correctly, but the UX is poor — the Generate button should be disabled or show a tooltip when no events exist, rather than letting the user attempt an impossible action.
-
-**Fix:** In `SessionDetailPage`, disable the "Generate Summary" button when `events` array is empty, and show a hint: "Add events before generating a summary."
-
----
-
-### BUG-013 — `CombatTracker` turn-index modulo is stale after participant re-sort
-**Severity:** Medium
-**File:** `guide-frontend/src/components/encounters/CombatTracker.tsx:12,44`
+### BUG-008 — `handleDelete` (Character) Has No Error Handling
+**Severity:** MEDIUM
+**File:** `guide-frontend/src/pages/CharacterDetailPage.tsx:165-168`
 
 ```typescript
-const sorted = [...encounter.participants].sort((a, b) => b.initiative_total - a.initiative_total);
+const handleDelete = async () => {
+  await deleteCharacter(campaignId!, charId!);  // throws on error, uncaught
+  navigate(`/campaigns/${campaignId}/characters`);
+};
+```
+
+**Impact:** If delete fails, the `navigate()` call is never reached (exception propagates), but `ConfirmButton.onConfirm` has no error boundary. The user gets no error feedback and the character appears undeleted with no explanation.
+
+---
+
+### BUG-009 — SummaryView Clipboard API Has No Error Handling
+**Severity:** MEDIUM
+**File:** `guide-frontend/src/components/sessions/SummaryView.tsx:14-17`
+
+```typescript
+const handleCopy = async () => {
+  await navigator.clipboard.writeText(summary.content);  // throws if permission denied
+  setCopied(true);
+  ...
+};
+```
+
+**Impact:** If the page is served over HTTP (not HTTPS) or clipboard permission is denied, `writeText()` throws. The component catches nothing; the button shows no feedback. In HTTP development contexts this is a real risk.
+
+---
+
+### BUG-010 — Backstory Text Save Does Not Refresh Parent
+**Severity:** MEDIUM
+**File:** `guide-frontend/src/components/characters/BackstoryPanel.tsx:20-31`
+
+After `updateCharacter()` succeeds in `handleSaveText()`, only `setEditingText(false)` is called. The parent's `refetch()` is never triggered. The `displayText` variable reads from the `backstory?.raw_text` prop, which doesn't update until the parent re-fetches.
+
+**Impact:** After saving backstory text and closing the editor, the displayed text reverts to the pre-save content. The save was persisted to the backend, but the UI shows stale data until the user navigates away and back.
+
+**Repro:**
+1. Navigate to character detail
+2. Click "Edit Text" in Backstory panel
+3. Enter new text, click "Save Text"
+4. Editor closes — the displayed text shows the OLD text, not the saved text
+
+---
+
+### BUG-011 — No Cancel Button for In-Flight SSE Stream
+**Severity:** MEDIUM (UX)
+**File:** `guide-frontend/src/components/chat/ChatPanel.tsx`, `guide-frontend/src/hooks/useChat.ts`
+
+`useChat` exposes a `cancel()` function that aborts the `AbortController`. The `ChatPanel` receives `cancel` in the destructured return but doesn't expose it in the UI:
+```typescript
+const { messages, streaming, error, sendMessage, clearMessages } = useChat(campaignId);
+// `cancel` is available but destructured away
+```
+
+**Impact:** During long streaming responses, the user has no way to stop the stream. They must wait for it to complete. This is noticeable with slow Ollama models.
+
+---
+
+### BUG-012 — No UI to Edit Campaign Metadata
+**Severity:** MEDIUM (Missing Feature)
+**File:** `guide-frontend/src/pages/CampaignDetailPage.tsx`
+
+The campaign detail page displays name, game system badge, and description (if present), but provides no edit controls for any of these fields. The `PUT /campaigns/{id}` endpoint accepts `name`, `description`, and `game_system` in `UpdateCampaignRequest`, but the frontend only calls this endpoint via `WorldStateEditor`.
+
+**Impact:** Campaign name/description/game_system are write-once (set at creation). There's no way to rename or fix a typo in campaign metadata.
+
+---
+
+## LOW BUGS
+
+### BUG-013 — ConfirmButton Has No Click-Outside Dismiss
+**Severity:** LOW (UX)
+**File:** `guide-frontend/src/components/common/ConfirmButton.tsx`
+
+When a ConfirmButton enters the confirming state (user clicked the initial button), it shows "Are you sure? | Yes | No". There is no click-outside handler to dismiss. The confirming state persists until "Yes" or "No" is explicitly clicked.
+
+**Impact:** In tables with multiple rows (event list, character list), clicking one Delete and then clicking elsewhere leaves an orphaned confirmation widget visible.
+
+---
+
+### BUG-014 — EncounterForm Shows Empty Participant List With No Warning
+**Severity:** LOW (UX)
+**File:** `guide-frontend/src/components/encounters/EncounterForm.tsx:68-82`
+
+If a campaign has zero characters, the participant checkbox group renders empty. The submit button is correctly disabled (`selectedChars.length === 0` → error on submit), but there is no proactive message explaining why there's nothing to select.
+
+**Impact:** DMs see an empty "Participants" section and may not understand they need to create characters first.
+
+---
+
+### BUG-015 — CombatTracker Modulo-Zero Edge Case (Theoretical)
+**Severity:** LOW
+**File:** `guide-frontend/src/components/encounters/CombatTracker.tsx:14,46`
+
+```typescript
 const currentParticipant = sorted[encounter.current_turn_index % sorted.length];
-// ...
-isCurrentTurn={idx === encounter.current_turn_index % sorted.length}
 ```
 
-**Impact:** The backend's `current_turn_index` is an offset into the **sorted** initiative order. The frontend re-sorts on every render. This works correctly when participants maintain their relative order, but if two participants have equal `initiative_total`, JavaScript's sort is not guaranteed stable across all environments, and the turn indicator could highlight the wrong participant.
+If `sorted.length === 0`, `% 0` in JavaScript returns `NaN`. The component guards `currentParticipant &&` on line 20, so no crash occurs, but `isCurrentTurn={idx === NaN}` is always `false`, meaning no participant is highlighted.
 
-**Fix:** Sort should use a stable tiebreaker (e.g., `participant.id` alphabetically) to guarantee consistent ordering.
+**Severity note:** The backend enforces at least one participant to start combat, making this unreachable in normal use. However, a completed encounter with all participants removed would expose this path.
 
 ---
 
-### BUG-014 — `SessionEventList` timezone ambiguity
-**Severity:** Low
-**File:** `guide-frontend/src/components/sessions/SessionEventList.tsx:40`
+### BUG-016 — Sidebar Makes Duplicate `GET /campaigns` Call
+**Severity:** LOW (Performance)
+**File:** `guide-frontend/src/components/layout/Sidebar.tsx:20`
 
 ```typescript
-new Date(ev.created_at).toLocaleTimeString()
+const { data: rawCampaigns } = useApi<Campaign[]>(listCampaigns, []);
 ```
 
-**Impact:** Backend returns UTC timestamps (RFC 3339). `toLocaleTimeString()` converts to browser local time with no visual indicator of timezone. For DMs in different timezones or running retrospective reviews, the displayed time is confusing.
-
-**Fix:** Add `{ timeZoneName: 'short' }` to `toLocaleTimeString()` options, or use UTC display consistently.
+The `Sidebar` component independently fetches campaigns on every page. `CampaignsPage` also fetches campaigns. There is no shared cache or context, resulting in duplicate identical API calls on every navigation. In a campaign with many sessions, this compounds (sidebar re-fetches on every session/encounter/character page load).
 
 ---
 
-### BUG-015 — `SummaryView` copy-to-clipboard `setTimeout` leaks if component unmounts
-**Severity:** Low
-**File:** `guide-frontend/src/components/sessions/SummaryView.tsx:14`
+### BUG-017 — HP Bar Renders Confusingly When current_hp > max_hp
+**Severity:** LOW
+**File:** `guide-frontend/src/pages/CharacterDetailPage.tsx:13-21`, `ParticipantRow.tsx:81`
 
 ```typescript
-setTimeout(() => setCopied(false), 2000)
+<div style={{ width: `${Math.min(100, pct)}%` }} />  // clamped to 100%
+<span>{current} / {max} HP</span>  // shows e.g. "20 / 10 HP"
 ```
 
-**Impact:** If user navigates away within 2 seconds of copying, `setCopied(false)` fires on an unmounted component. React 18 suppresses this warning (no-op), but it's a minor resource leak.
-
-**Fix:** Capture the timeout ID in a `useRef` and clear it in a `useEffect` cleanup.
+**Observed in live data:** Character "Dale Dug" has `current_hp: 20, max_hp: 10`. The HP bar renders as 100% full (clamped), but the label reads "20 / 10 HP". There's no visual indication of overhealing (e.g., temporary HP glow). This is confusing for DMs.
 
 ---
 
-### BUG-016 — `Header.tsx` health check has no backoff when backend is offline
-**Severity:** Low
-**File:** `guide-frontend/src/components/layout/Header.tsx:33`
+### BUG-018 — `GeneratedEncounter.challenge_rating` Missing from Frontend Type
+**Severity:** LOW
+**File:** `guide-frontend/src/api/types.ts`
 
-```typescript
-setInterval(check, 30_000)
-```
-
-**Impact:** When the backend goes offline, the health check fires every 30 seconds indefinitely with no exponential backoff. In a long offline session, this produces a stream of failed requests logged to the console, making debugging harder.
-
-**Fix:** Implement exponential backoff or a circuit breaker pattern.
+The backend `GeneratedEncounter` includes `challenge_rating: Option<f32>` but the frontend `GeneratedEncounter` interface omits it. The field is silently ignored during JSON parsing. No crash, but CR information is unavailable to the UI.
 
 ---
 
-## Product Enhancements
+## Known Issues: Verification Results
 
-### ENH-001 — Playstyle Profile: backend integration missing
-**Priority:** High
-**File:** `guide-frontend/src/pages/PlaystylePage.tsx`
-
-The playstyle profile is stored in `localStorage` only and is never sent to the backend. The profile is intended to personalize encounter generation and AI responses, but since the backend never receives it, it has no effect. Multi-device usage (DM at table vs. prep at home) loses the profile.
-
-**Recommendation:** Add `POST /playstyle` and `GET /playstyle` endpoints. On page load, merge the backend profile with localStorage. On save, persist to both.
-
----
-
-### ENH-002 — Encounter EncountersPage: `session_id` query param behavior unclear
-**Priority:** High
-**File:** `crates/guide-api/src/routes/encounters.rs:60–66`
-
-The `GET /campaigns/{id}/encounters` handler accepts `session_id` as a query parameter in the OpenAPI docstring but the actual handler ignores it and calls `repo.list_by_campaign(campaign_id)` without filtering by session. This means encounters cannot be filtered per session, which was the intended API shape. The EncountersPage would show all encounters across all sessions.
-
-**Recommendation:** Either implement session filtering in `list_encounters`, or remove the `session_id` param from the OpenAPI spec to eliminate false expectations.
+| KI | Issue | Result |
+|----|-------|--------|
+| KI-1 | No UI to edit campaign name/description/game_system | **CONFIRMED** → BUG-012 |
+| KI-2 | `handleDeleteEvent` no try/catch | **CONFIRMED** → BUG-007 |
+| KI-3 | HP bar with negative current_hp | **CONFIRMED LOW** — renders as 0-width (empty bar). No crash. |
+| KI-4 | EncounterForm no warning when zero characters | **CONFIRMED** → BUG-014 |
+| KI-5 | ConfirmButton no click-outside dismiss | **CONFIRMED** → BUG-013 |
+| KI-6 | `DELETE /events/{id}` endpoint may not exist | **DEBUNKED** — endpoint exists at correct path |
+| KI-7 | CombatTracker modulo-zero | **CONFIRMED LOW** → BUG-015 (JS returns NaN, not crash) |
+| KI-8 | ChatPanel no cancel button for in-progress stream | **CONFIRMED** → BUG-011 |
+| KI-9 | Sidebar separate `GET /campaigns` call | **CONFIRMED** → BUG-016 |
 
 ---
 
-### ENH-003 — No visual confirmation of unsaved stats in `CharacterDetailPage`
-**Priority:** Medium
-**File:** `guide-frontend/src/pages/CharacterDetailPage.tsx`
+## Previously Unknown Issues Found
 
-The `EditStatsForm` has no "dirty state" indicator — it doesn't show which fields have been changed. Users can accidentally close the form without saving. There's no autosave and no "unsaved changes" warning.
-
-**Recommendation:** Track dirty state in the form, show a visual indicator (e.g., yellow background on changed fields), and add a browser `beforeunload` guard when in edit mode.
-
----
-
-### ENH-004 — Spacebar shortcut fires even in modal dialogs
-**Priority:** Medium
-**File:** `guide-frontend/src/pages/EncounterDetailPage.tsx:39–50`
-
-The keyboard handler at line 43 checks only for `INPUT`, `TEXTAREA`, and `SELECT` tags to suppress the Space→Next Turn shortcut. If a modal or dialog is open (e.g., a confirm dialog), pressing Space still fires `nextTurn`.
-
-**Recommendation:** Also check for an active modal: `if (document.querySelector('[role="dialog"]')) return;`
+| ID | Issue | Severity |
+|----|-------|----------|
+| BUG-001 | Session status field missing from API (buttons never appear) | HIGH |
+| BUG-002 | Condition case mismatch — add/remove/display all broken | HIGH |
+| BUG-003 | EventType enum mismatch — 6/9 types fail backend validation | HIGH |
+| BUG-004 | EventSignificance mismatch — `moderate`/`critical` fail | HIGH |
+| BUG-005 | SessionEvent `occurred_at` vs `created_at` — "Invalid Date" | MEDIUM |
+| BUG-008 | Character delete has no error handling | MEDIUM |
+| BUG-009 | Clipboard API in SummaryView has no error handling | MEDIUM |
+| BUG-010 | Backstory text save doesn't trigger parent refetch | MEDIUM |
+| BUG-018 | GeneratedEncounter.challenge_rating missing from frontend type | LOW |
 
 ---
 
-### ENH-005 — No global error boundary
-**Priority:** Medium
-**All pages**
+## Fix Priority
 
-There is no React `ErrorBoundary` component wrapping the app or individual pages. If a component throws during render (e.g., due to an unexpected null from the API), the entire page tree unmounts with a blank screen and no error message.
-
-**Recommendation:** Add a top-level `ErrorBoundary` in `App.tsx` that displays a friendly "Something went wrong" screen with a retry button.
-
----
-
-### ENH-006 — Session summary: stale summary visible after perspective change
-**Priority:** Medium
-**File:** `guide-frontend/src/pages/SessionDetailPage.tsx:30–35`
-
-When a DM generates a DM summary, then switches the perspective selector to "Player" and clicks generate again, the old DM summary flickers out correctly. However, if the user switches perspective without clicking generate, the stale summary remains visible with the incorrect perspective label.
-
-**Recommendation:** Clear the `summary` state when `perspective` changes: `useEffect(() => { setSummary(null); }, [perspective]);`
+| Priority | Bugs | Rationale |
+|----------|------|-----------|
+| **P0 (Block release)** | BUG-001, BUG-002, BUG-003, BUG-004 | Core features non-functional |
+| **P1 (Ship shortly)** | BUG-005, BUG-006, BUG-007, BUG-008, BUG-010 | Data display wrong or silent errors |
+| **P2 (Next sprint)** | BUG-009, BUG-011, BUG-012 | UX gaps, missing features |
+| **P3 (Backlog)** | BUG-013 through BUG-018 | Polish and performance |
 
 ---
 
-### ENH-007 — `PlaystylePage` "Saved" feedback resets too quickly
-**Priority:** Low
-**File:** `guide-frontend/src/pages/PlaystylePage.tsx:64,87`
+## API Contract Summary
 
-`useEffect(() => { setSaved(false); }, [profile])` resets the "✓ Saved" text immediately when profile state is next updated. Since `setSaved(true)` is synchronous and `setSaved(false)` is effect-triggered, in practice the feedback may show for only one render frame.
+The following API contract mismatches were found between Rust backend and TypeScript frontend:
 
-**Recommendation:** Use `setTimeout(() => setSaved(false), 2000)` instead of the profile-dependency effect, consistent with the pattern used in `SummaryView`.
-
----
-
-### ENH-008 — Download filename collision for session summaries
-**Priority:** Low
-**File:** `guide-frontend/src/components/sessions/SummaryView.tsx:24`
-
-Filename: `session-summary-${summary.session_id}-${summary.perspective}.md`. Downloading a summary twice overwrites the previous file. A DM might want to preserve multiple iterations.
-
-**Recommendation:** Append a timestamp: `session-summary-${summary.session_id}-${summary.perspective}-${Date.now()}.md`
+| Domain | Backend | Frontend | Impact |
+|--------|---------|----------|--------|
+| Session.status | Field absent | `'pending'\|'started'\|'ended'` required | All lifecycle buttons broken |
+| Condition values | `"blinded"` (snake_case) | `'Blinded'` (PascalCase) | All condition management broken |
+| EventType values | 9 values (partial overlap) | 9 different values (partial overlap) | 6/9 event types fail |
+| EventSignificance | `minor\|major\|milestone` | `minor\|moderate\|major\|critical` | `moderate`/`critical` fail |
+| SessionEvent timestamp | `occurred_at` | `created_at` | "Invalid Date" display |
+| EncounterStatus | `pending\|active\|completed\|fled` | `pending\|active\|completed` | `fled` not in frontend type |
 
 ---
 
-### ENH-009 — No retry button for failed API loads
-**Priority:** Low
-**All pages using `useApi`**
+## Test Coverage Notes
 
-When an API call fails on initial page load, the `ErrorBanner` shows the error message but there is no retry button. Users must refresh the entire page.
-
-**Recommendation:** Add an optional `onRetry` callback to `ErrorBanner` that triggers `refetch()` from `useApi`. Pass `refetch` as `onRetry` on pages where it makes sense.
-
----
-
-### ENH-010 — No empty-state for encounters list without sessions
-**Priority:** Low
-**File:** `guide-frontend/src/pages/EncounterDetailPage.tsx`
-
-When no participants exist in an encounter (`pending` status, `participants.length === 0`), the page shows only "Start Combat" with no explanation that participants need to be added first.
-
-**Recommendation:** Show a warning: "This encounter has no participants. Add characters to the campaign before starting combat."
-
----
-
-## Backend–Frontend Type Mismatch Summary
-
-| # | Backend Field | Backend Type | Frontend Field | Frontend Type | Impact |
-|---|--------------|-------------|----------------|---------------|--------|
-| 1 | `PlotHook.description` | `String` | `PlotHook.summary` | `string` | Hook text always blank |
-| 2 | `Backstory.extracted_hooks` | `Vec<PlotHook>` | `Backstory.hooks` | `PlotHook[]` | Hooks never rendered |
-| 3 | `CombatParticipant.initiative_modifier` | `i32` | `CombatParticipant.initiative_bonus` | `number` | Field always `undefined` |
-| 4 | `CombatParticipant.is_defeated` | `bool` | `CombatParticipant.is_active` | `boolean` | Inverted + missing field |
-| 5 | `HookPriority::Critical` | `"critical"` | (missing) | — | Critical hooks untyped |
-| 6 | `GeneratedEncounterType::Mixed` | `"mixed"` | (missing) | — | Mixed encounters untyped |
-| 7 | `Encounter.name` | `Option<String>` | `EncounterSummary.name` | `string \| null` | ✓ Correct |
-| 8 | `Character.ability_scores` | always set | `ability_scores` | `AbilityScores` | ✓ Backend always sets it |
-| 9 | `PlotHook.related_npcs` | (doesn't exist) | `PlotHook.related_npcs` | `string[]` | Field always `undefined` |
-
----
-
-## Verified Working (No Issues Found)
-
-- Campaign CRUD API calls and types are correctly aligned
-- Session lifecycle (create/start/end) types are correct
-- `SessionSummary` response shape matches backend JSON
-- `useChat.ts` SSE parsing logic is correct — splits on `\n\n`, handles `event:token`, `event:done`, `event:error`
-- `IngestButton` polling logic is clean (clears interval on unmount, handles failure state)
-- `ParticipantRow` HP bar percentage calculation correctly guards for `max_hp === 0`
-- `BackstoryPanel` disable logic for the Analyze button is correct (disabled when no text)
-- `EncounterDetailPage` Space-bar shortcut correctly ignores input/textarea/select elements
-- Document upload (multipart form) is correctly implemented in `UploadForm`
-- `ConfirmButton` delete guard pattern is consistent across pages
-
----
-
-## Priority Fix Order
-
-| Priority | Bug | Effort |
-|----------|-----|--------|
-| 1 | BUG-001: PlotHook field mismatch (`summary` vs `description`, missing fields) | Small — types.ts change |
-| 2 | BUG-002: Backstory field mismatch (`hooks` vs `extracted_hooks`) | Small — types.ts change |
-| 3 | BUG-003: `initiative_bonus` vs `initiative_modifier` | Small — types.ts change |
-| 4 | BUG-004: `is_active` vs `is_defeated` (inverted logic) | Small — types.ts + component |
-| 5 | BUG-005: Missing `HookPriority.critical` | Small — types.ts change |
-| 6 | BUG-006: Missing `GeneratedEncounterType.mixed` | Small — types.ts change |
-| 7 | BUG-007: Action budget spend fields ignored by backend | Medium — Rust handler |
-| 8 | BUG-008: GlobalDocumentsPage missing `onComplete` | Trivial — one prop |
-| 9 | BUG-010: CharacterDetailPage `doUpdate` swallows errors | Small — add catch |
-| 10 | BUG-011: ParticipantRow no user-facing error on update failure | Small — error state |
-| 11 | ENH-001: Playstyle profile not sent to backend | Large — new API + endpoints |
-| 12 | ENH-002: `session_id` filter not implemented in list encounters | Medium — Rust handler |
-| 13 | ENH-005: No global React error boundary | Small — wrap App.tsx |
-| 14 | ENH-006: Stale summary on perspective change | Trivial — one useEffect |
-| 15 | BUG-012: Better UX for "no events" summary error | Small — disable button |
+- **Not tested via browser** (extension unavailable): SSE streaming, file upload, document polling lifecycle, keyboard shortcuts (Spacebar turn advance), drag-to-reorder in sidebar, localStorage persistence flows, PDF ingest status transitions.
+- **Tested via direct API**: All listed bugs verified through `curl` against live backend + static code analysis of all 47 frontend files.

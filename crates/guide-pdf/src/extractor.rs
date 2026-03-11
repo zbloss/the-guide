@@ -21,7 +21,7 @@ fn pdfium_lib_path() -> Result<&'static std::path::PathBuf> {
     std::fs::create_dir_all(&dir)
         .map_err(|e| GuideError::PdfProcessing(format!("failed to create pdfium temp dir: {e}")))?;
 
-    let path = dir.join("libpdfium.so");
+    let path = dir.join(env!("PDFIUM_LIB_NAME"));
     if !path.exists() {
         std::fs::write(&path, PDFIUM_BYTES)
             .map_err(|e| GuideError::PdfProcessing(format!("failed to write pdfium lib: {e}")))?;

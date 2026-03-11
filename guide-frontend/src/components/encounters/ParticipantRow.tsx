@@ -16,21 +16,25 @@ export function ParticipantRow({ participant: p, isCurrentTurn, campaignId, enco
   const [damage, setDamage] = useState('');
   const [heal, setHeal] = useState('');
   const [setHpVal, setSetHpVal] = useState('');
-  const [addCond, setAddCond] = useState<Condition>('Blinded');
+  const [addCond, setAddCond] = useState<Condition>('blinded');
   const [loading, setLoading] = useState(false);
+  const [rowError, setRowError] = useState('');
   const [editingName, setEditingName] = useState(false);
   const [nameInput, setNameInput] = useState(p.name);
 
   const pct = p.max_hp > 0 ? (p.current_hp / p.max_hp) * 100 : 0;
-  const hpClass = pct > 50 ? 'hp-high' : pct > 25 ? 'hp-mid' : 'hp-low';
+  const hpOverflow = p.current_hp > p.max_hp;
+  const hpClass = hpOverflow ? 'hp-overflow' : pct > 50 ? 'hp-high' : pct > 25 ? 'hp-mid' : 'hp-low';
+  const hpLabel = hpOverflow ? `${p.current_hp}/${p.max_hp} (+${p.current_hp - p.max_hp})` : `${p.current_hp}/${p.max_hp}`;
 
   const doUpdate = async (req: Parameters<typeof updateParticipant>[3]) => {
+    setRowError('');
     setLoading(true);
     try {
       const updated = await updateParticipant(campaignId, encounterId, p.id, req);
       onUpdate(updated);
     } catch (e) {
-      console.error(e);
+      setRowError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
@@ -45,6 +49,7 @@ export function ParticipantRow({ participant: p, isCurrentTurn, campaignId, enco
   const availableToAdd = ALL_CONDITIONS.filter((c) => !p.conditions.includes(c));
 
   return (
+    <>
     <tr className={`participant-row ${isCurrentTurn ? 'current-turn' : ''} ${loading ? 'row-loading' : ''}`}>
       <td className="participant-name">
         {isCurrentTurn && <span className="turn-indicator">▶ </span>}
@@ -76,7 +81,7 @@ export function ParticipantRow({ participant: p, isCurrentTurn, campaignId, enco
       <td className="participant-hp">
         <div className="hp-bar-container">
           <div className={`hp-bar-fill ${hpClass}`} style={{ width: `${Math.min(100, pct)}%` }} />
-          <span className="hp-bar-label">{p.current_hp}/{p.max_hp}</span>
+          <span className="hp-bar-label">{hpLabel}</span>
         </div>
       </td>
       <td className="participant-ac">{p.armor_class}</td>
@@ -137,5 +142,11 @@ export function ParticipantRow({ participant: p, isCurrentTurn, campaignId, enco
         </div>
       </td>
     </tr>
+    {rowError && (
+      <tr className="participant-error-row">
+        <td colSpan={7}><span className="form-error">{rowError}</span></td>
+      </tr>
+    )}
+    </>
   );
 }

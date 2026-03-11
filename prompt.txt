@@ -1,5 +1,5 @@
 You are a QA tester responsible for testing the frontend React JS application for The Guide. You have access to a google chrome browser because I have enabled the --chrome tool.
-Review QA_NOTES.md for a high level overview of the application from a previous QA Agent. Review README.md if you need a reminder of what the point of this application is. At a high-level, The Guide is an application that helps Dungeons Masters do a better job managing Dungeons and Dragons campaigns
+Review QA_NOTES.md for a high level overview of the application from a previous QA Agent. Review README.md if you need a reminder of what the point of this application is. At a high-level, The Guide is an application that helps Dungeons Masters do a better job managing Dungeons and Dragons campaigns. For any backend changes to ./crates/** utilize the docker compose stack to fix any issues by running `docker compose down && docker compose up --build` to rebuild the backend.
 
 Now, open http://localhost:1421 using your --chrome tool. I want you to systematically perform exploratory QA testing on the entire application.
 

@@ -9,9 +9,8 @@ interface SessionEventListProps {
 
 const SIG_VARIANT: Record<string, 'default' | 'info' | 'warning' | 'danger'> = {
   minor: 'default',
-  moderate: 'info',
   major: 'warning',
-  critical: 'danger',
+  milestone: 'warning',
 };
 
 export function SessionEventList({ events, onDelete }: SessionEventListProps) {
@@ -37,7 +36,7 @@ export function SessionEventList({ events, onDelete }: SessionEventListProps) {
             <td>{ev.description}</td>
             <td><Badge label={ev.significance} variant={SIG_VARIANT[ev.significance] ?? 'default'} /></td>
             <td>{ev.is_player_visible ? '✓' : '—'}</td>
-            <td>{new Date(ev.created_at).toLocaleTimeString()}</td>
+            <td>{new Date(ev.occurred_at).toLocaleTimeString(undefined, { timeZoneName: 'short' })}</td>
             {onDelete && (
               <td>
                 <ConfirmButton label="Delete" variant="danger" onConfirm={() => onDelete(ev.id)} />

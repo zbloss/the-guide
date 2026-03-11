@@ -38,6 +38,7 @@ export function GlobalDocumentsPage() {
                 currentStatus={d.ingestion_status}
                 onIngest={() => ingestGlobalDoc(d.id).then(() => {})}
                 onPoll={() => getGlobalDoc(d.id)}
+                onComplete={refetch}
               />
             );
           }}

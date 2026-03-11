@@ -45,7 +45,7 @@ export function EncountersPage() {
         </div>
       </div>
 
-      {showGenerate && <GenerateEncounterPanel campaignId={campaignId!} />}
+      {showGenerate && <GenerateEncounterPanel campaignId={campaignId!} onSaved={refetch} />}
 
       {loading && <LoadingSpinner />}
       {error && <ErrorBanner message={error} />}

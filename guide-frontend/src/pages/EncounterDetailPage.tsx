@@ -58,7 +58,7 @@ export function EncounterDetailPage() {
       <div className="page-header">
         <div>
           <Link to={`/campaigns/${campaignId}/encounters`} className="breadcrumb">← Encounters</Link>
-          <h1>{displayed.name}</h1>
+          <h1>{displayed.name ?? 'Unnamed Encounter'}</h1>
         </div>
         <div className="encounter-actions">
           {displayed.status === 'pending' && (

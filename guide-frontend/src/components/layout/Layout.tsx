@@ -6,7 +6,7 @@ import { useCampaign } from '../../hooks/useCampaign';
 function CampaignHeader() {
   const { campaignId } = useParams<{ campaignId: string }>();
   const { campaign } = useCampaign(campaignId);
-  return <Header title={campaign?.name} />;
+  return <Header title={campaignId ? campaign?.name : undefined} />;
 }
 
 export function Layout() {

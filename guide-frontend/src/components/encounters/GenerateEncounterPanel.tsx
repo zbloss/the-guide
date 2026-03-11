@@ -1,24 +1,28 @@
 import { useState } from 'react';
-import { generateEncounter } from '../../api/encounters';
+import { generateEncounter, createEncounter } from '../../api/encounters';
 import { LoadingSpinner } from '../common/LoadingSpinner';
 import type { GeneratedEncounter } from '../../api/types';
 
 interface GenerateEncounterPanelProps {
   campaignId: string;
+  onSaved?: () => void;
 }
 
-export function GenerateEncounterPanel({ campaignId }: GenerateEncounterPanelProps) {
+export function GenerateEncounterPanel({ campaignId, onSaved }: GenerateEncounterPanelProps) {
   const [context, setContext] = useState('');
   const [partyLevel, setPartyLevel] = useState(1);
   const [generating, setGenerating] = useState(false);
   const [result, setResult] = useState<GeneratedEncounter | null>(null);
   const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
 
   const handleGenerate = async () => {
     if (!context.trim()) { setError('Context is required'); return; }
     setGenerating(true);
     setError('');
     setResult(null);
+    setSaved(false);
     try {
       const enc = await generateEncounter(campaignId, { context: context.trim(), party_level: partyLevel });
       setResult(enc);
@@ -26,6 +30,25 @@ export function GenerateEncounterPanel({ campaignId }: GenerateEncounterPanelPro
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setGenerating(false);
+    }
+  };
+
+  const handleSave = async () => {
+    if (!result) return;
+    setSaving(true);
+    setError('');
+    try {
+      await createEncounter(campaignId, {
+        name: result.title,
+        description: `${result.description}\n\n${result.narrative_hook}`,
+        participant_character_ids: [],
+      });
+      setSaved(true);
+      onSaved?.();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -85,6 +108,16 @@ export function GenerateEncounterPanel({ campaignId }: GenerateEncounterPanelPro
               </table>
             </div>
           )}
+
+          <div className="form-actions" style={{ marginTop: 12 }}>
+            {saved ? (
+              <span className="badge badge-success">Encounter saved ✓</span>
+            ) : (
+              <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
+                {saving ? <><LoadingSpinner size={14} /> Saving…</> : 'Save Encounter'}
+              </button>
+            )}
+          </div>
         </div>
       )}
     </div>

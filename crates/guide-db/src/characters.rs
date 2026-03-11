@@ -54,6 +54,23 @@ impl<'a> CharacterRepository<'a> {
         .execute(self.pool)
         .await?;
 
+        if let Some(backstory_text) = req.backstory_text {
+            let backstory = Backstory {
+                raw_text: backstory_text,
+                extracted_hooks: vec![],
+                motivations: vec![],
+                key_relationships: vec![],
+                secrets: vec![],
+            };
+            let json = serde_json::to_string(&backstory)?;
+            sqlx::query("UPDATE characters SET backstory = ?, updated_at = ? WHERE id = ?")
+                .bind(&json)
+                .bind(now.to_rfc3339())
+                .bind(id.to_string())
+                .execute(self.pool)
+                .await?;
+        }
+
         self.get_by_id(id).await
     }
 

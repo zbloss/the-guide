@@ -10,7 +10,7 @@ interface SessionEventFormProps {
 }
 
 export function SessionEventForm({ characters, onSubmit, onCancel }: SessionEventFormProps) {
-  const [eventType, setEventType] = useState<EventType>('other');
+  const [eventType, setEventType] = useState<EventType>('combat');
   const [description, setDescription] = useState('');
   const [significance, setSignificance] = useState<EventSignificance>('minor');
   const [playerVisible, setPlayerVisible] = useState(true);
@@ -54,9 +54,8 @@ export function SessionEventForm({ characters, onSubmit, onCancel }: SessionEven
         <FormField label="Significance" htmlFor="ev-sig">
           <select id="ev-sig" className="form-input" value={significance} onChange={(e) => setSignificance(e.target.value as EventSignificance)}>
             <option value="minor">Minor</option>
-            <option value="moderate">Moderate</option>
             <option value="major">Major</option>
-            <option value="critical">Critical</option>
+            <option value="milestone">Milestone</option>
           </select>
         </FormField>
       </div>

@@ -7,47 +7,46 @@ export type GameSystem = 'dnd5e' | 'pathfinder2e' | 'custom';
 export type CharacterType = 'pc' | 'npc' | 'monster';
 
 export type Condition =
-  | 'Blinded'
-  | 'Charmed'
-  | 'Deafened'
-  | 'Exhausted'
-  | 'Frightened'
-  | 'Grappled'
-  | 'Incapacitated'
-  | 'Invisible'
-  | 'Paralyzed'
-  | 'Petrified'
-  | 'Poisoned'
-  | 'Prone'
-  | 'Restrained'
-  | 'Stunned'
-  | 'Unconscious';
+  | 'blinded'
+  | 'charmed'
+  | 'deafened'
+  | 'frightened'
+  | 'grappled'
+  | 'incapacitated'
+  | 'invisible'
+  | 'paralyzed'
+  | 'petrified'
+  | 'poisoned'
+  | 'prone'
+  | 'restrained'
+  | 'stunned'
+  | 'unconscious';
 
 export const ALL_CONDITIONS: Condition[] = [
-  'Blinded', 'Charmed', 'Deafened', 'Exhausted', 'Frightened',
-  'Grappled', 'Incapacitated', 'Invisible', 'Paralyzed', 'Petrified',
-  'Poisoned', 'Prone', 'Restrained', 'Stunned', 'Unconscious',
+  'blinded', 'charmed', 'deafened', 'frightened',
+  'grappled', 'incapacitated', 'invisible', 'paralyzed', 'petrified',
+  'poisoned', 'prone', 'restrained', 'stunned', 'unconscious',
 ];
 
 export type EncounterStatus = 'pending' | 'active' | 'completed';
 
 export type EventType =
   | 'combat'
-  | 'roleplay'
   | 'exploration'
-  | 'skill_challenge'
+  | 'social'
+  | 'rest'
+  | 'level_up'
   | 'item_found'
-  | 'npc_introduced'
-  | 'quest_update'
-  | 'revelation'
-  | 'other';
+  | 'npc_met'
+  | 'plot_revealed'
+  | 'custom';
 
 export const ALL_EVENT_TYPES: EventType[] = [
-  'combat', 'roleplay', 'exploration', 'skill_challenge', 'item_found',
-  'npc_introduced', 'quest_update', 'revelation', 'other',
+  'combat', 'exploration', 'social', 'rest', 'level_up',
+  'item_found', 'npc_met', 'plot_revealed', 'custom',
 ];
 
-export type EventSignificance = 'minor' | 'moderate' | 'major' | 'critical';
+export type EventSignificance = 'minor' | 'major' | 'milestone';
 
 export type IngestionStatus = 'pending' | 'processing' | 'completed' | 'failed';
 
@@ -55,9 +54,9 @@ export type Perspective = 'dm' | 'player';
 
 export type DocumentKind = 'campaign' | 'global';
 
-export type GeneratedEncounterType = 'combat' | 'social' | 'exploration' | 'puzzle';
+export type GeneratedEncounterType = 'combat' | 'social' | 'exploration' | 'puzzle' | 'mixed';
 
-export type HookPriority = 'low' | 'medium' | 'high';
+export type HookPriority = 'low' | 'medium' | 'high' | 'critical';
 
 // ==================== Core Models ====================
 
@@ -89,14 +88,17 @@ export interface AbilityScores {
 }
 
 export interface PlotHook {
-  summary: string;
+  id: string;
+  character_id: string;
+  description: string;
   priority: HookPriority;
-  related_npcs: string[];
+  is_active: boolean;
+  llm_extracted: boolean;
 }
 
 export interface Backstory {
-  raw_text: string | null;
-  hooks: PlotHook[];
+  raw_text: string;
+  extracted_hooks: PlotHook[];
   motivations: string[];
   key_relationships: string[];
   secrets: string[];
@@ -135,14 +137,14 @@ export interface CombatParticipant {
   character_id: string;
   name: string;
   initiative_roll: number;
-  initiative_bonus: number;
+  initiative_modifier: number;
   initiative_total: number;
   current_hp: number;
   max_hp: number;
   armor_class: number;
   conditions: Condition[];
   action_budget: ActionBudget;
-  is_active: boolean;
+  is_defeated: boolean;
 }
 
 export interface EncounterSummary {
@@ -164,11 +166,16 @@ export interface Session {
   campaign_id: string;
   session_number: number;
   title: string | null;
-  status: 'pending' | 'started' | 'ended';
   started_at: string | null;
   ended_at: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export function deriveSessionStatus(s: Session): 'pending' | 'started' | 'ended' {
+  if (s.ended_at) return 'ended';
+  if (s.started_at) return 'started';
+  return 'pending';
 }
 
 export interface SessionEvent {
@@ -179,7 +186,7 @@ export interface SessionEvent {
   significance: EventSignificance;
   is_player_visible: boolean;
   involved_character_ids: string[];
-  created_at: string;
+  occurred_at: string;
 }
 
 export interface SessionSummary {
@@ -221,6 +228,7 @@ export interface GeneratedEncounter {
   suggested_enemies: EnemySuggestion[];
   narrative_hook: string;
   alternative: string | null;
+  challenge_rating: number | null;
 }
 
 // ==================== Request Types ====================
@@ -280,7 +288,7 @@ export interface CreateSessionEventRequest {
 
 export interface CreateEncounterRequest {
   session_id?: string;
-  name: string;
+  name?: string;
   description?: string;
   participant_character_ids: string[];
 }

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useApi } from '../hooks/useApi';
 import { getSession, startSession, endSession, listEvents, createEvent, getSessionSummary, deleteEvent } from '../api/sessions';
@@ -11,6 +11,7 @@ import { Modal } from '../components/common/Modal';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { ErrorBanner } from '../components/common/ErrorBanner';
 import type { Session, SessionEvent, SessionSummary, Perspective, Character, CreateSessionEventRequest } from '../api/types';
+import { deriveSessionStatus } from '../api/types';
 
 export function SessionDetailPage() {
   const { campaignId, sessionId } = useParams<{ campaignId: string; sessionId: string }>();
@@ -34,6 +35,9 @@ export function SessionDetailPage() {
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [summaryError, setSummaryError] = useState('');
   const [actionError, setActionError] = useState('');
+  const [eventError, setEventError] = useState('');
+
+  useEffect(() => { setSummary(null); }, [perspective]);
 
   const handleStart = async () => {
     setActionError('');
@@ -56,14 +60,23 @@ export function SessionDetailPage() {
   };
 
   const handleAddEvent = async (data: CreateSessionEventRequest) => {
-    await createEvent(campaignId!, sessionId!, data);
-    setShowAddEvent(false);
-    refetchEvents();
+    setEventError('');
+    try {
+      await createEvent(campaignId!, sessionId!, data);
+      setShowAddEvent(false);
+      refetchEvents();
+    } catch (e: unknown) {
+      setEventError(e instanceof Error ? e.message : String(e));
+    }
   };
 
   const handleDeleteEvent = async (eventId: string) => {
-    await deleteEvent(campaignId!, sessionId!, eventId);
-    refetchEvents();
+    try {
+      await deleteEvent(campaignId!, sessionId!, eventId);
+      refetchEvents();
+    } catch (e: unknown) {
+      setActionError(e instanceof Error ? e.message : String(e));
+    }
   };
 
   const handleGenerateSummary = async () => {
@@ -92,13 +105,13 @@ export function SessionDetailPage() {
           <h1>Session {session.session_number}{session.title ? `: ${session.title}` : ''}</h1>
         </div>
         <div className="session-actions">
-          {session.status === 'pending' && (
+          {deriveSessionStatus(session) === 'pending' && (
             <button className="btn btn-primary" onClick={handleStart}>Start Session</button>
           )}
-          {session.status === 'started' && (
+          {deriveSessionStatus(session) === 'started' && (
             <button className="btn btn-danger" onClick={handleEnd}>End Session</button>
           )}
-          {session.status === 'ended' && <span className="badge badge-default">Ended</span>}
+          {deriveSessionStatus(session) === 'ended' && <span className="badge badge-default">Ended</span>}
         </div>
       </div>
 
@@ -119,6 +132,7 @@ export function SessionDetailPage() {
 
           {showAddEvent && (
             <Modal title="Add Event" onClose={() => setShowAddEvent(false)}>
+              {eventError && <ErrorBanner message={eventError} />}
               <SessionEventForm
                 characters={characters ?? []}
                 onSubmit={handleAddEvent}
@@ -133,7 +147,12 @@ export function SessionDetailPage() {
         <div className="summary-tab">
           <div className="summary-controls">
             <PerspectiveSelector value={perspective} onChange={setPerspective} disabled={summaryLoading} />
-            <button className="btn btn-primary" onClick={handleGenerateSummary} disabled={summaryLoading}>
+            <button
+              className="btn btn-primary"
+              onClick={handleGenerateSummary}
+              disabled={summaryLoading || !events || events.length === 0}
+              title={(!events || events.length === 0) ? 'Add events before generating a summary' : undefined}
+            >
               {summaryLoading ? <><LoadingSpinner size={14} /> Generating…</> : 'Generate Summary'}
             </button>
           </div>

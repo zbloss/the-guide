@@ -524,7 +524,7 @@ body {
 
 .form-input:focus { border-color: var(--accent); }
 
-.form-input-num { width: 80px; }
+.form-input-num { width: 90px; }
 
 .form-row {
   display: flex;
@@ -1060,7 +1060,6 @@ body {
   border-radius: 12px;
   font-size: 13px;
   line-height: 1.6;
-  white-space: pre-wrap;
   overflow-wrap: break-word;
   word-break: break-word;
 }
@@ -1071,6 +1070,7 @@ body {
   border: 1px solid rgba(233,69,96,0.3);
   color: var(--text-heading);
   border-bottom-right-radius: 4px;
+  white-space: pre-wrap;
 }
 
 .message-assistant {
@@ -1080,6 +1080,30 @@ body {
   color: var(--text);
   border-bottom-left-radius: 4px;
 }
+
+.message-assistant p { margin-bottom: 0.5em; }
+.message-assistant p:last-child { margin-bottom: 0; }
+.message-assistant ul,
+.message-assistant ol { padding-left: 1.5em; margin-bottom: 0.5em; }
+.message-assistant li { margin-bottom: 0.2em; }
+.message-assistant code {
+  font-family: 'Courier New', monospace;
+  background: rgba(255,255,255,0.1);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 0.9em;
+}
+.message-assistant pre {
+  background: rgba(0,0,0,0.3);
+  padding: 10px;
+  border-radius: 6px;
+  overflow-x: auto;
+  margin-bottom: 0.5em;
+}
+.message-assistant pre code { background: none; padding: 0; }
+.message-assistant h1,
+.message-assistant h2,
+.message-assistant h3 { font-weight: bold; margin-bottom: 0.4em; }
 
 .streaming-dots { animation: blink 1s step-start infinite; }
 @keyframes blink { 50% { opacity: 0; } }

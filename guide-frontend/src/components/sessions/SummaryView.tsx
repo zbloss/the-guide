@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import type { SessionSummary } from '../../api/types';
 
 interface SummaryViewProps {
@@ -7,11 +7,18 @@ interface SummaryViewProps {
 
 export function SummaryView({ summary }: SummaryViewProps) {
   const [copied, setCopied] = useState(false);
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => () => { if (copyTimerRef.current) clearTimeout(copyTimerRef.current); }, []);
 
   const handleCopy = async () => {
-    await navigator.clipboard.writeText(summary.content);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    try {
+      await navigator.clipboard.writeText(summary.content);
+      setCopied(true);
+      copyTimerRef.current = setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // clipboard write failed — don't set copied
+    }
   };
 
   const handleDownload = () => {

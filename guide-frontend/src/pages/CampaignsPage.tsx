@@ -16,11 +16,13 @@ export function CampaignsPage() {
     await createCampaign(data);
     setShowCreate(false);
     refetch();
+    window.dispatchEvent(new CustomEvent('campaigns-changed'));
   };
 
   const handleDelete = async (id: string) => {
     await deleteCampaign(id);
     refetch();
+    window.dispatchEvent(new CustomEvent('campaigns-changed'));
   };
 
   return (

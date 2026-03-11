@@ -8,9 +8,10 @@ interface BackstoryPanelProps {
   characterId: string;
   backstory: Backstory | null;
   onAnalyzed: (b: Backstory) => void;
+  onSaved?: () => void;
 }
 
-export function BackstoryPanel({ campaignId, characterId, backstory, onAnalyzed }: BackstoryPanelProps) {
+export function BackstoryPanel({ campaignId, characterId, backstory, onAnalyzed, onSaved }: BackstoryPanelProps) {
   const [analyzing, setAnalyzing] = useState(false);
   const [error, setError] = useState('');
   const [editingText, setEditingText] = useState(false);
@@ -23,6 +24,7 @@ export function BackstoryPanel({ campaignId, characterId, backstory, onAnalyzed 
     try {
       await updateCharacter(campaignId, characterId, { backstory_text: backstoryText });
       setEditingText(false);
+      onSaved?.();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -117,18 +119,15 @@ export function BackstoryPanel({ campaignId, characterId, backstory, onAnalyzed 
               <ul>{backstory.secrets.map((s, i) => <li key={i}>{s}</li>)}</ul>
             </div>
           )}
-          {backstory.hooks.length > 0 && (
+          {backstory.extracted_hooks.length > 0 && (
             <div className="analysis-section">
               <h4>Plot Hooks</h4>
-              {backstory.hooks.map((h, i) => (
+              {backstory.extracted_hooks.map((h, i) => (
                 <div key={i} className="plot-hook">
                   <div className="plot-hook-header">
                     <span className={`hook-priority hook-priority-${h.priority}`}>{h.priority}</span>
-                    <span>{h.summary}</span>
+                    <span>{h.description}</span>
                   </div>
-                  {h.related_npcs.length > 0 && (
-                    <div className="hook-npcs">NPCs: {h.related_npcs.join(', ')}</div>
-                  )}
                 </div>
               ))}
             </div>

@@ -67,18 +67,22 @@ export function EncounterForm({ sessions, characters, onSubmit, onCancel }: Enco
 
       <div className="form-field">
         <label className="form-label">Participants</label>
-        <div className="checkbox-group">
-          {characters.map((c) => (
-            <label key={c.id} className="checkbox-label">
-              <input
-                type="checkbox"
-                checked={selectedChars.includes(c.id)}
-                onChange={() => toggleChar(c.id)}
-              />
-              <span>{c.name} ({c.character_type})</span>
-            </label>
-          ))}
-        </div>
+        {characters.length === 0 ? (
+          <p className="empty-state">No characters in this campaign yet. Create characters first.</p>
+        ) : (
+          <div className="checkbox-group">
+            {characters.map((c) => (
+              <label key={c.id} className="checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={selectedChars.includes(c.id)}
+                  onChange={() => toggleChar(c.id)}
+                />
+                <span>{c.name} ({c.character_type})</span>
+              </label>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="form-actions">

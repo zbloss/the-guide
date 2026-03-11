@@ -1,5 +1,5 @@
-import { useState, useRef } from 'react';
-import { NavLink } from 'react-router-dom';
+import { useState, useRef, useEffect } from 'react';
+import { NavLink, useLocation } from 'react-router-dom';
 import { useApi } from '../../hooks/useApi';
 import { listCampaigns } from '../../api/campaigns';
 import type { Campaign } from '../../api/types';
@@ -17,9 +17,16 @@ function applyOrder(campaigns: Campaign[], order: string[]): Campaign[] {
 }
 
 export function Sidebar() {
-  const { data: rawCampaigns } = useApi<Campaign[]>(listCampaigns, []);
+  const location = useLocation();
+  const { data: rawCampaigns, refetch } = useApi<Campaign[]>(listCampaigns, [location.pathname]);
   const [order, setOrder] = useState<string[]>(getStoredOrder);
   const dragId = useRef<string | null>(null);
+
+  useEffect(() => {
+    const handler = () => refetch();
+    window.addEventListener('campaigns-changed', handler);
+    return () => window.removeEventListener('campaigns-changed', handler);
+  }, [refetch]);
 
   const campaigns = rawCampaigns ? applyOrder(rawCampaigns, order) : [];
 

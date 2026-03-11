@@ -35,6 +35,7 @@ export function SessionForm({ onSubmit, onCancel }: SessionFormProps) {
           onChange={(e) => setTitle(e.target.value)}
           placeholder="e.g., The Dragon's Lair"
         />
+        <p className="form-hint">Sessions are automatically prefixed with "Session N:" — enter just the subtitle, e.g., "The Dragon's Lair"</p>
       </FormField>
       <div className="form-actions">
         <button type="submit" className="btn btn-primary" disabled={submitting}>
