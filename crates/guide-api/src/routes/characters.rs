@@ -7,12 +7,13 @@ use axum::{
 };
 use guide_core::{
     models::{
-        Backstory, Character, CharacterType, CreateCharacterRequest, GenerateNpcRequest,
-        HookPriority, PlotHook, RestoreSlotRequest, SpendSlotRequest, UpdateCharacterRequest,
+        Backstory, Character, CharacterType, CreateCharacterRequest, CreateTrackedPlotHookRequest,
+        GenerateNpcRequest, HookPriority, PlotHook, PlotHookStatus, RestoreSlotRequest,
+        SpendSlotRequest, UpdateCharacterRequest,
     },
     GuideError,
 };
-use guide_db::characters::CharacterRepository;
+use guide_db::{characters::CharacterRepository, PlotHookRepository};
 use uuid::Uuid;
 
 use crate::state::AppState;
@@ -54,6 +55,14 @@ pub fn router() -> Router<AppState> {
         .route(
             "/campaigns/{campaign_id}/characters/{id}/level-up",
             post(level_up_assist),
+        )
+        .route(
+            "/campaigns/{campaign_id}/characters/import-csv",
+            post(import_csv),
+        )
+        .route(
+            "/campaigns/{campaign_id}/characters/import-dndbeyond",
+            post(import_dndbeyond),
         )
 }
 
@@ -265,6 +274,19 @@ async fn analyze_backstory(
     };
 
     let updated = repo.update_backstory(id, &backstory).await?;
+
+    // Auto-populate tracked plot hooks in the plot_hooks table
+    let hook_repo = PlotHookRepository::new(&state.db);
+    for hook in &backstory.extracted_hooks {
+        let create_req = CreateTrackedPlotHookRequest {
+            hook_text: hook.description.clone(),
+            status: Some(PlotHookStatus::Open),
+        };
+        if let Err(e) = hook_repo.create(id, &create_req).await {
+            tracing::warn!("Failed to create tracked plot hook: {e}");
+        }
+    }
+
     Ok(Json(updated))
 }
 
@@ -455,40 +477,35 @@ async fn upload_portrait(
         .await
         .map_err(|e| GuideError::Internal(format!("Failed to create portraits dir: {e}")))?;
 
-    while let Some(field) = multipart
+    let field = multipart
         .next_field()
         .await
         .map_err(|e| GuideError::InvalidInput(format!("Multipart error: {e}")))?
-    {
-        let file_name = field
-            .file_name()
-            .unwrap_or("portrait.png")
-            .to_string();
-        let ext = std::path::Path::new(&file_name)
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("png");
-        let dest_path = portraits_dir.join(format!("{id}.{ext}"));
-        let data = field
-            .bytes()
-            .await
-            .map_err(|e| GuideError::InvalidInput(format!("Failed to read field bytes: {e}")))?;
+        .ok_or_else(|| GuideError::InvalidInput("No file field found in multipart request".into()))?;
 
-        let mut file = tokio::fs::File::create(&dest_path)
-            .await
-            .map_err(|e| GuideError::Internal(format!("Failed to create file: {e}")))?;
-        file.write_all(&data)
-            .await
-            .map_err(|e| GuideError::Internal(format!("Failed to write file: {e}")))?;
+    let file_name = field.file_name().unwrap_or("portrait.png").to_string();
+    let ext = std::path::Path::new(&file_name)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("png");
+    let dest_path = portraits_dir.join(format!("{id}.{ext}"));
+    let data = field
+        .bytes()
+        .await
+        .map_err(|e| GuideError::InvalidInput(format!("Failed to read field bytes: {e}")))?;
 
-        let url = format!("/portraits/{id}.{ext}");
-        let repo = CharacterRepository::new(&state.db);
-        repo.update_portrait_url(id, &url).await?;
-        let character = repo.get_by_id(id).await?;
-        return Ok(Json(character));
-    }
+    let mut file = tokio::fs::File::create(&dest_path)
+        .await
+        .map_err(|e| GuideError::Internal(format!("Failed to create file: {e}")))?;
+    file.write_all(&data)
+        .await
+        .map_err(|e| GuideError::Internal(format!("Failed to write file: {e}")))?;
 
-    Err(GuideError::InvalidInput("No file field found in multipart request".into()).into())
+    let url = format!("/portraits/{id}.{ext}");
+    let repo = CharacterRepository::new(&state.db);
+    repo.update_portrait_url(id, &url).await?;
+    let character = repo.get_by_id(id).await?;
+    Ok(Json(character))
 }
 
 #[utoipa::path(
@@ -540,4 +557,176 @@ async fn level_up_assist(
 
     let resp = state.llm.complete(llm_req).await?;
     Ok(Json(serde_json::json!({ "advice": resp.content })))
+}
+
+async fn import_csv(
+    State(state): State<AppState>,
+    Path(campaign_id): Path<Uuid>,
+    mut multipart: Multipart,
+) -> Result<impl IntoResponse, crate::error::AppError> {
+    let field = multipart
+        .next_field()
+        .await
+        .map_err(|e| GuideError::InvalidInput(format!("Multipart error: {e}")))?
+        .ok_or_else(|| GuideError::InvalidInput("No CSV file provided".into()))?;
+
+    let csv_bytes = field
+        .bytes()
+        .await
+        .map_err(|e| GuideError::InvalidInput(format!("Failed to read CSV: {e}")))?;
+    let csv_text = std::str::from_utf8(&csv_bytes)
+        .map_err(|_| GuideError::InvalidInput("CSV file must be UTF-8 encoded".into()))?;
+
+    let repo = CharacterRepository::new(&state.db);
+    let mut created = Vec::new();
+
+    for (line_idx, line) in csv_text.lines().enumerate() {
+        if line_idx == 0 {
+            continue; // skip header
+        }
+        let cols: Vec<&str> = line.splitn(10, ',').collect();
+        if cols.is_empty() || cols[0].trim().is_empty() {
+            continue;
+        }
+        let name = cols[0].trim().to_string();
+        let char_type_str = cols.get(1).map(|s| s.trim()).unwrap_or("pc");
+        let char_type = match char_type_str.to_lowercase().as_str() {
+            "npc" => guide_core::models::CharacterType::Npc,
+            "monster" => guide_core::models::CharacterType::Monster,
+            _ => guide_core::models::CharacterType::Pc,
+        };
+        let class = cols.get(2).filter(|s| !s.trim().is_empty()).map(|s| s.trim().to_string());
+        let race = cols.get(3).filter(|s| !s.trim().is_empty()).map(|s| s.trim().to_string());
+        let level = cols.get(4).and_then(|s| s.trim().parse::<i32>().ok());
+        let max_hp = cols.get(5).and_then(|s| s.trim().parse::<i32>().ok()).unwrap_or(10);
+        let armor_class = cols.get(6).and_then(|s| s.trim().parse::<i32>().ok()).unwrap_or(10);
+        let speed = cols.get(7).and_then(|s| s.trim().parse::<i32>().ok());
+
+        let req = CreateCharacterRequest {
+            name,
+            character_type: char_type,
+            class,
+            race,
+            level,
+            max_hp,
+            armor_class,
+            speed,
+            ability_scores: None,
+            backstory_text: None,
+            spell_slots: None,
+        };
+        let character = repo.create(campaign_id, req).await?;
+        created.push(character);
+    }
+
+    Ok((StatusCode::CREATED, Json(serde_json::json!({
+        "imported": created.len(),
+        "characters": created,
+    }))))
+}
+
+async fn import_dndbeyond(
+    State(state): State<AppState>,
+    Path(campaign_id): Path<Uuid>,
+    Json(json): Json<serde_json::Value>,
+) -> Result<impl IntoResponse, crate::error::AppError> {
+    // D&D Beyond export may wrap content in a "data" field
+    let char_data = json.get("data").unwrap_or(&json);
+
+    let name = char_data
+        .get("name")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| GuideError::InvalidInput("Missing character name".into()))?
+        .to_string();
+
+    // Extract class (first class definition)
+    let class = char_data
+        .get("classes")
+        .and_then(|v| v.as_array())
+        .and_then(|arr| arr.first())
+        .and_then(|c| c.get("definition"))
+        .and_then(|d| d.get("name"))
+        .and_then(|n| n.as_str())
+        .map(|s| s.to_string());
+
+    // Extract level from first class
+    let level = char_data
+        .get("classes")
+        .and_then(|v| v.as_array())
+        .and_then(|arr| arr.first())
+        .and_then(|c| c.get("level"))
+        .and_then(|l| l.as_i64())
+        .map(|l| l as i32);
+
+    // Extract race
+    let race = char_data
+        .get("race")
+        .and_then(|r| r.get("fullName").or_else(|| r.get("baseName")))
+        .and_then(|n| n.as_str())
+        .map(|s| s.to_string());
+
+    // Extract HP
+    let base_hp = char_data.get("baseHitPoints").and_then(|v| v.as_i64()).unwrap_or(10) as i32;
+    let bonus_hp = char_data.get("bonusHitPoints").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+    let max_hp = base_hp + bonus_hp;
+
+    // Extract AC (from inventory items or a direct field)
+    let armor_class = char_data
+        .get("inventory")
+        .and_then(|inv| inv.as_array())
+        .and_then(|items| {
+            items.iter().find(|item| {
+                item.get("equipped").and_then(|e| e.as_bool()).unwrap_or(false)
+                    && item
+                        .get("definition")
+                        .and_then(|d| d.get("armorClass"))
+                        .is_some()
+            })
+        })
+        .and_then(|item| item.get("definition"))
+        .and_then(|d| d.get("armorClass"))
+        .and_then(|ac| ac.as_i64())
+        .unwrap_or(10) as i32;
+
+    // Extract ability scores (stats: [{id:1=STR, 2=DEX, 3=CON, 4=INT, 5=WIS, 6=CHA}])
+    let ability_scores = char_data.get("stats").and_then(|stats| {
+        let arr = stats.as_array()?;
+        let mut scores = guide_core::models::AbilityScores {
+            strength: 10, dexterity: 10, constitution: 10,
+            intelligence: 10, wisdom: 10, charisma: 10,
+        };
+        for stat in arr {
+            let id = stat.get("id").and_then(|i| i.as_i64()).unwrap_or(0);
+            let val = stat.get("value").and_then(|v| v.as_i64()).unwrap_or(10) as i32;
+            match id {
+                1 => scores.strength = val,
+                2 => scores.dexterity = val,
+                3 => scores.constitution = val,
+                4 => scores.intelligence = val,
+                5 => scores.wisdom = val,
+                6 => scores.charisma = val,
+                _ => {}
+            }
+        }
+        Some(scores)
+    });
+
+    let req = CreateCharacterRequest {
+        name,
+        character_type: CharacterType::Pc,
+        class,
+        race,
+        level,
+        max_hp,
+        armor_class,
+        speed: None,
+        ability_scores,
+        backstory_text: None,
+        spell_slots: None,
+    };
+
+    let repo = CharacterRepository::new(&state.db);
+    let character = repo.create(campaign_id, req).await?;
+
+    Ok((StatusCode::CREATED, Json(character)))
 }

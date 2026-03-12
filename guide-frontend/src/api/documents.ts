@@ -1,5 +1,5 @@
 import { apiGet, apiPost, apiMultipart } from './client';
-import type { CampaignDocument, GlobalDocument } from './types';
+import type { CampaignDocument, GlobalDocument, RankedChunk } from './types';
 
 // Campaign documents
 export function listCampaignDocs(campaignId: string): Promise<CampaignDocument[]> {
@@ -37,4 +37,13 @@ export function getGlobalDoc(docId: string): Promise<GlobalDocument> {
 
 export function ingestGlobalDoc(docId: string): Promise<GlobalDocument> {
   return apiPost<GlobalDocument>(`/documents/${docId}/ingest`);
+}
+
+// Search
+export function searchRules(q: string): Promise<RankedChunk[]> {
+  return apiGet<RankedChunk[]>(`/rules/search?q=${encodeURIComponent(q)}`);
+}
+
+export function searchCampaignDoc(campaignId: string, docId: string, q: string): Promise<RankedChunk[]> {
+  return apiGet<RankedChunk[]>(`/campaigns/${campaignId}/documents/${docId}/search?q=${encodeURIComponent(q)}`);
 }

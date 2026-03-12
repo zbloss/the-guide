@@ -39,7 +39,7 @@ impl<'a> CampaignRepository<'a> {
 
     pub async fn get_by_id(&self, id: Uuid) -> Result<Campaign> {
         let row = sqlx::query(
-            "SELECT id, name, description, game_system, world_state, created_at, updated_at \
+            "SELECT id, name, description, game_system, world_state, share_token, created_at, updated_at \
              FROM campaigns WHERE id = ?",
         )
         .bind(id.to_string())
@@ -52,7 +52,7 @@ impl<'a> CampaignRepository<'a> {
 
     pub async fn list(&self) -> Result<Vec<Campaign>> {
         let rows = sqlx::query(
-            "SELECT id, name, description, game_system, world_state, created_at, updated_at \
+            "SELECT id, name, description, game_system, world_state, share_token, created_at, updated_at \
              FROM campaigns ORDER BY created_at DESC",
         )
         .fetch_all(self.pool)
@@ -108,6 +108,96 @@ impl<'a> CampaignRepository<'a> {
         }
         Ok(())
     }
+
+    pub async fn generate_share_token(&self, id: Uuid) -> Result<Campaign> {
+        let token = Uuid::new_v4().to_string().replace('-', "");
+        let now = Utc::now().to_rfc3339();
+        sqlx::query("UPDATE campaigns SET share_token = ?, updated_at = ? WHERE id = ?")
+            .bind(&token)
+            .bind(&now)
+            .bind(id.to_string())
+            .execute(self.pool)
+            .await?;
+        self.get_by_id(id).await
+    }
+
+    pub async fn get_by_share_token(&self, token: &str) -> Result<Campaign> {
+        let row = sqlx::query(
+            "SELECT id, name, description, game_system, world_state, share_token, created_at, updated_at \
+             FROM campaigns WHERE share_token = ?",
+        )
+        .bind(token)
+        .fetch_optional(self.pool)
+        .await?
+        .ok_or_else(|| GuideError::NotFound("Campaign not found".into()))?;
+        row_to_campaign(row)
+    }
+
+    pub async fn analytics(&self, campaign_id: Uuid) -> Result<serde_json::Value> {
+        let id_str = campaign_id.to_string();
+
+        let sessions_count: i64 =
+            sqlx::query("SELECT COUNT(*) FROM sessions WHERE campaign_id = ?")
+                .bind(&id_str)
+                .fetch_one(self.pool)
+                .await?
+                .get(0);
+
+        let encounters_count: i64 =
+            sqlx::query("SELECT COUNT(*) FROM encounters WHERE campaign_id = ?")
+                .bind(&id_str)
+                .fetch_one(self.pool)
+                .await?
+                .get(0);
+
+        let characters_count: i64 =
+            sqlx::query("SELECT COUNT(*) FROM characters WHERE campaign_id = ?")
+                .bind(&id_str)
+                .fetch_one(self.pool)
+                .await?
+                .get(0);
+
+        let session_rows = sqlx::query(
+            "SELECT strftime('%Y-%m', created_at) AS month, COUNT(*) AS cnt \
+             FROM sessions WHERE campaign_id = ? GROUP BY month ORDER BY month",
+        )
+        .bind(&id_str)
+        .fetch_all(self.pool)
+        .await?;
+        let sessions_by_month: Vec<serde_json::Value> = session_rows
+            .iter()
+            .map(|r| {
+                let month: String = r.get("month");
+                let count: i64 = r.get("cnt");
+                serde_json::json!({ "month": month, "count": count })
+            })
+            .collect();
+
+        let difficulty_rows = sqlx::query(
+            "SELECT CASE WHEN round <= 1 THEN 'easy' WHEN round <= 3 THEN 'medium' \
+             WHEN round <= 6 THEN 'hard' ELSE 'deadly' END AS difficulty, COUNT(*) AS cnt \
+             FROM encounters WHERE campaign_id = ? AND status = 'completed' GROUP BY difficulty",
+        )
+        .bind(&id_str)
+        .fetch_all(self.pool)
+        .await?;
+        let encounter_difficulty: Vec<serde_json::Value> = difficulty_rows
+            .iter()
+            .map(|r| {
+                let diff: String = r.get("difficulty");
+                let count: i64 = r.get("cnt");
+                serde_json::json!({ "difficulty": diff, "count": count })
+            })
+            .collect();
+
+        Ok(serde_json::json!({
+            "sessions_count": sessions_count,
+            "encounters_count": encounters_count,
+            "characters_count": characters_count,
+            "sessions_by_month": sessions_by_month,
+            "encounter_difficulty": encounter_difficulty,
+        }))
+    }
 }
 
 fn row_to_campaign(row: SqliteRow) -> Result<Campaign> {
@@ -116,6 +206,7 @@ fn row_to_campaign(row: SqliteRow) -> Result<Campaign> {
     let world_state_str: Option<String> = row.try_get("world_state")?;
     let created_at_str: String = row.try_get("created_at")?;
     let updated_at_str: String = row.try_get("updated_at")?;
+    let share_token: Option<String> = row.try_get("share_token").unwrap_or(None);
 
     Ok(Campaign {
         id: Uuid::parse_str(&id_str).map_err(|e| GuideError::Internal(e.to_string()))?,
@@ -125,6 +216,7 @@ fn row_to_campaign(row: SqliteRow) -> Result<Campaign> {
         world_state: world_state_str
             .as_deref()
             .and_then(|s| serde_json::from_str(s).ok()),
+        share_token,
         created_at: created_at_str.parse().unwrap_or_else(|_| Utc::now()),
         updated_at: updated_at_str.parse().unwrap_or_else(|_| Utc::now()),
     })

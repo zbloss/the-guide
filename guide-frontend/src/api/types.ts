@@ -66,6 +66,7 @@ export interface Campaign {
   description: string | null;
   game_system: GameSystem;
   world_state: WorldState | null;
+  share_token: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -140,6 +141,12 @@ export interface Character {
   updated_at: string;
 }
 
+export interface ConditionEntry {
+  condition: Condition;
+  duration_rounds: number | null;
+  applied_round: number | null;
+}
+
 export interface ActionBudget {
   has_action: boolean;
   has_bonus_action: boolean;
@@ -158,7 +165,7 @@ export interface CombatParticipant {
   current_hp: number;
   max_hp: number;
   armor_class: number;
-  conditions: Condition[];
+  conditions: ConditionEntry[];
   action_budget: ActionBudget;
   is_defeated: boolean;
   death_saves_success: number;
@@ -186,8 +193,26 @@ export interface Session {
   title: string | null;
   started_at: string | null;
   ended_at: string | null;
+  map_url: string | null;
   created_at: string;
   updated_at: string;
+}
+
+// ==================== Encounter Templates ====================
+
+export interface TemplateParticipant {
+  name: string;
+  max_hp: number;
+  armor_class: number;
+  speed: number;
+}
+
+export interface EncounterTemplate {
+  id: string;
+  name: string;
+  description: string | null;
+  participants: TemplateParticipant[];
+  created_at: string;
 }
 
 export function deriveSessionStatus(s: Session): 'pending' | 'started' | 'ended' {
@@ -464,7 +489,7 @@ export interface UpdateParticipantRequest {
   name?: string;
   hp_delta?: number;
   set_hp?: number;
-  add_condition?: Condition;
+  add_condition?: ConditionEntry;
   remove_condition?: Condition;
   spend_action?: boolean;
   spend_bonus_action?: boolean;
@@ -538,6 +563,66 @@ export interface CreateFactionRequest {
 export interface UpdateFactionReputationRequest {
   standing: string;
   notes?: string;
+}
+
+// ==================== Plot Hook Tracker ====================
+
+export type PlotHookStatus = 'open' | 'active' | 'resolved';
+
+export interface TrackedPlotHook {
+  id: string;
+  character_id: string;
+  hook_text: string;
+  status: PlotHookStatus;
+  session_resolved_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateTrackedPlotHookRequest {
+  hook_text: string;
+  status?: PlotHookStatus;
+}
+
+export interface UpdateTrackedPlotHookRequest {
+  status?: PlotHookStatus;
+  session_resolved_id?: string;
+}
+
+// ==================== Webhooks ====================
+
+export interface CampaignWebhook {
+  id: string;
+  campaign_id: string;
+  url: string;
+  events: string[];
+  created_at: string;
+}
+
+export interface CreateWebhookRequest {
+  url: string;
+  events?: string[];
+}
+
+// ==================== Analytics ====================
+
+export interface SessionsByMonth { month: string; count: number; }
+export interface EncounterDifficultyEntry { difficulty: string; count: number; }
+export interface CampaignAnalytics {
+  sessions_count: number;
+  encounters_count: number;
+  characters_count: number;
+  sessions_by_month: SessionsByMonth[];
+  encounter_difficulty: EncounterDifficultyEntry[];
+}
+
+// ==================== Documents / Rules Search ====================
+
+export interface RankedChunk {
+  content: string;
+  section_path: string;
+  doc_title: string;
+  score: number;
 }
 
 // ==================== Health ====================

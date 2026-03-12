@@ -40,7 +40,12 @@
       "Bash(bun remove:*)",
       "Bash(cargo clippy:*)",
       "Bash(bun run:*)",
-      "WebFetch(domain:localhost)"
+      "WebFetch(domain:localhost)",
+      "Bash(find C:/Users/altoz/Projects/the-guide/guide-frontend/src -name \"*.tsx\" -newer C:/Users/altoz/Projects/the-guide/crates/guide-db/migrations/008_death_saves.sql 2>/dev/null | sort)",
+      "Bash(ls guide-frontend/src/components/layout/ && cat guide-frontend/src/components/layout/*.tsx | head -50)",
+      "Bash(grep -n \"campaign_token\\\\|public_token\\\\|share\" crates/guide-db/migrations/*.sql 2>/dev/null | head -5)",
+      "Bash(grep -rn \"from '../../api/\" guide-frontend/src/components/campaigns/*.tsx | grep -oP \"'\\\\./.*?'\" | sort -u | xargs -I{} sh -c 'echo {}' 2>/dev/null | head -20)",
+      "Bash(grep -rn \"^import\" guide-frontend/src/components/campaigns/*.tsx guide-frontend/src/pages/CampaignDetailPage.tsx 2>/dev/null | grep \"api/\" | sort -u)"
     ]
   }
 }

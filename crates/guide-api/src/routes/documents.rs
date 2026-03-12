@@ -1,14 +1,15 @@
 use axum::{
     body::Bytes,
-    extract::{Multipart, Path, State},
+    extract::{Multipart, Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post},
     Json, Router,
 };
+use serde::Deserialize;
 use chrono::Utc;
 use guide_core::{
-    models::{CampaignDocument, DocumentKind, GlobalDocument, IngestionStatus},
+    models::{CampaignDocument, DocumentKind, GlobalDocument, IngestionStatus, RankedChunk},
     GuideError,
 };
 use guide_db::documents::{DocumentRepository, GlobalDocumentRepository};
@@ -31,10 +32,16 @@ pub fn router() -> Router<AppState> {
             "/campaigns/{campaign_id}/documents/{doc_id}/ingest",
             post(ingest_document),
         )
+        .route(
+            "/campaigns/{campaign_id}/documents/{doc_id}/search",
+            get(search_campaign_document),
+        )
         // Global (rulebook) documents
         .route("/documents", get(list_global).post(upload_global))
         .route("/documents/{doc_id}", get(get_global))
         .route("/documents/{doc_id}/ingest", post(ingest_global))
+        // Rules search (global PageIndex)
+        .route("/rules/search", get(search_rules))
 }
 
 #[utoipa::path(
@@ -310,4 +317,52 @@ async fn save_file(path: &str, data: &[u8]) -> Result<(), GuideError> {
     }
     tokio::fs::write(path, data).await?;
     Ok(())
+}
+
+#[derive(Deserialize)]
+struct SearchQuery {
+    q: String,
+}
+
+async fn search_rules(
+    State(state): State<AppState>,
+    Query(params): Query<SearchQuery>,
+) -> Result<impl IntoResponse, crate::error::AppError> {
+    use guide_pdf::pipeline::query_indexes;
+    if params.q.trim().is_empty() {
+        return Ok(Json(Vec::<RankedChunk>::new()));
+    }
+    let chunks = query_indexes(
+        &params.q,
+        None,
+        false,
+        state.llm.as_ref(),
+        &state.config,
+        state.qdrant.as_deref(),
+    )
+    .await
+    .unwrap_or_default();
+    Ok(Json(chunks))
+}
+
+async fn search_campaign_document(
+    State(state): State<AppState>,
+    Path((campaign_id, _doc_id)): Path<(Uuid, Uuid)>,
+    Query(params): Query<SearchQuery>,
+) -> Result<impl IntoResponse, crate::error::AppError> {
+    use guide_pdf::pipeline::query_indexes;
+    if params.q.trim().is_empty() {
+        return Ok(Json(Vec::<RankedChunk>::new()));
+    }
+    let chunks = query_indexes(
+        &params.q,
+        Some(campaign_id),
+        false,
+        state.llm.as_ref(),
+        &state.config,
+        state.qdrant.as_deref(),
+    )
+    .await
+    .unwrap_or_default();
+    Ok(Json(chunks))
 }

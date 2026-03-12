@@ -251,8 +251,8 @@ async fn update_participant(
     if let Some(hp) = req.set_hp {
         engine.set_hp(pid, hp)?;
     }
-    if let Some(condition) = req.add_condition {
-        engine.add_condition(pid, condition)?;
+    if let Some(entry) = req.add_condition {
+        engine.add_condition(pid, entry)?;
     }
     if let Some(condition) = &req.remove_condition {
         engine.remove_condition(pid, condition)?;
@@ -319,7 +319,7 @@ async fn get_combat_log(
         let conditions: Vec<String> = p
             .conditions
             .iter()
-            .map(|c| format!("{:?}", c))
+            .map(|e| format!("{:?}", e.condition))
             .collect();
         let cond_str = if conditions.is_empty() {
             String::new()

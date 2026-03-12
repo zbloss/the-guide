@@ -45,7 +45,7 @@ impl<'a> SessionRepository<'a> {
     pub async fn get_by_id(&self, id: Uuid) -> Result<Session> {
         let row = sqlx::query(
             "SELECT id, campaign_id, session_number, title, notes, \
-             started_at, ended_at, created_at, updated_at \
+             started_at, ended_at, map_url, created_at, updated_at \
              FROM sessions WHERE id = ?",
         )
         .bind(id.to_string())
@@ -59,7 +59,7 @@ impl<'a> SessionRepository<'a> {
     pub async fn list_by_campaign(&self, campaign_id: Uuid) -> Result<Vec<Session>> {
         let rows = sqlx::query(
             "SELECT id, campaign_id, session_number, title, notes, \
-             started_at, ended_at, created_at, updated_at \
+             started_at, ended_at, map_url, created_at, updated_at \
              FROM sessions WHERE campaign_id = ? ORDER BY session_number ASC",
         )
         .bind(campaign_id.to_string())
@@ -67,6 +67,16 @@ impl<'a> SessionRepository<'a> {
         .await?;
 
         rows.into_iter().map(row_to_session).collect()
+    }
+
+    pub async fn update_map_url(&self, id: Uuid, url: &str) -> Result<()> {
+        sqlx::query("UPDATE sessions SET map_url = ?, updated_at = ? WHERE id = ?")
+            .bind(url)
+            .bind(chrono::Utc::now().to_rfc3339())
+            .bind(id.to_string())
+            .execute(self.pool)
+            .await?;
+        Ok(())
     }
 
     pub async fn start_session(&self, id: Uuid) -> Result<Session> {
@@ -224,6 +234,7 @@ fn row_to_session(row: SqliteRow) -> Result<Session> {
     let updated_at_str: String = row.try_get("updated_at")?;
     let started_at_str: Option<String> = row.try_get("started_at")?;
     let ended_at_str: Option<String> = row.try_get("ended_at")?;
+    let map_url: Option<String> = row.try_get("map_url").unwrap_or(None);
 
     Ok(Session {
         id: Uuid::parse_str(&id_str).map_err(|e| GuideError::Internal(e.to_string()))?,
@@ -234,6 +245,7 @@ fn row_to_session(row: SqliteRow) -> Result<Session> {
         notes: row.try_get("notes")?,
         started_at: started_at_str.as_deref().and_then(|s| s.parse().ok()),
         ended_at: ended_at_str.as_deref().and_then(|s| s.parse().ok()),
+        map_url,
         created_at: created_at_str.parse().unwrap_or_else(|_| Utc::now()),
         updated_at: updated_at_str.parse().unwrap_or_else(|_| Utc::now()),
     })

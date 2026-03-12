@@ -7,10 +7,11 @@ import { listCharacters } from '../api/characters';
 import { EncounterList } from '../components/encounters/EncounterList';
 import { EncounterForm } from '../components/encounters/EncounterForm';
 import { GenerateEncounterPanel } from '../components/encounters/GenerateEncounterPanel';
+import { TemplateLibrary } from '../components/encounters/TemplateLibrary';
 import { Modal } from '../components/common/Modal';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { ErrorBanner } from '../components/common/ErrorBanner';
-import type { EncounterSummary, Session, Character, CreateEncounterRequest } from '../api/types';
+import type { EncounterSummary, Session, Character, CreateEncounterRequest, EncounterTemplate } from '../api/types';
 
 export function EncountersPage() {
   const { campaignId } = useParams<{ campaignId: string }>();
@@ -23,10 +24,13 @@ export function EncountersPage() {
 
   const [showCreate, setShowCreate] = useState(false);
   const [showGenerate, setShowGenerate] = useState(false);
+  const [showTemplates, setShowTemplates] = useState(false);
+  const [templateForm, setTemplateForm] = useState<CreateEncounterRequest | null>(null);
 
   const handleCreate = async (data: CreateEncounterRequest) => {
     await createEncounter(campaignId!, data);
     setShowCreate(false);
+    setTemplateForm(null);
     refetch();
   };
 
@@ -35,29 +39,45 @@ export function EncountersPage() {
     refetch();
   };
 
+  const handleLoadTemplate = (template: EncounterTemplate) => {
+    setTemplateForm({
+      name: template.name,
+      description: template.description ?? undefined,
+      participant_character_ids: [],
+    });
+    setShowTemplates(false);
+    setShowCreate(true);
+  };
+
   return (
     <div className="page-section">
       <div className="section-header">
         <h2>Encounters</h2>
         <div className="btn-group">
           <button className="btn btn-primary" onClick={() => setShowCreate(true)}>+ New Encounter</button>
-          <button className="btn" onClick={() => setShowGenerate(!showGenerate)}>🎲 Generate</button>
+          <button className="btn" onClick={() => setShowGenerate(!showGenerate)}>Generate</button>
+          <button className="btn" onClick={() => setShowTemplates(!showTemplates)}>Templates</button>
         </div>
       </div>
 
       {showGenerate && <GenerateEncounterPanel campaignId={campaignId!} onSaved={refetch} />}
+
+      {showTemplates && (
+        <TemplateLibrary onLoad={handleLoadTemplate} />
+      )}
 
       {loading && <LoadingSpinner />}
       {error && <ErrorBanner message={error} />}
       {encounters && <EncounterList encounters={encounters} campaignId={campaignId!} onDelete={handleDelete} />}
 
       {showCreate && (
-        <Modal title="New Encounter" onClose={() => setShowCreate(false)}>
+        <Modal title="New Encounter" onClose={() => { setShowCreate(false); setTemplateForm(null); }}>
           <EncounterForm
             sessions={sessions ?? []}
             characters={characters ?? []}
             onSubmit={handleCreate}
-            onCancel={() => setShowCreate(false)}
+            onCancel={() => { setShowCreate(false); setTemplateForm(null); }}
+            initialValues={templateForm ?? undefined}
           />
         </Modal>
       )}

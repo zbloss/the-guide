@@ -19,6 +19,7 @@
 - Difficulty endpoint: GET `/campaigns/{id}/encounters/{enc_id}/difficulty` — only counts `CharacterType::Pc` participants
 - Initiative sort: DESC by `initiative_total`, then `initiative_modifier`, then UUID (tiebreak)
 - HP clamps to `[0, max_hp]`; reaching 0 sets `is_defeated = true` and adds `Condition::Unconscious`
+- Condition duration tracking (FEAT-003): conditions stored as `ConditionEntry { condition, duration_rounds, applied_round }`. Auto-expired in `next_turn()` on round wrap when `applied_round + duration_rounds <= current_round`. `None` duration = permanent.
 
 ### Architecture Decisions
 - `CombatParticipant` has `death_saves_success: i32` and `death_saves_failure: i32` (defaults 0)
@@ -26,6 +27,7 @@
 - Death saves only processed when `current_hp == 0` (guard in route handler)
 - `EncounterDifficulty` struct added to `guide-core/src/models/encounter.rs`
 - Difficulty handler looks up character records to get level; skips non-PC participants
+- `ConditionEntry` struct in `encounter.rs` wraps `Condition` with `duration_rounds: Option<i32>` and `applied_round: Option<i32>`. No DB migration needed — conditions column is a JSON blob that automatically serializes the new struct. `unwrap_or_default()` handles old bare-enum JSON (produces empty vec).
 
 ### Known Pre-existing Bugs (not introduced by this work)
 - `test_start_encounter` API test fails — expects `EncounterSummary` wrapper (`body["encounter"]`), but handler returns flat `Encounter`. This was failing before any FEAT-004/005/006 changes.
@@ -33,7 +35,7 @@
 - `campaigns.rs` referenced `search_campaign` and `generate_atmosphere` functions that didn't exist (fixed by linter auto-generating full implementations)
 
 ### Test Count
-- `cargo test --workspace`: 22 pass, 1 pre-existing failure (`test_start_encounter`)
+- `cargo test --workspace`: 55 pass, 0 failures (as of FEAT-003)
 - `cargo clippy --workspace -- -D warnings`: zero warnings/errors
 
 ### DB Column Pattern

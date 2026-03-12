@@ -121,6 +121,7 @@ async fn test_character_create_and_get(pool: SqlitePool) -> Result<(), Box<dyn s
                 speed: Some(30),
                 ability_scores: None,
                 backstory_text: None,
+                spell_slots: None,
             },
         )
         .await?;
@@ -155,6 +156,7 @@ async fn test_character_list_by_campaign(pool: SqlitePool) -> Result<(), Box<dyn
                 speed: None,
                 ability_scores: None,
                 backstory_text: None,
+                spell_slots: None,
             },
         )
         .await?;
@@ -188,6 +190,7 @@ async fn test_character_isolation_between_campaigns(
             speed: None,
             ability_scores: None,
             backstory_text: None,
+            spell_slots: None,
         },
     )
     .await?;
@@ -216,6 +219,7 @@ async fn test_character_delete(pool: SqlitePool) -> Result<(), Box<dyn std::erro
                 speed: None,
                 ability_scores: None,
                 backstory_text: None,
+                spell_slots: None,
             },
         )
         .await?;

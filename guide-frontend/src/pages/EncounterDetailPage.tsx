@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useApi } from '../hooks/useApi';
 import { getEncounter, startEncounter, nextTurn, endEncounter } from '../api/encounters';
+import { saveTemplate } from '../api/templates';
 import { CombatTracker } from '../components/encounters/CombatTracker';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { ErrorBanner } from '../components/common/ErrorBanner';
@@ -19,6 +20,8 @@ export function EncounterDetailPage() {
   const [encounter, setEncounter] = useState<EncounterSummary | null>(null);
   const [actionError, setActionError] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
+  const [templateSaved, setTemplateSaved] = useState(false);
+  const [templateSaving, setTemplateSaving] = useState(false);
 
   const displayed = encounter ?? initialEncounter;
 
@@ -49,6 +52,19 @@ export function EncounterDetailPage() {
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
   }, [displayed?.status, actionLoading, campaignId, encId, doAction]);
+
+  const handleSaveAsTemplate = async () => {
+    setTemplateSaving(true);
+    setActionError('');
+    try {
+      await saveTemplate(campaignId!, encId!);
+      setTemplateSaved(true);
+    } catch (e: unknown) {
+      setActionError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setTemplateSaving(false);
+    }
+  };
 
   const handleDownloadLog = async () => {
     const res = await fetch(`${BASE_URL}/campaigns/${campaignId}/encounters/${encId}/log`);
@@ -91,6 +107,13 @@ export function EncounterDetailPage() {
           )}
           {displayed.status === 'completed' && (
             <span className="badge badge-success">Encounter Completed</span>
+          )}
+          {templateSaved ? (
+            <span className="badge badge-success">Template saved</span>
+          ) : (
+            <button className="btn btn-secondary" onClick={handleSaveAsTemplate} disabled={templateSaving}>
+              {templateSaving ? 'Saving…' : 'Save as Template'}
+            </button>
           )}
           <button className="btn btn-secondary" onClick={handleDownloadLog}>
             Download Log

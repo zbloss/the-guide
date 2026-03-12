@@ -1,14 +1,16 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useApi } from '../hooks/useApi';
 import { getCharacter, updateCharacter, deleteCharacter, generateVillainProfile, uploadPortrait } from '../api/characters';
+import { listPlotHooks } from '../api/plotHooks';
 import { ConditionBadge } from '../components/characters/ConditionBadge';
 import { BackstoryPanel } from '../components/characters/BackstoryPanel';
 import { SpellSlotPanel } from '../components/characters/SpellSlotPanel';
+import { PlotHookBoard } from '../components/characters/PlotHookBoard';
 import { ConfirmButton } from '../components/common/ConfirmButton';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { ErrorBanner } from '../components/common/ErrorBanner';
-import type { Character, Condition, Backstory, AbilityScores } from '../api/types';
+import type { Character, Condition, Backstory, AbilityScores, TrackedPlotHook } from '../api/types';
 import { ALL_CONDITIONS } from '../api/types';
 
 function HpBar({ current, max }: { current: number; max: number }) {
@@ -138,6 +140,19 @@ export function CharacterDetailPage() {
   const [villainProfile, setVillainProfile] = useState<string | null>(null);
   const [villainError, setVillainError] = useState('');
   const [villainOpen, setVillainOpen] = useState(false);
+  const [plotHooks, setPlotHooks] = useState<TrackedPlotHook[]>([]);
+
+  const loadPlotHooks = useCallback(async () => {
+    if (!campaignId || !charId) return;
+    try {
+      const hooks = await listPlotHooks(campaignId, charId);
+      setPlotHooks(hooks);
+    } catch {
+      // silently ignore — hooks are supplemental
+    }
+  }, [campaignId, charId]);
+
+  useEffect(() => { void loadPlotHooks(); }, [loadPlotHooks]);
 
   const doUpdate = async (changes: Parameters<typeof updateCharacter>[2]) => {
     setUpdateError('');
@@ -386,6 +401,13 @@ export function CharacterDetailPage() {
           </div>
         </div>
       )}
+
+      <PlotHookBoard
+        campaignId={campaignId!}
+        characterId={charId!}
+        hooks={plotHooks}
+        onChanged={() => void loadPlotHooks()}
+      />
     </div>
   );
 }

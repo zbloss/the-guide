@@ -1,5 +1,5 @@
 use guide_combat::{build_participant, initiative::sort_initiative, CombatEngine};
-use guide_core::models::{Condition, Encounter, EncounterStatus};
+use guide_core::models::{Condition, ConditionEntry, Encounter, EncounterStatus};
 use uuid::Uuid;
 
 fn make_encounter(participants: &[(&str, i32, i32, i32)]) -> Encounter {
@@ -123,7 +123,8 @@ fn test_hp_damage_and_defeat() {
     assert!(engine.encounter.participants[0].is_defeated);
     assert!(engine.encounter.participants[0]
         .conditions
-        .contains(&Condition::Unconscious));
+        .iter()
+        .any(|e| e.condition == Condition::Unconscious));
 }
 
 #[test]
@@ -158,15 +159,17 @@ fn test_condition_add_and_remove() {
 
     let id = engine.encounter.participants[0].id;
 
-    engine.add_condition(id, Condition::Poisoned).unwrap();
+    engine.add_condition(id, ConditionEntry { condition: Condition::Poisoned, duration_rounds: None, applied_round: None }).unwrap();
     assert!(engine.encounter.participants[0]
         .conditions
-        .contains(&Condition::Poisoned));
+        .iter()
+        .any(|e| e.condition == Condition::Poisoned));
 
     engine.remove_condition(id, &Condition::Poisoned).unwrap();
     assert!(!engine.encounter.participants[0]
         .conditions
-        .contains(&Condition::Poisoned));
+        .iter()
+        .any(|e| e.condition == Condition::Poisoned));
 }
 
 #[test]

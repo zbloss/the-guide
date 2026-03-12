@@ -11,6 +11,8 @@ import { EncounterDetailPage } from "./pages/EncounterDetailPage";
 import { DocumentsPage } from "./pages/DocumentsPage";
 import { GlobalDocumentsPage } from "./pages/GlobalDocumentsPage";
 import { ChatPage } from "./pages/ChatPage";
+import { AnalyticsPage } from "./pages/AnalyticsPage";
+import { SharedViewPage } from "./pages/SharedViewPage";
 import { HealthPage } from "./pages/HealthPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
 import { PlaystylePage } from "./pages/PlaystylePage";
@@ -30,9 +32,11 @@ function App() {
           <Route path="encounters/:encId" element={<EncounterDetailPage />} />
           <Route path="documents" element={<DocumentsPage />} />
           <Route path="chat" element={<ChatPage />} />
+          <Route path="analytics" element={<AnalyticsPage />} />
         </Route>
 
         <Route path="documents" element={<GlobalDocumentsPage />} />
+        <Route path="view/:token" element={<SharedViewPage />} />
         <Route path="playstyle" element={<PlaystylePage />} />
         <Route path="health" element={<HealthPage />} />
         <Route path="*" element={<NotFoundPage />} />

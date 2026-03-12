@@ -7,8 +7,15 @@ pub mod encounters;
 pub mod factions;
 pub mod homebrew;
 pub mod loot;
+pub mod plot_hooks;
 pub mod qdrant;
 pub mod sessions;
+pub mod templates;
+pub mod webhooks;
+
+pub use plot_hooks::PlotHookRepository;
+pub use templates::TemplateRepository;
+pub use webhooks::WebhookRepository;
 
 pub use sqlx::SqlitePool;
 

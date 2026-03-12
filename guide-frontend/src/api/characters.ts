@@ -41,6 +41,21 @@ export function generateVillainProfile(campaignId: string, charId: string): Prom
   return apiPost<{ villain_profile: string }>(`/campaigns/${campaignId}/characters/${charId}/villain-profile`);
 }
 
+export async function importCharactersCsv(campaignId: string, file: File): Promise<{ imported: number; characters: Character[] }> {
+  const form = new FormData();
+  form.append('file', file);
+  const res = await fetch(`${BASE_URL}/campaigns/${campaignId}/characters/import-csv`, {
+    method: 'POST',
+    body: form,
+  });
+  if (!res.ok) throw new Error(`CSV import failed: ${res.status}`);
+  return res.json() as Promise<{ imported: number; characters: Character[] }>;
+}
+
+export function importDndBeyond(campaignId: string, json: unknown): Promise<Character> {
+  return apiPost<Character>(`/campaigns/${campaignId}/characters/import-dndbeyond`, json);
+}
+
 export async function uploadPortrait(campaignId: string, charId: string, file: File): Promise<Character> {
   const form = new FormData();
   form.append('file', file);

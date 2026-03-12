@@ -4,6 +4,7 @@ import { listCampaignDocs, uploadCampaignDoc, getCampaignDoc, ingestCampaignDoc 
 import { DocumentList } from '../components/documents/DocumentList';
 import { UploadForm } from '../components/documents/UploadForm';
 import { IngestButton } from '../components/documents/IngestButton';
+import { DocumentChunkSearch } from '../components/documents/DocumentChunkSearch';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { ErrorBanner } from '../components/common/ErrorBanner';
 import type { CampaignDocument } from '../api/types';
@@ -32,21 +33,24 @@ export function DocumentsPage() {
       {error && <ErrorBanner message={error} />}
 
       {docs && (
-        <DocumentList
-          documents={docs}
-          renderActions={(doc) => {
-            const d = doc as CampaignDocument;
-            return (
-              <IngestButton
-                docId={d.id}
-                currentStatus={d.ingestion_status}
-                onIngest={() => ingestCampaignDoc(campaignId!, d.id).then(() => {})}
-                onPoll={() => getCampaignDoc(campaignId!, d.id)}
-                onComplete={refetch}
-              />
-            );
-          }}
-        />
+        <>
+          <DocumentList
+            documents={docs}
+            renderActions={(doc) => {
+              const d = doc as CampaignDocument;
+              return (
+                <IngestButton
+                  docId={d.id}
+                  currentStatus={d.ingestion_status}
+                  onIngest={() => ingestCampaignDoc(campaignId!, d.id).then(() => {})}
+                  onPoll={() => getCampaignDoc(campaignId!, d.id)}
+                  onComplete={refetch}
+                />
+              );
+            }}
+          />
+          <DocumentChunkSearch campaignId={campaignId!} documents={docs} />
+        </>
       )}
     </div>
   );

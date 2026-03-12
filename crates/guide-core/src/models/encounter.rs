@@ -5,6 +5,13 @@ use uuid::Uuid;
 use super::shared::{Condition, EncounterStatus};
 
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct ConditionEntry {
+    pub condition: Condition,
+    pub duration_rounds: Option<i32>, // None = permanent
+    pub applied_round: Option<i32>,   // round when applied
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct Encounter {
     pub id: Uuid,
     pub session_id: Option<Uuid>,
@@ -31,7 +38,7 @@ pub struct CombatParticipant {
     pub current_hp: i32,
     pub max_hp: i32,
     pub armor_class: i32,
-    pub conditions: Vec<Condition>,
+    pub conditions: Vec<ConditionEntry>,
     pub action_budget: ActionBudget,
     pub has_taken_turn: bool,
     pub is_defeated: bool,
@@ -82,8 +89,8 @@ pub struct UpdateParticipantRequest {
     pub name: Option<String>,
     pub hp_delta: Option<i32>,
     pub set_hp: Option<i32>,
-    pub add_condition: Option<Condition>,
-    pub remove_condition: Option<Condition>,
+    pub add_condition: Option<ConditionEntry>,
+    pub remove_condition: Option<Condition>, // remove by condition type only
     pub spend_action: Option<bool>,
     pub spend_bonus_action: Option<bool>,
     pub spend_reaction: Option<bool>,

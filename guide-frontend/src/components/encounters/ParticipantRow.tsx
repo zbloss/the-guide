@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { ConditionBadge } from '../characters/ConditionBadge';
 import { updateParticipant } from '../../api/encounters';
-import type { CombatParticipant, Condition, EncounterSummary } from '../../api/types';
+import type { CombatParticipant, Condition, ConditionEntry, EncounterSummary } from '../../api/types';
 import { ALL_CONDITIONS } from '../../api/types';
 
 interface ParticipantRowProps {
@@ -14,9 +14,11 @@ interface ParticipantRowProps {
 
 export function ParticipantRow({ participant: p, isCurrentTurn, campaignId, encounterId, onUpdate }: ParticipantRowProps) {
   const [damage, setDamage] = useState('');
+  const [dmgMultiplier, setDmgMultiplier] = useState<'1' | '0.5' | '2'>('1');
   const [heal, setHeal] = useState('');
   const [setHpVal, setSetHpVal] = useState('');
   const [addCond, setAddCond] = useState<Condition>('blinded');
+  const [durRounds, setDurRounds] = useState('');
   const [loading, setLoading] = useState(false);
   const [rowError, setRowError] = useState('');
   const [editingName, setEditingName] = useState(false);
@@ -46,7 +48,7 @@ export function ParticipantRow({ participant: p, isCurrentTurn, campaignId, enco
     setEditingName(false);
   };
 
-  const availableToAdd = ALL_CONDITIONS.filter((c) => !p.conditions.includes(c));
+  const availableToAdd = ALL_CONDITIONS.filter((c) => !p.conditions.some((e) => e.condition === c));
 
   return (
     <>
@@ -86,12 +88,18 @@ export function ParticipantRow({ participant: p, isCurrentTurn, campaignId, enco
       </td>
       <td className="participant-ac">{p.armor_class}</td>
       <td className="participant-conditions">
-        {p.conditions.map((c) => (
-          <ConditionBadge
-            key={c}
-            condition={c}
-            onRemove={() => doUpdate({ remove_condition: c })}
-          />
+        {p.conditions.map((e: ConditionEntry) => (
+          <span key={e.condition} className="condition-entry">
+            <ConditionBadge
+              condition={e.condition}
+              onRemove={() => doUpdate({ remove_condition: e.condition })}
+            />
+            {e.duration_rounds != null && (
+              <span className="condition-duration" title={`${e.duration_rounds} round(s)`}>
+                {e.duration_rounds}
+              </span>
+            )}
+          </span>
         ))}
       </td>
       <td className="participant-budget">
@@ -104,7 +112,12 @@ export function ParticipantRow({ participant: p, isCurrentTurn, campaignId, enco
         {/* Damage */}
         <div className="control-row">
           <input className="control-input" type="number" min={0} placeholder="DMG" value={damage} onChange={(e) => setDamage(e.target.value)} />
-          <button className="btn btn-sm btn-danger" onClick={() => { doUpdate({ hp_delta: -Math.abs(Number(damage)) }); setDamage(''); }} disabled={!damage || loading}>Hit</button>
+          <select className="control-select control-select-sm" value={dmgMultiplier} onChange={(e) => setDmgMultiplier(e.target.value as '1' | '0.5' | '2')} title="Resistance/Vulnerability">
+            <option value="1">Normal</option>
+            <option value="0.5">Resist</option>
+            <option value="2">Vuln</option>
+          </select>
+          <button className="btn btn-sm btn-danger" onClick={() => { doUpdate({ hp_delta: -Math.floor(Math.abs(Number(damage)) * Number(dmgMultiplier)) }); setDamage(''); }} disabled={!damage || loading}>Hit</button>
         </div>
         {/* Heal */}
         <div className="control-row">
@@ -122,7 +135,29 @@ export function ParticipantRow({ participant: p, isCurrentTurn, campaignId, enco
             <select className="control-select" value={addCond} onChange={(e) => setAddCond(e.target.value as Condition)}>
               {availableToAdd.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
-            <button className="btn btn-sm" onClick={() => doUpdate({ add_condition: addCond })} disabled={loading}>+Cond</button>
+            <input
+              className="control-input"
+              type="number"
+              min={1}
+              placeholder="Rounds"
+              title="Duration in rounds (empty = permanent)"
+              value={durRounds}
+              onChange={(e) => setDurRounds(e.target.value)}
+              style={{ width: 60 }}
+            />
+            <button
+              className="btn btn-sm"
+              onClick={() => {
+                const entry: ConditionEntry = {
+                  condition: addCond,
+                  duration_rounds: durRounds ? Number(durRounds) : null,
+                  applied_round: null,
+                };
+                doUpdate({ add_condition: entry });
+                setDurRounds('');
+              }}
+              disabled={loading}
+            >+Cond</button>
           </div>
         )}
         {/* Spend action budget */}

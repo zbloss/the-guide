@@ -55,6 +55,7 @@ rand = "0.9"
 base64 = "0.22"
 futures = "0.3"
 async-stream = "0.3"
+reqwest = { version = "0.12", features = ["json"] }
 
 # PDF
 pdfium-render = { version = "0.8", features = ["image"] }

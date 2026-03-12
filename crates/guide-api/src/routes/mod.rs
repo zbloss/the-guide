@@ -10,10 +10,13 @@ pub mod health;
 pub mod homebrew;
 pub mod loot;
 pub mod openapi;
+pub mod plot_hooks;
 pub mod sessions;
+pub mod templates;
+pub mod webhooks;
 
 use axum::Router;
-use tower_http::cors::CorsLayer;
+use tower_http::{cors::CorsLayer, services::ServeDir};
 
 use crate::state::AppState;
 use utoipa_swagger_ui::SwaggerUi;
@@ -33,6 +36,11 @@ pub fn all_routes(state: AppState) -> Router {
         .merge(loot::router())
         .merge(homebrew::router())
         .merge(factions::router())
+        .merge(templates::router())
+        .merge(plot_hooks::router())
+        .merge(webhooks::router())
+        .nest_service("/portraits", ServeDir::new("data/portraits"))
+        .nest_service("/maps", ServeDir::new("data/maps"))
         .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", openapi::ApiDoc::openapi()))
         .layer(CorsLayer::permissive())
         .with_state(state)

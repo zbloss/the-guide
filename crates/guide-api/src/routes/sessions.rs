@@ -1,6 +1,6 @@
 use axum::{
     body::Body,
-    extract::{Path, State},
+    extract::{Multipart, Path, State},
     http::{header, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -17,6 +17,7 @@ use guide_db::sessions::{SessionEventRepository, SessionRepository};
 use serde::Deserialize;
 use uuid::Uuid;
 
+use crate::routes::webhooks::fire_webhooks;
 use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
@@ -60,6 +61,14 @@ pub fn router() -> Router<AppState> {
         .route(
             "/campaigns/{campaign_id}/sessions/{id}/debrief",
             post(generate_debrief),
+        )
+        .route(
+            "/campaigns/{campaign_id}/sessions/prep",
+            post(session_prep),
+        )
+        .route(
+            "/campaigns/{campaign_id}/sessions/{id}/map",
+            post(upload_map),
         )
 }
 
@@ -156,10 +165,23 @@ async fn delete_session(
 )]
 async fn start_session(
     State(state): State<AppState>,
-    Path((_campaign_id, id)): Path<(Uuid, Uuid)>,
+    Path((campaign_id, id)): Path<(Uuid, Uuid)>,
 ) -> Result<impl IntoResponse, crate::error::AppError> {
     let repo = SessionRepository::new(&state.db);
-    Ok(Json(repo.start_session(id).await?))
+    let session = repo.start_session(id).await?;
+    let session_name = session.title.clone().unwrap_or_else(|| format!("Session {}", session.session_number));
+    fire_webhooks(
+        state.db.clone(),
+        campaign_id,
+        "session_start".to_string(),
+        serde_json::json!({
+            "event": "session_start",
+            "campaign_id": campaign_id.to_string(),
+            "session_id": id.to_string(),
+            "session_name": session_name,
+        }),
+    );
+    Ok(Json(session))
 }
 
 #[utoipa::path(
@@ -176,10 +198,23 @@ async fn start_session(
 )]
 async fn end_session(
     State(state): State<AppState>,
-    Path((_campaign_id, id)): Path<(Uuid, Uuid)>,
+    Path((campaign_id, id)): Path<(Uuid, Uuid)>,
 ) -> Result<impl IntoResponse, crate::error::AppError> {
     let repo = SessionRepository::new(&state.db);
-    Ok(Json(repo.end_session(id).await?))
+    let session = repo.end_session(id).await?;
+    let session_name = session.title.clone().unwrap_or_else(|| format!("Session {}", session.session_number));
+    fire_webhooks(
+        state.db.clone(),
+        campaign_id,
+        "session_end".to_string(),
+        serde_json::json!({
+            "event": "session_end",
+            "campaign_id": campaign_id.to_string(),
+            "session_id": id.to_string(),
+            "session_name": session_name,
+        }),
+    );
+    Ok(Json(session))
 }
 
 #[utoipa::path(
@@ -558,4 +593,127 @@ async fn generate_debrief(
     let resp = state.llm.complete(req).await?;
 
     Ok(Json(serde_json::json!({ "debrief": resp.content })))
+}
+
+#[derive(Deserialize)]
+struct SessionPrepRequest {
+    upcoming_notes: Option<String>,
+}
+
+async fn session_prep(
+    State(state): State<AppState>,
+    Path(campaign_id): Path<Uuid>,
+    body: Option<Json<SessionPrepRequest>>,
+) -> Result<impl IntoResponse, crate::error::AppError> {
+    use guide_llm::{CompletionRequest, LlmTask, Message, MessageRole};
+
+    let upcoming_notes = body
+        .as_ref()
+        .and_then(|b| b.upcoming_notes.clone())
+        .unwrap_or_default();
+
+    // Fetch the most recent session's events as context
+    let session_repo = SessionRepository::new(&state.db);
+    let sessions = session_repo.list_by_campaign(campaign_id).await?;
+
+    let context_text = if let Some(last_session) = sessions.last() {
+        let event_repo = SessionEventRepository::new(&state.db);
+        let events = event_repo.list_by_session(last_session.id).await?;
+        if events.is_empty() {
+            format!("Last session: Session {}", last_session.session_number)
+        } else {
+            let events_text = events
+                .iter()
+                .map(|e| format!("[{:?}] {}", e.event_type, e.description))
+                .collect::<Vec<_>>()
+                .join("\n");
+            format!(
+                "Last session (Session {}) events:\n{}",
+                last_session.session_number, events_text
+            )
+        }
+    } else {
+        "No previous sessions recorded yet.".to_string()
+    };
+
+    let system_prompt = concat!(
+        "You are a D&D Dungeon Master assistant. Based on the previous session context, ",
+        "generate a structured session prep document with these sections: ",
+        "**Key NPCs to Feature** (3 NPCs with brief role), ",
+        "**Likely Player Choices** (3 decision points the players may face), ",
+        "**Scene Hooks** (3 scene openings with atmosphere), ",
+        "**Encounter Suggestion** (one tailored combat/social/exploration encounter), ",
+        "**Foreshadowing Moments** (2 hints at future plot). ",
+        "Be specific and actionable."
+    );
+
+    let user_message = if upcoming_notes.is_empty() {
+        context_text
+    } else {
+        format!("{}\n\nUpcoming notes from DM: {}", context_text, upcoming_notes)
+    };
+
+    let req = CompletionRequest {
+        task: LlmTask::General,
+        messages: vec![
+            Message {
+                role: MessageRole::System,
+                content: system_prompt.to_string(),
+            },
+            Message {
+                role: MessageRole::User,
+                content: user_message,
+            },
+        ],
+        model_override: None,
+        temperature: Some(0.8),
+        max_tokens: Some(1500),
+    };
+
+    let resp = state.llm.complete(req).await?;
+
+    Ok(Json(serde_json::json!({ "prep": resp.content })))
+}
+
+async fn upload_map(
+    State(state): State<AppState>,
+    Path((_campaign_id, session_id)): Path<(Uuid, Uuid)>,
+    mut multipart: Multipart,
+) -> Result<impl IntoResponse, crate::error::AppError> {
+    use tokio::io::AsyncWriteExt;
+
+    let maps_dir = std::path::PathBuf::from("data/maps");
+    tokio::fs::create_dir_all(&maps_dir)
+        .await
+        .map_err(|e| GuideError::Internal(format!("Failed to create maps dir: {e}")))?;
+
+    let field = multipart
+        .next_field()
+        .await
+        .map_err(|e| GuideError::InvalidInput(format!("Multipart error: {e}")))?
+        .ok_or_else(|| GuideError::InvalidInput("No file field found in multipart request".into()))?;
+
+    let file_name = field.file_name().unwrap_or("map.png").to_string();
+    let ext = std::path::Path::new(&file_name)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("png");
+    let dest_path = maps_dir.join(format!("{session_id}.{ext}"));
+    let data = field
+        .bytes()
+        .await
+        .map_err(|e| GuideError::InvalidInput(format!("Failed to read field bytes: {e}")))?;
+
+    let mut file = tokio::fs::File::create(&dest_path)
+        .await
+        .map_err(|e| GuideError::Internal(format!("Failed to create file: {e}")))?;
+    file.write_all(&data)
+        .await
+        .map_err(|e| GuideError::Internal(format!("Failed to write file: {e}")))?;
+
+    let url = format!("/maps/{session_id}.{ext}");
+    let repo = SessionRepository::new(&state.db);
+    repo.update_map_url(session_id, &url).await?;
+    let session = repo.get_by_id(session_id).await?;
+    Ok(Json(session))
 }

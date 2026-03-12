@@ -1,6 +1,7 @@
 import { Outlet, useParams } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
 import { Header } from './Header';
+import { RuleReferenceSidebar } from '../common/RuleReferenceSidebar';
 import { useCampaign } from '../../hooks/useCampaign';
 
 function CampaignHeader() {
@@ -19,6 +20,7 @@ export function Layout() {
           <Outlet />
         </main>
       </div>
+      <RuleReferenceSidebar />
     </div>
   );
 }

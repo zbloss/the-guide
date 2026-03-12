@@ -4,7 +4,7 @@ pub use initiative::{roll_initiative, sort_initiative, InitiativeEntry};
 
 use chrono::Utc;
 use guide_core::{
-    models::{ActionBudget, CombatParticipant, Condition, Encounter, EncounterStatus},
+    models::{ActionBudget, CombatParticipant, Condition, ConditionEntry, Encounter, EncounterStatus},
     GuideError, Result,
 };
 use rand::Rng;
@@ -76,9 +76,17 @@ impl CombatEngine {
 
         if next_idx == 0 {
             self.encounter.round += 1;
+            let current_round = self.encounter.round;
             for p in &mut self.encounter.participants {
                 p.has_taken_turn = false;
                 p.action_budget.reset(30);
+                // Auto-expire timed conditions: remove when applied_round + duration_rounds <= current_round
+                p.conditions.retain(|e| {
+                    match (e.applied_round, e.duration_rounds) {
+                        (Some(applied), Some(dur)) => applied + dur > current_round,
+                        _ => true, // permanent (no duration) or missing data — keep
+                    }
+                });
             }
         }
 
@@ -98,8 +106,12 @@ impl CombatEngine {
 
         if participant.current_hp == 0 {
             participant.is_defeated = true;
-            if !participant.conditions.contains(&Condition::Unconscious) {
-                participant.conditions.push(Condition::Unconscious);
+            if !participant.conditions.iter().any(|e| e.condition == Condition::Unconscious) {
+                participant.conditions.push(ConditionEntry {
+                    condition: Condition::Unconscious,
+                    duration_rounds: None,
+                    applied_round: Some(self.encounter.round),
+                });
             }
         }
 
@@ -119,7 +131,10 @@ impl CombatEngine {
         self.apply_hp_change(participant_id, hp - current)
     }
 
-    pub fn add_condition(&mut self, participant_id: Uuid, condition: Condition) -> Result<()> {
+    pub fn add_condition(&mut self, participant_id: Uuid, mut entry: ConditionEntry) -> Result<()> {
+        // Set applied_round from current encounter round
+        entry.applied_round = Some(self.encounter.round);
+
         let participant = self
             .encounter
             .participants
@@ -127,8 +142,8 @@ impl CombatEngine {
             .find(|p| p.id == participant_id)
             .ok_or_else(|| GuideError::NotFound(format!("Participant {participant_id}")))?;
 
-        if !participant.conditions.contains(&condition) {
-            participant.conditions.push(condition);
+        if !participant.conditions.iter().any(|e| e.condition == entry.condition) {
+            participant.conditions.push(entry);
         }
         self.encounter.updated_at = Utc::now();
         Ok(())
@@ -142,7 +157,7 @@ impl CombatEngine {
             .find(|p| p.id == participant_id)
             .ok_or_else(|| GuideError::NotFound(format!("Participant {participant_id}")))?;
 
-        participant.conditions.retain(|c| c != condition);
+        participant.conditions.retain(|e| &e.condition != condition);
         self.encounter.updated_at = Utc::now();
         Ok(())
     }

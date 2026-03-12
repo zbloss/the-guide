@@ -1,11 +1,13 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useApi } from '../hooks/useApi';
 import { getSession, startSession, endSession, listEvents, createEvent, getSessionSummary, deleteEvent, generateDebrief } from '../api/sessions';
+import { uploadSessionMap } from '../api/sessions';
 import { listCharacters } from '../api/characters';
 import { SessionEventList } from '../components/sessions/SessionEventList';
 import { SessionEventForm } from '../components/sessions/SessionEventForm';
 import { SummaryView } from '../components/sessions/SummaryView';
+import { LootLog } from '../components/sessions/LootLog';
 import { PerspectiveSelector } from '../components/chat/PerspectiveSelector';
 import { Modal } from '../components/common/Modal';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
@@ -28,7 +30,7 @@ export function SessionDetailPage() {
     [campaignId],
   );
 
-  const [tab, setTab] = useState<'events' | 'summary' | 'debrief'>('events');
+  const [tab, setTab] = useState<'events' | 'summary' | 'debrief' | 'loot' | 'map'>('events');
   const [showAddEvent, setShowAddEvent] = useState(false);
   const [perspective, setPerspective] = useState<Perspective>('dm');
   const [summary, setSummary] = useState<SessionSummary | null>(null);
@@ -36,6 +38,11 @@ export function SessionDetailPage() {
   const [summaryError, setSummaryError] = useState('');
   const [actionError, setActionError] = useState('');
   const [eventError, setEventError] = useState('');
+
+  // Map upload state
+  const mapFileInputRef = useRef<HTMLInputElement>(null);
+  const [mapUploading, setMapUploading] = useState(false);
+  const [mapError, setMapError] = useState('');
 
   // Debrief state
   const [debriefText, setDebriefText] = useState<string | null>(null);
@@ -115,6 +122,19 @@ export function SessionDetailPage() {
     }
   };
 
+  const handleMapUpload = async (file: File) => {
+    setMapUploading(true);
+    setMapError('');
+    try {
+      await uploadSessionMap(campaignId!, sessionId!, file);
+      refetchSession();
+    } catch (e: unknown) {
+      setMapError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setMapUploading(false);
+    }
+  };
+
   if (loading) return <div className="page"><LoadingSpinner /></div>;
   if (error) return <div className="page"><ErrorBanner message={error} /></div>;
   if (!session) return null;
@@ -143,6 +163,8 @@ export function SessionDetailPage() {
         <button className={`tab-link ${tab === 'events' ? 'active' : ''}`} onClick={() => setTab('events')}>Events</button>
         <button className={`tab-link ${tab === 'summary' ? 'active' : ''}`} onClick={() => setTab('summary')}>Summary</button>
         <button className={`tab-link ${tab === 'debrief' ? 'active' : ''}`} onClick={() => setTab('debrief')}>Debrief</button>
+        <button className={`tab-link ${tab === 'loot' ? 'active' : ''}`} onClick={() => setTab('loot')}>Loot</button>
+        <button className={`tab-link ${tab === 'map' ? 'active' : ''}`} onClick={() => setTab('map')}>Map</button>
       </div>
 
       {tab === 'events' && (
@@ -218,6 +240,49 @@ export function SessionDetailPage() {
 
           {!showDebriefPanel && !debriefLoading && (
             <p className="empty-state">Click "Generate Debrief" to receive an AI-powered post-session coaching report.</p>
+          )}
+        </div>
+      )}
+
+      {tab === 'loot' && (
+        <LootLog campaignId={campaignId!} sessionId={sessionId!} />
+      )}
+
+      {tab === 'map' && (
+        <div className="map-tab">
+          <div className="section-header">
+            <h3>Session Map</h3>
+            <div>
+              <input
+                ref={mapFileInputRef}
+                type="file"
+                accept="image/*"
+                style={{ display: 'none' }}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) handleMapUpload(file);
+                }}
+              />
+              <button
+                className="btn btn-primary"
+                onClick={() => mapFileInputRef.current?.click()}
+                disabled={mapUploading}
+              >
+                {mapUploading ? <><LoadingSpinner size={14} /> Uploading...</> : 'Upload Map'}
+              </button>
+            </div>
+          </div>
+          {mapError && <ErrorBanner message={mapError} />}
+          {session.map_url ? (
+            <div className="map-container" style={{ marginTop: '1rem' }}>
+              <img
+                src={`http://localhost:8000${session.map_url}`}
+                alt="Session map"
+                style={{ maxWidth: '100%', borderRadius: '0.5rem', border: '1px solid var(--color-border, #333)' }}
+              />
+            </div>
+          ) : (
+            <p className="empty-state">No map uploaded for this session yet.</p>
           )}
         </div>
       )}

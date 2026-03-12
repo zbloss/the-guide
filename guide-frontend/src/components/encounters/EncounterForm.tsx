@@ -7,13 +7,14 @@ interface EncounterFormProps {
   characters: Character[];
   onSubmit: (data: CreateEncounterRequest) => Promise<void>;
   onCancel: () => void;
+  initialValues?: Partial<CreateEncounterRequest>;
 }
 
-export function EncounterForm({ sessions, characters, onSubmit, onCancel }: EncounterFormProps) {
-  const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
-  const [sessionId, setSessionId] = useState('');
-  const [selectedChars, setSelectedChars] = useState<string[]>([]);
+export function EncounterForm({ sessions, characters, onSubmit, onCancel, initialValues }: EncounterFormProps) {
+  const [name, setName] = useState(initialValues?.name ?? '');
+  const [description, setDescription] = useState(initialValues?.description ?? '');
+  const [sessionId, setSessionId] = useState(initialValues?.session_id ?? '');
+  const [selectedChars, setSelectedChars] = useState<string[]>(initialValues?.participant_character_ids ?? []);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
