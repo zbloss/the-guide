@@ -559,7 +559,7 @@ async fn test_start_encounter() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let body = json_body(resp).await;
-    assert!(body.get("encounter").is_some());
+    assert!(body.get("id").is_some());
     assert_eq!(body["round"], 1);
 }
 

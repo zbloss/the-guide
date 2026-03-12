@@ -6,6 +6,7 @@ import { CombatTracker } from '../components/encounters/CombatTracker';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { ErrorBanner } from '../components/common/ErrorBanner';
 import type { EncounterSummary } from '../api/types';
+import { BASE_URL } from '../api/client';
 
 export function EncounterDetailPage() {
   const { campaignId, encId } = useParams<{ campaignId: string; encId: string }>();
@@ -49,6 +50,18 @@ export function EncounterDetailPage() {
     return () => window.removeEventListener('keydown', handleKey);
   }, [displayed?.status, actionLoading, campaignId, encId, doAction]);
 
+  const handleDownloadLog = async () => {
+    const res = await fetch(`${BASE_URL}/campaigns/${campaignId}/encounters/${encId}/log`);
+    const text = await res.text();
+    const blob = new Blob([text], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `combat-log.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   if (loading) return <div className="page"><LoadingSpinner /></div>;
   if (error) return <div className="page"><ErrorBanner message={error} /></div>;
   if (!displayed) return null;
@@ -79,6 +92,9 @@ export function EncounterDetailPage() {
           {displayed.status === 'completed' && (
             <span className="badge badge-success">Encounter Completed</span>
           )}
+          <button className="btn btn-secondary" onClick={handleDownloadLog}>
+            Download Log
+          </button>
         </div>
       </div>
 
@@ -91,10 +107,10 @@ export function EncounterDetailPage() {
           <h3>Participants ({displayed.participants.length})</h3>
           <ul className="participant-preview">
             {displayed.participants.map((p) => (
-              <li key={p.id}>{p.name} (AC {p.armor_class}, {p.max_hp} HP)</li>
+              <li key={p.id}>{p.name} (AC {p.armor_class}, {p.max_hp} HP{p.initiative_total !== 0 ? `, Init ${p.initiative_total}` : ''})</li>
             ))}
           </ul>
-          <p className="help-text">Start combat to begin initiative order.</p>
+          <p className="help-text">Start combat to auto-roll initiative and begin turn order.</p>
         </div>
       )}
 

@@ -52,3 +52,8 @@ pub struct CreateSessionEventRequest {
     pub is_player_visible: Option<bool>,
     pub involved_character_ids: Option<Vec<Uuid>>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct ImprovPromptResponse {
+    pub options: Vec<String>,
+}

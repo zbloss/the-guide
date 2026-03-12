@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useApi } from '../hooks/useApi';
-import { getSession, startSession, endSession, listEvents, createEvent, getSessionSummary, deleteEvent } from '../api/sessions';
+import { getSession, startSession, endSession, listEvents, createEvent, getSessionSummary, deleteEvent, generateDebrief } from '../api/sessions';
 import { listCharacters } from '../api/characters';
 import { SessionEventList } from '../components/sessions/SessionEventList';
 import { SessionEventForm } from '../components/sessions/SessionEventForm';
@@ -28,7 +28,7 @@ export function SessionDetailPage() {
     [campaignId],
   );
 
-  const [tab, setTab] = useState<'events' | 'summary'>('events');
+  const [tab, setTab] = useState<'events' | 'summary' | 'debrief'>('events');
   const [showAddEvent, setShowAddEvent] = useState(false);
   const [perspective, setPerspective] = useState<Perspective>('dm');
   const [summary, setSummary] = useState<SessionSummary | null>(null);
@@ -36,6 +36,12 @@ export function SessionDetailPage() {
   const [summaryError, setSummaryError] = useState('');
   const [actionError, setActionError] = useState('');
   const [eventError, setEventError] = useState('');
+
+  // Debrief state
+  const [debriefText, setDebriefText] = useState<string | null>(null);
+  const [debriefLoading, setDebriefLoading] = useState(false);
+  const [debriefError, setDebriefError] = useState('');
+  const [showDebriefPanel, setShowDebriefPanel] = useState(false);
 
   useEffect(() => { setSummary(null); }, [perspective]);
 
@@ -93,6 +99,22 @@ export function SessionDetailPage() {
     }
   };
 
+  const handleGenerateDebrief = async () => {
+    setDebriefLoading(true);
+    setDebriefError('');
+    setDebriefText(null);
+    try {
+      const result = await generateDebrief(campaignId!, sessionId!);
+      setDebriefText(result.debrief);
+      setShowDebriefPanel(true);
+    } catch (e: unknown) {
+      setDebriefError(e instanceof Error ? e.message : String(e));
+      setShowDebriefPanel(true);
+    } finally {
+      setDebriefLoading(false);
+    }
+  };
+
   if (loading) return <div className="page"><LoadingSpinner /></div>;
   if (error) return <div className="page"><ErrorBanner message={error} /></div>;
   if (!session) return null;
@@ -120,6 +142,7 @@ export function SessionDetailPage() {
       <div className="tab-nav">
         <button className={`tab-link ${tab === 'events' ? 'active' : ''}`} onClick={() => setTab('events')}>Events</button>
         <button className={`tab-link ${tab === 'summary' ? 'active' : ''}`} onClick={() => setTab('summary')}>Summary</button>
+        <button className={`tab-link ${tab === 'debrief' ? 'active' : ''}`} onClick={() => setTab('debrief')}>Debrief</button>
       </div>
 
       {tab === 'events' && (
@@ -153,13 +176,48 @@ export function SessionDetailPage() {
               disabled={summaryLoading || !events || events.length === 0}
               title={(!events || events.length === 0) ? 'Add events before generating a summary' : undefined}
             >
-              {summaryLoading ? <><LoadingSpinner size={14} /> Generating…</> : 'Generate Summary'}
+              {summaryLoading ? <><LoadingSpinner size={14} /> Generating...</> : 'Generate Summary'}
             </button>
           </div>
           {summaryError && <ErrorBanner message={summaryError} />}
           {summary && <SummaryView summary={summary} />}
           {!summary && !summaryLoading && !summaryError && (
             <p className="empty-state">Click "Generate Summary" to create an AI-powered session recap.</p>
+          )}
+        </div>
+      )}
+
+      {tab === 'debrief' && (
+        <div className="debrief-tab">
+          <div className="section-header">
+            <div>
+              <h3>AI Session Debrief</h3>
+              <p className="section-description" style={{ margin: '0.25rem 0 0', color: 'var(--color-text-muted, #666)', fontSize: '0.875rem' }}>
+                Get a structured post-session analysis covering what went well, what was confusing, open plot threads, and next session suggestions.
+              </p>
+            </div>
+            <button
+              className="btn btn-primary"
+              onClick={handleGenerateDebrief}
+              disabled={debriefLoading}
+            >
+              {debriefLoading ? <><LoadingSpinner size={14} /> Generating...</> : 'Generate Debrief'}
+            </button>
+          </div>
+
+          {showDebriefPanel && (
+            <div className="debrief-panel" style={{ marginTop: '1rem' }}>
+              {debriefError && <ErrorBanner message={debriefError} />}
+              {debriefText && (
+                <div className="debrief-content card" style={{ padding: '1.5rem', background: 'var(--color-surface, #1e1e2e)', borderRadius: '0.5rem', whiteSpace: 'pre-wrap', lineHeight: '1.6' }}>
+                  {debriefText}
+                </div>
+              )}
+            </div>
+          )}
+
+          {!showDebriefPanel && !debriefLoading && (
+            <p className="empty-state">Click "Generate Debrief" to receive an AI-powered post-session coaching report.</p>
           )}
         </div>
       )}

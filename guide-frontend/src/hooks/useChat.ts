@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { startChatStream } from '../api/chat';
+import { getChatHistory } from '../api/campaigns';
 import type { Perspective } from '../api/types';
 
 export interface ChatMessage {
@@ -32,6 +33,28 @@ export function useChat(campaignId: string) {
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+
+  // On mount, fetch persistent history from the backend and replace local cache
+  useEffect(() => {
+    let cancelled = false;
+    getChatHistory(campaignId)
+      .then((history) => {
+        if (cancelled) return;
+        if (history.length > 0) {
+          const mapped: ChatMessage[] = history.map((m) => ({
+            role: m.role,
+            content: m.content,
+          }));
+          setMessages(mapped);
+          saveHistory(campaignId, mapped);
+        }
+      })
+      .catch(() => {
+        // Backend history fetch failed — keep localStorage fallback already in state
+      });
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [campaignId]);
 
   // Persist to localStorage whenever messages change (non-streaming)
   useEffect(() => {

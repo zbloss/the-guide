@@ -7,6 +7,7 @@ use guide_core::{
     models::{ActionBudget, CombatParticipant, Condition, Encounter, EncounterStatus},
     GuideError, Result,
 };
+use rand::Rng;
 use uuid::Uuid;
 
 pub struct CombatEngine {
@@ -25,6 +26,16 @@ impl CombatEngine {
             return Err(GuideError::InvalidInput(
                 "Encounter has already started".into(),
             ));
+        }
+
+        // Auto-roll initiative for any participant who has not had a roll set (roll == 0)
+        let mut rng = rand::rng();
+        for participant in &mut self.encounter.participants {
+            if participant.initiative_roll == 0 {
+                let roll: i32 = rng.random_range(1..=20);
+                participant.initiative_roll = roll;
+                participant.initiative_total = roll + participant.initiative_modifier;
+            }
         }
 
         // Sort participants by initiative_total DESC, modifier DESC, then id ASC for tiebreak

@@ -1,14 +1,15 @@
 use axum::{
+    body::Body,
     extract::{Path, State},
-    http::StatusCode,
-    response::IntoResponse,
+    http::{header, StatusCode},
+    response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
 use guide_core::{
     models::{
-        CreateSessionEventRequest, CreateSessionRequest, Perspective, Session, SessionEvent,
-        SessionSummary,
+        CreateSessionEventRequest, CreateSessionRequest, ImprovPromptResponse, Perspective,
+        Session, SessionEvent, SessionSummary,
     },
     GuideError,
 };
@@ -47,6 +48,18 @@ pub fn router() -> Router<AppState> {
         .route(
             "/campaigns/{campaign_id}/sessions/{id}/summary",
             get(get_summary),
+        )
+        .route(
+            "/campaigns/{campaign_id}/sessions/{id}/summary/export",
+            get(export_summary),
+        )
+        .route(
+            "/campaigns/{campaign_id}/sessions/{id}/improv-prompt",
+            post(get_improv_prompt),
+        )
+        .route(
+            "/campaigns/{campaign_id}/sessions/{id}/debrief",
+            post(generate_debrief),
         )
 }
 
@@ -296,4 +309,253 @@ async fn get_summary(
         "content": resp.content,
         "generated_at": chrono::Utc::now().to_rfc3339(),
     })))
+}
+
+#[derive(Deserialize, utoipa::ToSchema, utoipa::IntoParams)]
+pub struct ExportQuery {
+    pub perspective: Option<String>,
+    pub format: Option<String>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/campaigns/{campaign_id}/sessions/{id}/summary/export",
+    params(
+        ("campaign_id" = Uuid, Path, description = "Campaign ID"),
+        ("id" = Uuid, Path, description = "Session ID"),
+        ExportQuery
+    ),
+    responses(
+        (status = 200, description = "Session summary exported as markdown file"),
+        (status = 404, description = "Session not found")
+    )
+)]
+async fn export_summary(
+    State(state): State<AppState>,
+    Path((_campaign_id, session_id)): Path<(Uuid, Uuid)>,
+    axum::extract::Query(q): axum::extract::Query<ExportQuery>,
+) -> Result<Response, crate::error::AppError> {
+    use guide_llm::{prompts, CompletionRequest, LlmTask, Message, MessageRole};
+
+    let perspective = match q.perspective.as_deref().map(str::to_lowercase).as_deref() {
+        Some("player") => Perspective::Player,
+        _ => Perspective::Dm,
+    };
+
+    let session_repo = SessionRepository::new(&state.db);
+    let session = session_repo.get_by_id(session_id).await?;
+
+    let event_repo = SessionEventRepository::new(&state.db);
+    let events = event_repo.list_by_session(session_id).await?;
+
+    if events.is_empty() {
+        return Err(GuideError::InvalidInput("Session has no events to summarize".into()).into());
+    }
+
+    let events_text = events
+        .iter()
+        .map(|e| format!("[{:?}] {}", e.event_type, e.description))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let system_prompt = match perspective {
+        Perspective::Dm => prompts::session_summary_dm_system().to_string(),
+        Perspective::Player => prompts::session_summary_player_system().to_string(),
+    };
+
+    let req = CompletionRequest {
+        task: LlmTask::SessionSummary,
+        messages: vec![
+            Message {
+                role: MessageRole::System,
+                content: system_prompt,
+            },
+            Message {
+                role: MessageRole::User,
+                content: events_text,
+            },
+        ],
+        model_override: None,
+        temperature: Some(0.7),
+        max_tokens: Some(2048),
+    };
+
+    let resp = state.llm.complete(req).await?;
+
+    let perspective_label = match perspective {
+        Perspective::Dm => "DM",
+        Perspective::Player => "Player",
+    };
+    let header_text = format!(
+        "# Session {} Summary — {} Perspective\n_Generated: {}_\n\n",
+        session.session_number,
+        perspective_label,
+        chrono::Utc::now().to_rfc3339(),
+    );
+    let content = format!("{}{}", header_text, resp.content);
+    let filename = format!("session-{}-summary.md", session.session_number);
+
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/markdown; charset=utf-8")
+        .header(
+            header::CONTENT_DISPOSITION,
+            format!("attachment; filename=\"{}\"", filename),
+        )
+        .body(Body::from(content))
+        .unwrap())
+}
+
+#[utoipa::path(
+    post,
+    path = "/campaigns/{campaign_id}/sessions/{id}/improv-prompt",
+    params(
+        ("campaign_id" = Uuid, Path, description = "Campaign ID"),
+        ("id" = Uuid, Path, description = "Session ID")
+    ),
+    responses(
+        (status = 200, description = "Three improv narrative options generated", body = ImprovPromptResponse),
+        (status = 404, description = "Session not found")
+    )
+)]
+async fn get_improv_prompt(
+    State(state): State<AppState>,
+    Path((_campaign_id, session_id)): Path<(Uuid, Uuid)>,
+) -> Result<impl IntoResponse, crate::error::AppError> {
+    use guide_llm::{CompletionRequest, LlmTask, Message, MessageRole};
+
+    let event_repo = SessionEventRepository::new(&state.db);
+    let events = event_repo.list_by_session(session_id).await?;
+
+    let events_text = if events.is_empty() {
+        "No events recorded yet for this session.".to_string()
+    } else {
+        events
+            .iter()
+            .map(|e| format!("[{:?}] {}", e.event_type, e.description))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    let improv_system = concat!(
+        "You are an expert improv storytelling coach for tabletop RPGs. ",
+        "Given the session events so far, generate exactly 3 narrative options the DM could use right now. ",
+        "Return a JSON object with a single key \"options\" containing an array of 3 strings. ",
+        "Each option should be a single sentence, vivid and immediately actionable."
+    );
+
+    let req = CompletionRequest {
+        task: LlmTask::General,
+        messages: vec![
+            Message {
+                role: MessageRole::System,
+                content: improv_system.to_string(),
+            },
+            Message {
+                role: MessageRole::User,
+                content: events_text,
+            },
+        ],
+        model_override: None,
+        temperature: Some(0.9),
+        max_tokens: Some(512),
+    };
+
+    let resp = state.llm.complete(req).await?;
+    let raw = resp.content.trim();
+    if raw.is_empty() {
+        return Err(GuideError::Llm(
+            "LLM returned an empty response for improv prompt.".into(),
+        )
+        .into());
+    }
+
+    let json_str = raw
+        .trim_start_matches("```json")
+        .trim_start_matches("```")
+        .trim_end_matches("```")
+        .trim();
+
+    #[derive(serde::Deserialize)]
+    struct ImprovRaw {
+        options: Vec<String>,
+    }
+
+    let parsed: ImprovRaw = serde_json::from_str(json_str)
+        .map_err(|e| GuideError::Llm(format!("Failed to parse improv JSON: {e}")))?;
+
+    Ok(Json(ImprovPromptResponse {
+        options: parsed.options,
+    }))
+}
+
+#[utoipa::path(
+    post,
+    path = "/campaigns/{campaign_id}/sessions/{id}/debrief",
+    params(
+        ("campaign_id" = Uuid, Path, description = "Campaign ID"),
+        ("id" = Uuid, Path, description = "Session ID")
+    ),
+    responses(
+        (status = 200, description = "AI post-session debrief generated"),
+        (status = 404, description = "Session not found")
+    )
+)]
+async fn generate_debrief(
+    State(state): State<AppState>,
+    Path((_campaign_id, session_id)): Path<(Uuid, Uuid)>,
+) -> Result<impl IntoResponse, crate::error::AppError> {
+    use guide_llm::{CompletionRequest, LlmTask, Message, MessageRole};
+
+    let session_repo = SessionRepository::new(&state.db);
+    let _session = session_repo.get_by_id(session_id).await?;
+
+    let event_repo = SessionEventRepository::new(&state.db);
+    let events = event_repo.list_by_session(session_id).await?;
+
+    let events_text = if events.is_empty() {
+        "No events recorded yet for this session.".to_string()
+    } else {
+        events
+            .iter()
+            .map(|e| {
+                format!(
+                    "[{:?}] ({:?}): {}",
+                    e.event_type, e.significance, e.description
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    let system_prompt = concat!(
+        "You are an expert D&D Dungeon Master coach. Given session events, ",
+        "generate a structured post-session debrief with these sections:\n",
+        "- **What Went Well**: Highlight memorable moments and player engagement\n",
+        "- **What Was Confusing**: Identify unclear moments or pacing issues\n",
+        "- **Open Plot Threads**: List unresolved hooks and dangling story elements\n",
+        "- **Suggested Follow-Up**: Concrete suggestions for the next session\n",
+        "Keep it concise and actionable. Output plain text with markdown headers."
+    );
+
+    let req = CompletionRequest {
+        task: LlmTask::General,
+        messages: vec![
+            Message {
+                role: MessageRole::System,
+                content: system_prompt.to_string(),
+            },
+            Message {
+                role: MessageRole::User,
+                content: events_text,
+            },
+        ],
+        model_override: None,
+        temperature: Some(0.7),
+        max_tokens: Some(1024),
+    };
+
+    let resp = state.llm.complete(req).await?;
+
+    Ok(Json(serde_json::json!({ "debrief": resp.content })))
 }

@@ -4,6 +4,28 @@ use uuid::Uuid;
 
 use super::shared::{CharacterType, Condition};
 
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema, Default)]
+pub struct SpellSlot {
+    pub level: i32,
+    pub total: i32,
+    pub remaining: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct SpendSlotRequest {
+    pub level: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct RestoreSlotRequest {
+    pub level: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct GenerateNpcRequest {
+    pub prompt: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct Character {
     pub id: Uuid,
@@ -21,6 +43,8 @@ pub struct Character {
     pub conditions: Vec<Condition>,
     pub backstory: Option<Backstory>,
     pub is_alive: bool,
+    pub portrait_url: Option<String>,
+    pub spell_slots: Vec<SpellSlot>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -86,6 +110,7 @@ pub struct CreateCharacterRequest {
     pub speed: Option<i32>,
     pub ability_scores: Option<AbilityScores>,
     pub backstory_text: Option<String>,
+    pub spell_slots: Option<Vec<SpellSlot>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
@@ -102,4 +127,5 @@ pub struct UpdateCharacterRequest {
     pub conditions: Option<Vec<Condition>>,
     pub is_alive: Option<bool>,
     pub backstory_text: Option<String>,
+    pub spell_slots: Option<Vec<SpellSlot>>,
 }

@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useApi } from '../hooks/useApi';
-import { getCharacter, updateCharacter, deleteCharacter } from '../api/characters';
+import { getCharacter, updateCharacter, deleteCharacter, generateVillainProfile, uploadPortrait } from '../api/characters';
 import { ConditionBadge } from '../components/characters/ConditionBadge';
 import { BackstoryPanel } from '../components/characters/BackstoryPanel';
+import { SpellSlotPanel } from '../components/characters/SpellSlotPanel';
 import { ConfirmButton } from '../components/common/ConfirmButton';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { ErrorBanner } from '../components/common/ErrorBanner';
@@ -131,6 +132,12 @@ export function CharacterDetailPage() {
   const [updating, setUpdating] = useState(false);
   const [editingStats, setEditingStats] = useState(false);
   const [updateError, setUpdateError] = useState('');
+  const [portraitUploading, setPortraitUploading] = useState(false);
+  const portraitInputRef = useRef<HTMLInputElement>(null);
+  const [villainLoading, setVillainLoading] = useState(false);
+  const [villainProfile, setVillainProfile] = useState<string | null>(null);
+  const [villainError, setVillainError] = useState('');
+  const [villainOpen, setVillainOpen] = useState(false);
 
   const doUpdate = async (changes: Parameters<typeof updateCharacter>[2]) => {
     setUpdateError('');
@@ -166,6 +173,21 @@ export function CharacterDetailPage() {
     refetch();
   };
 
+  const handlePortraitUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setPortraitUploading(true);
+    try {
+      await uploadPortrait(campaignId!, charId!, file);
+      refetch();
+    } catch (err: unknown) {
+      setUpdateError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPortraitUploading(false);
+      if (portraitInputRef.current) portraitInputRef.current.value = '';
+    }
+  };
+
   const handleDelete = async () => {
     try {
       await deleteCharacter(campaignId!, charId!);
@@ -175,11 +197,26 @@ export function CharacterDetailPage() {
     }
   };
 
+  const handleGenerateVillainProfile = async () => {
+    setVillainLoading(true);
+    setVillainError('');
+    try {
+      const result = await generateVillainProfile(campaignId!, charId!);
+      setVillainProfile(result.villain_profile);
+      setVillainOpen(true);
+    } catch (err: unknown) {
+      setVillainError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setVillainLoading(false);
+    }
+  };
+
   if (loading) return <div className="page"><LoadingSpinner /></div>;
   if (error) return <div className="page"><ErrorBanner message={error} /></div>;
   if (!character) return null;
 
   const availableConditions = ALL_CONDITIONS.filter((c) => !character.conditions.includes(c));
+  const isNpcOrMonster = character.character_type !== 'pc';
 
   return (
     <div className="page">
@@ -196,11 +233,38 @@ export function CharacterDetailPage() {
           <button className="btn btn-sm" onClick={() => setEditingStats(!editingStats)}>
             {editingStats ? 'Cancel Edit' : '✏️ Edit Stats'}
           </button>
+          {isNpcOrMonster && (
+            <button
+              className="btn btn-sm"
+              onClick={handleGenerateVillainProfile}
+              disabled={villainLoading}
+              style={{ borderColor: 'rgba(248,113,113,0.4)', color: 'var(--color-danger)' }}
+            >
+              {villainLoading ? 'Generating…' : 'Generate Villain Profile'}
+            </button>
+          )}
           <ConfirmButton label="Delete Character" variant="danger" onConfirm={handleDelete} />
         </div>
       </div>
 
       {updateError && <ErrorBanner message={updateError} />}
+      {villainError && <ErrorBanner message={villainError} />}
+
+      {isNpcOrMonster && villainProfile && (
+        <div className="backstory-panel" style={{ marginBottom: 20 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-heading)' }}>Villain Profile</span>
+            <button className="btn btn-sm" onClick={() => setVillainOpen((o) => !o)}>
+              {villainOpen ? 'Collapse' : 'Expand'}
+            </button>
+          </div>
+          {villainOpen && (
+            <div className="backstory-text" style={{ whiteSpace: 'pre-wrap' }}>
+              {villainProfile}
+            </div>
+          )}
+        </div>
+      )}
 
       {editingStats ? (
         <EditStatsForm
@@ -267,6 +331,12 @@ export function CharacterDetailPage() {
               )}
             </div>
 
+            <SpellSlotPanel
+              campaignId={campaignId!}
+              character={character}
+              onUpdate={() => refetch()}
+            />
+
             <div className="alive-toggle">
               <label className="checkbox-label">
                 <input
@@ -281,6 +351,31 @@ export function CharacterDetailPage() {
           </div>
 
           <div className="detail-side">
+            <div className="portrait-section">
+              {character.portrait_url ? (
+                <img
+                  src={`http://localhost:8000${character.portrait_url}`}
+                  alt={`${character.name} portrait`}
+                  className="character-portrait"
+                />
+              ) : (
+                <div className="portrait-placeholder">No portrait</div>
+              )}
+              <input
+                ref={portraitInputRef}
+                type="file"
+                accept="image/*"
+                style={{ display: 'none' }}
+                onChange={handlePortraitUpload}
+              />
+              <button
+                className="btn btn-sm"
+                onClick={() => portraitInputRef.current?.click()}
+                disabled={portraitUploading}
+              >
+                {portraitUploading ? 'Uploading…' : character.portrait_url ? 'Change Portrait' : 'Upload Portrait'}
+              </button>
+            </div>
             <BackstoryPanel
               campaignId={campaignId!}
               characterId={charId!}

@@ -87,6 +87,20 @@ export interface AbilityScores {
   charisma: number;
 }
 
+export interface SpellSlot {
+  level: number;
+  total: number;
+  remaining: number;
+}
+
+export interface SpendSlotRequest {
+  level: number;
+}
+
+export interface RestoreSlotRequest {
+  level?: number;
+}
+
 export interface PlotHook {
   id: string;
   character_id: string;
@@ -118,7 +132,9 @@ export interface Character {
   speed: number;
   ability_scores: AbilityScores;
   conditions: Condition[];
+  spell_slots: SpellSlot[];
   backstory: Backstory | null;
+  portrait_url: string | null;
   is_alive: boolean;
   created_at: string;
   updated_at: string;
@@ -145,6 +161,8 @@ export interface CombatParticipant {
   conditions: Condition[];
   action_budget: ActionBudget;
   is_defeated: boolean;
+  death_saves_success: number;
+  death_saves_failure: number;
 }
 
 export interface EncounterSummary {
@@ -257,6 +275,7 @@ export interface CreateCharacterRequest {
   speed?: number;
   ability_scores?: Partial<AbilityScores>;
   backstory_text?: string;
+  spell_slots?: SpellSlot[];
 }
 
 export interface UpdateCharacterRequest {
@@ -272,6 +291,154 @@ export interface UpdateCharacterRequest {
   conditions?: Condition[];
   is_alive?: boolean;
   backstory_text?: string;
+  spell_slots?: SpellSlot[];
+}
+
+export interface GenerateNpcRequest {
+  prompt: string;
+}
+
+export interface EncounterDifficulty {
+  easy_threshold: number;
+  medium_threshold: number;
+  hard_threshold: number;
+  deadly_threshold: number;
+  party_size: number;
+  average_level: number;
+  rating: string;
+}
+
+export interface ConsistencyIssue {
+  category: string;
+  description: string;
+  severity: 'minor' | 'major';
+}
+
+export interface ConsistencyReport {
+  campaign_id: string;
+  issues: ConsistencyIssue[];
+  summary: string;
+  generated_at: string;
+}
+
+export interface SearchResultItem {
+  id: string;
+  type: 'character' | 'session' | 'event';
+  label: string;
+  session_id?: string;
+}
+
+export interface SearchResults {
+  query: string;
+  characters: SearchResultItem[];
+  sessions: SearchResultItem[];
+  events: SearchResultItem[];
+}
+
+export interface AtmosphereResponse {
+  weather: string;
+  ambient_sounds: string;
+  sensory_details: string;
+  full_description: string;
+}
+
+// ==================== Calendar ====================
+
+export interface CalendarEntry {
+  id: string;
+  campaign_id: string;
+  session_id: string | null;
+  in_game_date: string;
+  real_date: string;
+  notes: string | null;
+  created_at: string;
+}
+
+export interface CreateCalendarEntryRequest {
+  session_id?: string;
+  in_game_date: string;
+  real_date: string;
+  notes?: string;
+}
+
+// ==================== Loot ====================
+
+export type LootItemType = 'weapon' | 'armor' | 'magic' | 'currency' | 'misc';
+
+export interface LootItem {
+  id: string;
+  session_id: string;
+  campaign_id: string;
+  name: string;
+  item_type: string;
+  quantity: number;
+  value_gp: number;
+  assigned_to_char_id: string | null;
+  notes: string | null;
+  created_at: string;
+}
+
+export interface CreateLootItemRequest {
+  name: string;
+  item_type?: LootItemType;
+  quantity?: number;
+  value_gp?: number;
+  assigned_to_char_id?: string;
+  notes?: string;
+}
+
+// ==================== Homebrew ====================
+
+export interface HomebrewRule {
+  id: string;
+  campaign_id: string;
+  title: string;
+  description: string;
+  category: string;
+  created_at: string;
+}
+
+export interface CreateHomebrewRuleRequest {
+  title: string;
+  description: string;
+  category?: string;
+}
+
+// ==================== Factions ====================
+
+export interface Faction {
+  id: string;
+  campaign_id: string;
+  name: string;
+  description: string | null;
+  standing: string;
+  notes: string | null;
+  created_at: string;
+}
+
+export interface CreateFactionRequest {
+  name: string;
+  description?: string;
+}
+
+export interface UpdateFactionReputationRequest {
+  standing: string;
+  notes?: string;
+}
+
+// ==================== Chat History ====================
+
+export interface ChatMessage {
+  id: string;
+  campaign_id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  perspective: string;
+  created_at: string;
+}
+
+export interface ImprovPromptResponse {
+  options: string[];
 }
 
 export interface CreateSessionRequest {
@@ -303,6 +470,8 @@ export interface UpdateParticipantRequest {
   spend_bonus_action?: boolean;
   spend_reaction?: boolean;
   spend_movement?: number;
+  add_death_save_success?: boolean;
+  add_death_save_failure?: boolean;
 }
 
 // ==================== Playstyle Profile ====================
@@ -330,6 +499,45 @@ export interface GenerateRequest {
 export interface ChatRequest {
   message: string;
   perspective: Perspective;
+}
+
+// ==================== Homebrew Rules ====================
+
+export interface HomebrewRule {
+  id: string;
+  campaign_id: string;
+  title: string;
+  description: string;
+  category: string;
+  created_at: string;
+}
+
+export interface CreateHomebrewRuleRequest {
+  title: string;
+  description: string;
+  category?: string;
+}
+
+// ==================== Factions ====================
+
+export interface Faction {
+  id: string;
+  campaign_id: string;
+  name: string;
+  description: string | null;
+  standing: string;
+  notes: string | null;
+  created_at: string;
+}
+
+export interface CreateFactionRequest {
+  name: string;
+  description?: string;
+}
+
+export interface UpdateFactionReputationRequest {
+  standing: string;
+  notes?: string;
 }
 
 // ==================== Health ====================

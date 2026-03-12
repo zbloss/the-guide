@@ -1,7 +1,12 @@
+pub mod calendar;
 pub mod campaigns;
 pub mod characters;
+pub mod chat;
 pub mod documents;
 pub mod encounters;
+pub mod factions;
+pub mod homebrew;
+pub mod loot;
 pub mod qdrant;
 pub mod sessions;
 

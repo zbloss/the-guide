@@ -41,6 +41,10 @@ pub fn router() -> Router<AppState> {
             "/campaigns/{campaign_id}/encounters/{id}/participants/{pid}",
             put(update_participant),
         )
+        .route(
+            "/campaigns/{campaign_id}/encounters/{id}/log",
+            get(get_combat_log),
+        )
 }
 
 #[utoipa::path(
@@ -288,4 +292,62 @@ async fn update_participant(
     // Return the full encounter so the frontend can sync all state
     let updated = repo.get_by_id(enc_id).await?;
     Ok(Json(updated))
+}
+
+async fn get_combat_log(
+    State(state): State<AppState>,
+    Path((_campaign_id, id)): Path<(Uuid, Uuid)>,
+) -> Result<impl IntoResponse, crate::error::AppError> {
+    use axum::http::header;
+
+    let repo = EncounterRepository::new(&state.db);
+    let encounter = repo.get_by_id(id).await?;
+
+    let mut log = format!(
+        "# Combat Log: {}\n\n",
+        encounter.name.as_deref().unwrap_or("Encounter")
+    );
+    log.push_str(&format!("**Status:** {:?}\n", encounter.status));
+    log.push_str(&format!("**Round:** {}\n\n", encounter.round));
+    log.push_str("## Participants (by initiative)\n\n");
+
+    let mut participants = encounter.participants.clone();
+    participants.sort_by(|a, b| b.initiative_total.cmp(&a.initiative_total));
+
+    for (i, p) in participants.iter().enumerate() {
+        let status = if p.is_defeated { "Defeated" } else { "Active" };
+        let conditions: Vec<String> = p
+            .conditions
+            .iter()
+            .map(|c| format!("{:?}", c))
+            .collect();
+        let cond_str = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!(" ({})", conditions.join(", "))
+        };
+        log.push_str(&format!(
+            "{}. **{}** — Initiative: {} | HP: {}/{} | AC: {} | {}{}\n",
+            i + 1,
+            p.name,
+            p.initiative_total,
+            p.current_hp,
+            p.max_hp,
+            p.armor_class,
+            status,
+            cond_str
+        ));
+    }
+
+    let filename = format!("combat-log-{}.md", id);
+    Ok((
+        [
+            (header::CONTENT_TYPE, "text/markdown; charset=utf-8".to_string()),
+            (
+                header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"{}\"", filename),
+            ),
+        ],
+        log,
+    ))
 }

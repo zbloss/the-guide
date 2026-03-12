@@ -4,7 +4,8 @@ use uuid::Uuid;
 
 use guide_core::{
     models::{
-        Backstory, Character, CharacterType, CreateCharacterRequest, UpdateCharacterRequest,
+        Backstory, Character, CharacterType, CreateCharacterRequest, SpellSlot,
+        UpdateCharacterRequest,
     },
     GuideError, Result,
 };
@@ -26,13 +27,15 @@ impl<'a> CharacterRepository<'a> {
         let ability_json = serde_json::to_string(&ability_scores)?;
         let level = req.level.unwrap_or(1);
         let speed = req.speed.unwrap_or(30);
+        let spell_slots = req.spell_slots.unwrap_or_default();
+        let spell_slots_json = serde_json::to_string(&spell_slots)?;
 
         sqlx::query(
             "INSERT INTO characters \
              (id, campaign_id, name, character_type, class, race, level, max_hp, current_hp, \
-              armor_class, speed, ability_scores, conditions, backstory, is_alive, \
+              armor_class, speed, ability_scores, conditions, spell_slots, backstory, is_alive, \
               created_at, updated_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(id.to_string())
         .bind(campaign_id.to_string())
@@ -47,6 +50,7 @@ impl<'a> CharacterRepository<'a> {
         .bind(speed)
         .bind(&ability_json)
         .bind("[]")
+        .bind(&spell_slots_json)
         .bind(Option::<String>::None)
         .bind(1i32)
         .bind(now.to_rfc3339())
@@ -77,8 +81,8 @@ impl<'a> CharacterRepository<'a> {
     pub async fn get_by_id(&self, id: Uuid) -> Result<Character> {
         let row = sqlx::query(
             "SELECT id, campaign_id, name, character_type, class, race, level, max_hp, \
-             current_hp, armor_class, speed, ability_scores, conditions, backstory, \
-             is_alive, created_at, updated_at \
+             current_hp, armor_class, speed, ability_scores, conditions, spell_slots, \
+             portrait_url, backstory, is_alive, created_at, updated_at \
              FROM characters WHERE id = ?",
         )
         .bind(id.to_string())
@@ -92,8 +96,8 @@ impl<'a> CharacterRepository<'a> {
     pub async fn list_by_campaign(&self, campaign_id: Uuid) -> Result<Vec<Character>> {
         let rows = sqlx::query(
             "SELECT id, campaign_id, name, character_type, class, race, level, max_hp, \
-             current_hp, armor_class, speed, ability_scores, conditions, backstory, \
-             is_alive, created_at, updated_at \
+             current_hp, armor_class, speed, ability_scores, conditions, spell_slots, \
+             portrait_url, backstory, is_alive, created_at, updated_at \
              FROM characters WHERE campaign_id = ? ORDER BY name ASC",
         )
         .bind(campaign_id.to_string())
@@ -259,6 +263,70 @@ impl<'a> CharacterRepository<'a> {
         }
         Ok(())
     }
+
+    pub async fn update_portrait_url(&self, id: Uuid, url: &str) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        sqlx::query("UPDATE characters SET portrait_url = ?, updated_at = ? WHERE id = ?")
+            .bind(url)
+            .bind(&now)
+            .bind(id.to_string())
+            .execute(self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn spend_spell_slot(&self, char_id: Uuid, level: i32) -> Result<Character> {
+        let now = Utc::now().to_rfc3339();
+        let mut character = self.get_by_id(char_id).await?;
+        let slot = character
+            .spell_slots
+            .iter_mut()
+            .find(|s| s.level == level)
+            .ok_or_else(|| GuideError::InvalidInput(format!("No spell slot at level {level}")))?;
+        slot.remaining = (slot.remaining - 1).max(0);
+        let json = serde_json::to_string(&character.spell_slots)?;
+        sqlx::query("UPDATE characters SET spell_slots = ?, updated_at = ? WHERE id = ?")
+            .bind(&json)
+            .bind(&now)
+            .bind(char_id.to_string())
+            .execute(self.pool)
+            .await?;
+        self.get_by_id(char_id).await
+    }
+
+    pub async fn restore_spell_slots(
+        &self,
+        char_id: Uuid,
+        level: Option<i32>,
+    ) -> Result<Character> {
+        let now = Utc::now().to_rfc3339();
+        let mut character = self.get_by_id(char_id).await?;
+        match level {
+            None => {
+                for slot in character.spell_slots.iter_mut() {
+                    slot.remaining = slot.total;
+                }
+            }
+            Some(lvl) => {
+                let slot = character
+                    .spell_slots
+                    .iter_mut()
+                    .find(|s| s.level == lvl)
+                    .ok_or_else(|| {
+                        GuideError::InvalidInput(format!("No spell slot at level {lvl}"))
+                    })?;
+                slot.remaining = slot.total;
+            }
+        }
+        let json = serde_json::to_string(&character.spell_slots)?;
+        sqlx::query("UPDATE characters SET spell_slots = ?, updated_at = ? WHERE id = ?")
+            .bind(&json)
+            .bind(&now)
+            .bind(char_id.to_string())
+            .execute(self.pool)
+            .await?;
+        self.get_by_id(char_id).await
+    }
 }
 
 fn row_to_character(row: SqliteRow) -> Result<Character> {
@@ -271,6 +339,12 @@ fn row_to_character(row: SqliteRow) -> Result<Character> {
     let is_alive_int: i32 = row.try_get("is_alive")?;
     let created_at_str: String = row.try_get("created_at")?;
     let updated_at_str: String = row.try_get("updated_at")?;
+    let spell_slots_json: Option<String> = row.try_get("spell_slots").ok().flatten();
+    let portrait_url: Option<String> = row.try_get("portrait_url").ok().flatten();
+    let spell_slots: Vec<SpellSlot> = spell_slots_json
+        .as_deref()
+        .and_then(|s| serde_json::from_str(s).ok())
+        .unwrap_or_default();
 
     Ok(Character {
         id: Uuid::parse_str(&id_str).map_err(|e| GuideError::Internal(e.to_string()))?,
@@ -289,6 +363,8 @@ fn row_to_character(row: SqliteRow) -> Result<Character> {
         conditions: serde_json::from_str(&conditions_json).unwrap_or_default(),
         backstory: backstory_json.as_deref().and_then(|s| serde_json::from_str(s).ok()),
         is_alive: is_alive_int != 0,
+        portrait_url,
+        spell_slots,
         created_at: created_at_str.parse().unwrap_or_else(|_| Utc::now()),
         updated_at: updated_at_str.parse().unwrap_or_else(|_| Utc::now()),
     })

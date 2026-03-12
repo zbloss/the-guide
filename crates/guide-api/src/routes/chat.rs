@@ -1,10 +1,10 @@
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     response::{
         sse::{Event, Sse},
         IntoResponse,
     },
-    routing::post,
+    routing::{get, post},
     Json, Router,
 };
 use futures::StreamExt;
@@ -18,7 +18,9 @@ use uuid::Uuid;
 use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
-    Router::new().route("/campaigns/{campaign_id}/chat", post(chat))
+    Router::new()
+        .route("/campaigns/{campaign_id}/chat", post(chat))
+        .route("/campaigns/{campaign_id}/chat/history", get(chat_history))
 }
 
 #[derive(Deserialize, utoipa::ToSchema)]
@@ -26,6 +28,11 @@ pub struct ChatRequest {
     pub message: String,
     pub perspective: Option<String>,
     pub context_limit: Option<usize>,
+}
+
+#[derive(Deserialize, utoipa::ToSchema, utoipa::IntoParams)]
+pub struct ChatHistoryQuery {
+    pub limit: Option<i64>,
 }
 
 #[utoipa::path(
@@ -63,6 +70,12 @@ async fn chat(
     };
     let player_visible_only = perspective == Perspective::Player;
     let context_limit = req.context_limit.unwrap_or(5);
+    let perspective_str = match perspective {
+        Perspective::Player => "player",
+        Perspective::Dm => "dm",
+    }
+    .to_string();
+    let user_message = req.message.clone();
 
     // Retrieve RAG context
     let chunks = query_indexes(
@@ -113,6 +126,29 @@ async fn chat(
 
     let stream = state.llm.complete_stream(llm_req).await?;
 
+    // Use a channel to tap the stream so we can collect the full assistant response
+    // for persistence while forwarding tokens to the SSE client.
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    let db = state.db.clone();
+
+    // Spawn a task to persist user + assistant messages once streaming completes
+    tokio::spawn(async move {
+        use guide_db::chat::ChatRepository;
+        let mut full_response = String::new();
+        while let Some(token) = rx.recv().await {
+            full_response.push_str(&token);
+        }
+        if !full_response.is_empty() {
+            let chat_repo = ChatRepository::new(&db);
+            let _ = chat_repo
+                .append(campaign_id, "user", &user_message, &perspective_str)
+                .await;
+            let _ = chat_repo
+                .append(campaign_id, "assistant", &full_response, &perspective_str)
+                .await;
+        }
+    });
+
     let sse_stream = stream
         .filter(|result| {
             futures::future::ready(match result {
@@ -120,9 +156,12 @@ async fn chat(
                 Err(_) => true,
             })
         })
-        .map(|result| {
+        .map(move |result| {
             let event = match result {
-                Ok(token) => Event::default().event("token").data(token),
+                Ok(token) => {
+                    let _ = tx.send(token.clone());
+                    Event::default().event("token").data(token)
+                }
                 Err(e) => Event::default().event("error").data(e.to_string()),
             };
             Ok::<Event, Infallible>(event)
@@ -132,4 +171,27 @@ async fn chat(
         }));
 
     Ok(Sse::new(sse_stream))
+}
+
+#[utoipa::path(
+    get,
+    path = "/campaigns/{campaign_id}/chat/history",
+    params(
+        ("campaign_id" = Uuid, Path, description = "Campaign ID"),
+        ChatHistoryQuery
+    ),
+    responses(
+        (status = 200, description = "Chat history for campaign", body = [guide_core::models::ChatMessage])
+    )
+)]
+async fn chat_history(
+    State(state): State<AppState>,
+    Path(campaign_id): Path<Uuid>,
+    Query(q): Query<ChatHistoryQuery>,
+) -> Result<impl IntoResponse, crate::error::AppError> {
+    use guide_db::chat::ChatRepository;
+    let limit = q.limit.unwrap_or(50);
+    let repo = ChatRepository::new(&state.db);
+    let messages = repo.list(campaign_id, limit).await?;
+    Ok(Json(messages))
 }
