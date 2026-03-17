@@ -50,6 +50,14 @@ export function apiDelete(path: string): Promise<void> {
   return apiFetch<void>(path, { method: 'DELETE' });
 }
 
+export function apiPatch<T>(path: string, body: unknown): Promise<T> {
+  return apiFetch<T>(path, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
 // Do NOT set Content-Type — browser sets multipart boundary automatically
 export function apiMultipart<T>(path: string, formData: FormData): Promise<T> {
   return apiFetch<T>(path, {

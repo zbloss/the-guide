@@ -50,9 +50,9 @@ export type EventSignificance = 'minor' | 'major' | 'milestone';
 
 export type IngestionStatus = 'pending' | 'processing' | 'completed' | 'failed';
 
-export type Perspective = 'dm' | 'player';
+export type Perspective = 'dm';
 
-export type DocumentKind = 'campaign' | 'global';
+export type DocumentKind = 'dm_guide' | 'monster_manual' | 'srd' | 'campaign' | 'supplemental';
 
 export type GeneratedEncounterType = 'combat' | 'social' | 'exploration' | 'puzzle' | 'mixed';
 
@@ -248,6 +248,9 @@ export interface CampaignDocument {
   ingestion_status: IngestionStatus;
   uploaded_at: string;
   ingested_at: string | null;
+  description: string | null;
+  story_extraction_status: string;
+  story_extraction_error: string | null;
 }
 
 export interface GlobalDocument {
@@ -257,6 +260,7 @@ export interface GlobalDocument {
   ingestion_status: IngestionStatus;
   uploaded_at: string;
   ingested_at: string | null;
+  document_kind: DocumentKind;
 }
 
 export interface EnemySuggestion {
@@ -720,4 +724,99 @@ export interface EncounterTurnSnapshot {
 
 export interface TranscribeResponse {
   transcript: string;
+}
+
+// ==================== Story ====================
+
+export type ArcStatus = 'open' | 'resolved' | 'abandoned';
+export type StoryEventType = 'combat' | 'social' | 'revelation' | 'travel' | 'rest';
+export type StorySignificance = 'major' | 'minor';
+export type SubplotStatus = 'open' | 'resolved' | 'abandoned';
+
+export interface ArcPoint {
+  description: string;
+  order: number;
+}
+
+export interface MonsterHint {
+  name: string;
+  count: number | null;
+  cr: string | null;
+}
+
+export interface StoryArc {
+  id: string;
+  campaign_id: string;
+  source_doc_id: string;
+  title: string;
+  description: string;
+  arc_order: number;
+  status: ArcStatus;
+  dm_notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface StoryEvent {
+  id: string;
+  campaign_id: string;
+  arc_id: string | null;
+  source_doc_id: string;
+  title: string;
+  description: string;
+  event_type: StoryEventType;
+  significance: StorySignificance;
+  location: string | null;
+  involved_characters: string[];
+  event_order: number;
+  is_dm_only: boolean;
+  dm_notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface StorySubplot {
+  id: string;
+  campaign_id: string;
+  arc_id: string | null;
+  source_doc_id: string;
+  title: string;
+  description: string;
+  status: SubplotStatus;
+  dm_notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CharacterArc {
+  id: string;
+  campaign_id: string;
+  character_name: string;
+  character_id: string | null;
+  source_doc_id: string;
+  description: string;
+  arc_points: ArcPoint[];
+  dm_notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PrepopulatedEncounter {
+  id: string;
+  campaign_id: string;
+  story_event_id: string | null;
+  source_doc_id: string;
+  name: string;
+  description: string;
+  location: string | null;
+  difficulty_hint: string | null;
+  monsters: MonsterHint[];
+  dm_notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface StoryExtractionStatus {
+  status: string;
+  error: string | null;
 }

@@ -7,9 +7,12 @@ use super::shared::IngestionStatus;
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum DocumentKind {
+    DmGuide,
+    MonsterManual,
+    Srd,
     #[default]
     Campaign,
-    Rulebook,
+    Supplemental,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
@@ -21,8 +24,11 @@ pub struct CampaignDocument {
     pub stored_path: String,
     pub page_count: Option<i32>,
     pub document_kind: DocumentKind,
+    pub description: Option<String>,
     pub ingestion_status: IngestionStatus,
     pub ingestion_error: Option<String>,
+    pub story_extraction_status: String,
+    pub story_extraction_error: Option<String>,
     pub uploaded_at: DateTime<Utc>,
     pub ingested_at: Option<DateTime<Utc>>,
 }
@@ -35,6 +41,7 @@ pub struct GlobalDocument {
     pub file_size_bytes: i64,
     pub stored_path: String,
     pub page_count: Option<i32>,
+    pub document_kind: DocumentKind,
     pub ingestion_status: IngestionStatus,
     pub ingestion_error: Option<String>,
     pub uploaded_at: DateTime<Utc>,

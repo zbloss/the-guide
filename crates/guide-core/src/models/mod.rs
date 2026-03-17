@@ -12,6 +12,7 @@ pub mod prep;
 pub mod relationship;
 pub mod session;
 pub mod shared;
+pub mod story;
 pub mod template;
 pub mod webhook;
 
@@ -31,5 +32,6 @@ pub use prep::*;
 pub use relationship::*;
 pub use session::*;
 pub use shared::*;
+pub use story::*;
 pub use template::{EncounterTemplate, SaveTemplateRequest, TemplateParticipant};
 pub use webhook::{CampaignWebhook, CreateWebhookRequest};
