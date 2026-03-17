@@ -1,3 +1,5 @@
+Update OCR Parsing of character sheet to use structured output parsing as found in the glm-ocr example here: https://huggingface.co/zai-org/GLM-OCR#prompt-limited
+
 # The Guide
 
 **The Guide** is a specialized assistant designed to help Dungeon Masters and Game Managers run Dungeons & Dragons (DnD) campaigns with greater efficiency, depth, and narrative consistency.
