@@ -1,5 +1,5 @@
 import { apiGet, apiPost, apiDelete, BASE_URL } from './client';
-import type { Session, SessionEvent, SessionSummary, CreateSessionRequest, CreateSessionEventRequest, Perspective, ImprovPromptResponse } from './types';
+import type { Session, SessionEvent, SessionSummary, CreateSessionRequest, CreateSessionEventRequest, Perspective, ImprovPromptResponse, TranscribeResponse } from './types';
 
 export async function uploadSessionMap(campaignId: string, sessionId: string, file: File): Promise<Session> {
   const form = new FormData();
@@ -74,4 +74,15 @@ export function generateDebrief(campaignId: string, sessionId: string): Promise<
 
 export function generateSessionPrep(campaignId: string, upcomingNotes?: string): Promise<{ prep: string }> {
   return apiPost<{ prep: string }>(`/campaigns/${campaignId}/sessions/prep`, { upcoming_notes: upcomingNotes });
+}
+
+export async function transcribeAudio(campaignId: string, sessionId: string, audioBlob: Blob): Promise<TranscribeResponse> {
+  const form = new FormData();
+  form.append('audio', audioBlob, 'recording.webm');
+  const res = await fetch(`${BASE_URL}/campaigns/${campaignId}/sessions/${sessionId}/transcribe`, {
+    method: 'POST',
+    body: form,
+  });
+  if (!res.ok) throw new Error(`Transcription failed: ${res.status}`);
+  return res.json() as Promise<TranscribeResponse>;
 }

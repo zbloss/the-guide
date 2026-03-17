@@ -192,6 +192,75 @@ impl<'a> EncounterRepository<'a> {
         Ok(())
     }
 
+    pub async fn record_turn_snapshot(&self, encounter: &Encounter, turn_number: i32) -> Result<()> {
+        let id = Uuid::new_v4();
+        let snapshot_json = serde_json::to_string(encounter)?;
+
+        sqlx::query(
+            "INSERT INTO encounter_turns \
+             (id, encounter_id, turn_number, round_number, snapshot_json, recorded_at) \
+             VALUES (?, ?, ?, ?, ?, ?) \
+             ON CONFLICT(encounter_id, turn_number) DO UPDATE SET \
+             snapshot_json = excluded.snapshot_json, recorded_at = excluded.recorded_at",
+        )
+        .bind(id.to_string())
+        .bind(encounter.id.to_string())
+        .bind(turn_number)
+        .bind(encounter.round)
+        .bind(&snapshot_json)
+        .bind(Utc::now().to_rfc3339())
+        .execute(self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    pub async fn count_turn_snapshots(&self, encounter_id: Uuid) -> Result<i64> {
+        let row = sqlx::query(
+            "SELECT COUNT(*) as cnt FROM encounter_turns WHERE encounter_id = ?",
+        )
+        .bind(encounter_id.to_string())
+        .fetch_one(self.pool)
+        .await?;
+        Ok(row.try_get::<i64, _>("cnt")?)
+    }
+
+    pub async fn list_turn_snapshots(
+        &self,
+        encounter_id: Uuid,
+    ) -> Result<Vec<guide_core::models::EncounterTurnSnapshot>> {
+        use guide_core::models::EncounterTurnSnapshot;
+
+        let rows = sqlx::query(
+            "SELECT id, encounter_id, turn_number, round_number, snapshot_json, recorded_at \
+             FROM encounter_turns WHERE encounter_id = ? ORDER BY turn_number ASC",
+        )
+        .bind(encounter_id.to_string())
+        .fetch_all(self.pool)
+        .await?;
+
+        rows.into_iter()
+            .map(|row| {
+                let id_str: String = row.try_get("id")?;
+                let enc_id_str: String = row.try_get("encounter_id")?;
+                let snapshot_json: String = row.try_get("snapshot_json")?;
+                let recorded_at_str: String = row.try_get("recorded_at")?;
+                let snapshot: Encounter = serde_json::from_str(&snapshot_json)
+                    .map_err(|e| GuideError::Internal(e.to_string()))?;
+                Ok(EncounterTurnSnapshot {
+                    id: Uuid::parse_str(&id_str)
+                        .map_err(|e| GuideError::Internal(e.to_string()))?,
+                    encounter_id: Uuid::parse_str(&enc_id_str)
+                        .map_err(|e| GuideError::Internal(e.to_string()))?,
+                    turn_number: row.try_get("turn_number")?,
+                    round_number: row.try_get("round_number")?,
+                    snapshot,
+                    recorded_at: recorded_at_str.parse().unwrap_or_else(|_| Utc::now()),
+                })
+            })
+            .collect()
+    }
+
     async fn list_participants(&self, encounter_id: Uuid) -> Result<Vec<CombatParticipant>> {
         let rows = sqlx::query(
             "SELECT id, encounter_id, character_id, name, initiative_roll, initiative_modifier, \

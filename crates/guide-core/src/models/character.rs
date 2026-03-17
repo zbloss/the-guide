@@ -129,3 +129,18 @@ pub struct UpdateCharacterRequest {
     pub backstory_text: Option<String>,
     pub spell_slots: Option<Vec<SpellSlot>>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct ParsedSheetResult {
+    pub name: String,
+    pub class: Option<String>,
+    pub race: Option<String>,
+    pub level: i32,
+    pub max_hp: i32,
+    pub armor_class: i32,
+    pub speed: i32,
+    pub ability_scores: AbilityScores,
+    pub backstory_text: Option<String>,
+    pub raw_extracted_text: String,
+    pub parse_confidence: f32,
+}

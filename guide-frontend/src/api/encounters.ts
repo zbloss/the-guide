@@ -1,5 +1,5 @@
 import { apiGet, apiPost, apiPut, apiDelete } from './client';
-import type { EncounterSummary, GeneratedEncounter, CreateEncounterRequest, UpdateParticipantRequest, GenerateRequest } from './types';
+import type { EncounterSummary, GeneratedEncounter, CreateEncounterRequest, UpdateParticipantRequest, GenerateRequest, EncounterTurnSnapshot } from './types';
 
 export function listEncounters(campaignId: string): Promise<EncounterSummary[]> {
   return apiGet<EncounterSummary[]>(`/campaigns/${campaignId}/encounters`);
@@ -35,4 +35,8 @@ export function updateParticipant(campaignId: string, encId: string, participant
 
 export function generateEncounter(campaignId: string, data: GenerateRequest): Promise<GeneratedEncounter> {
   return apiPost<GeneratedEncounter>(`/campaigns/${campaignId}/encounters/generate`, data);
+}
+
+export function getEncounterReplay(campaignId: string, encId: string): Promise<EncounterTurnSnapshot[]> {
+  return apiGet<EncounterTurnSnapshot[]>(`/campaigns/${campaignId}/encounters/${encId}/replay`);
 }

@@ -10,9 +10,10 @@ interface ParticipantRowProps {
   campaignId: string;
   encounterId: string;
   onUpdate: (updated: EncounterSummary) => void;
+  readOnly?: boolean;
 }
 
-export function ParticipantRow({ participant: p, isCurrentTurn, campaignId, encounterId, onUpdate }: ParticipantRowProps) {
+export function ParticipantRow({ participant: p, isCurrentTurn, campaignId, encounterId, onUpdate, readOnly }: ParticipantRowProps) {
   const [damage, setDamage] = useState('');
   const [dmgMultiplier, setDmgMultiplier] = useState<'1' | '0.5' | '2'>('1');
   const [heal, setHeal] = useState('');
@@ -108,7 +109,7 @@ export function ParticipantRow({ participant: p, isCurrentTurn, campaignId, enco
         <span className={`budget-icon ${p.action_budget.has_reaction ? '' : 'spent'}`} title="Reaction">R</span>
         <span className={`budget-icon ${p.action_budget.movement_remaining > 0 ? '' : 'spent'}`} title={`Move: ${p.action_budget.movement_remaining}ft`}>M</span>
       </td>
-      <td className="participant-controls">
+      {!readOnly && <td className="participant-controls">
         {/* Damage */}
         <div className="control-row">
           <input className="control-input" type="number" min={0} placeholder="DMG" value={damage} onChange={(e) => setDamage(e.target.value)} />
@@ -175,9 +176,9 @@ export function ParticipantRow({ participant: p, isCurrentTurn, campaignId, enco
             <span>Reaction</span>
           </label>
         </div>
-      </td>
+      </td>}
     </tr>
-    {rowError && (
+    {rowError && !readOnly && (
       <tr className="participant-error-row">
         <td colSpan={7}><span className="form-error">{rowError}</span></td>
       </tr>

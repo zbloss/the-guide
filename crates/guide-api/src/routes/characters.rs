@@ -8,8 +8,8 @@ use axum::{
 use guide_core::{
     models::{
         Backstory, Character, CharacterType, CreateCharacterRequest, CreateTrackedPlotHookRequest,
-        GenerateNpcRequest, HookPriority, PlotHook, PlotHookStatus, RestoreSlotRequest,
-        SpendSlotRequest, UpdateCharacterRequest,
+        GenerateNpcRequest, HookPriority, ParsedSheetResult, PlotHook, PlotHookStatus,
+        RestoreSlotRequest, SpendSlotRequest, UpdateCharacterRequest,
     },
     GuideError,
 };
@@ -63,6 +63,10 @@ pub fn router() -> Router<AppState> {
         .route(
             "/campaigns/{campaign_id}/characters/import-dndbeyond",
             post(import_dndbeyond),
+        )
+        .route(
+            "/campaigns/{campaign_id}/characters/parse-sheet",
+            post(parse_sheet),
         )
 }
 
@@ -623,6 +627,81 @@ async fn import_csv(
         "imported": created.len(),
         "characters": created,
     }))))
+}
+
+async fn parse_sheet(
+    State(state): State<AppState>,
+    Path(_campaign_id): Path<Uuid>,
+    mut multipart: Multipart,
+) -> Result<impl IntoResponse, crate::error::AppError> {
+    let mut pdf_bytes: Option<Vec<u8>> = None;
+
+    while let Some(field) = multipart.next_field().await.map_err(|e| {
+        crate::error::AppError(guide_core::GuideError::InvalidInput(e.to_string()))
+    })? {
+        if field.name() == Some("file") {
+            pdf_bytes = Some(
+                field
+                    .bytes()
+                    .await
+                    .map_err(|e| {
+                        crate::error::AppError(guide_core::GuideError::InvalidInput(e.to_string()))
+                    })?
+                    .to_vec(),
+            );
+        }
+    }
+
+    let bytes = pdf_bytes.ok_or_else(|| {
+        crate::error::AppError(guide_core::GuideError::InvalidInput("No file field".into()))
+    })?;
+
+    let raw_extracted_text =
+        guide_pdf::extractor::extract_text_sync(&bytes).unwrap_or_else(|_| String::new());
+
+    use guide_llm::{CompletionRequest, LlmTask, Message, MessageRole};
+
+    let user_msg = format!(
+        "Parse this character sheet text and return the JSON:\n\n{}",
+        &raw_extracted_text
+    );
+
+    let req = CompletionRequest {
+        task: LlmTask::CharacterSheetParse,
+        messages: vec![
+            Message {
+                role: MessageRole::System,
+                content: guide_llm::prompts::character_sheet_parse_system().to_string(),
+            },
+            Message {
+                role: MessageRole::User,
+                content: user_msg,
+            },
+        ],
+        model_override: None,
+        temperature: Some(0.0),
+        max_tokens: Some(1024),
+    };
+
+    let resp = state.llm.complete(req).await?;
+
+    let mut parsed: ParsedSheetResult =
+        serde_json::from_str(resp.content.trim()).unwrap_or_else(|_| ParsedSheetResult {
+            name: "Unknown".into(),
+            class: None,
+            race: None,
+            level: 1,
+            max_hp: 10,
+            armor_class: 10,
+            speed: 30,
+            ability_scores: guide_core::models::AbilityScores::default(),
+            backstory_text: None,
+            raw_extracted_text: raw_extracted_text.clone(),
+            parse_confidence: 0.0,
+        });
+    parsed.raw_extracted_text = raw_extracted_text;
+
+    Ok(Json(parsed))
 }
 
 async fn import_dndbeyond(

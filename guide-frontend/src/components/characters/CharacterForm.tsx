@@ -5,24 +5,25 @@ import type { CreateCharacterRequest, CharacterType } from '../../api/types';
 interface CharacterFormProps {
   onSubmit: (data: CreateCharacterRequest) => Promise<void>;
   onCancel: () => void;
+  initialValues?: Partial<CreateCharacterRequest & { parse_confidence?: number }>;
 }
 
-export function CharacterForm({ onSubmit, onCancel }: CharacterFormProps) {
-  const [name, setName] = useState('');
-  const [charType, setCharType] = useState<CharacterType>('pc');
-  const [charClass, setCharClass] = useState('');
-  const [race, setRace] = useState('');
-  const [level, setLevel] = useState(1);
-  const [maxHp, setMaxHp] = useState(10);
-  const [ac, setAc] = useState(10);
-  const [speed, setSpeed] = useState(30);
-  const [str, setStr] = useState(10);
-  const [dex, setDex] = useState(10);
-  const [con, setCon] = useState(10);
-  const [int, setInt] = useState(10);
-  const [wis, setWis] = useState(10);
-  const [cha, setCha] = useState(10);
-  const [backstory, setBackstory] = useState('');
+export function CharacterForm({ onSubmit, onCancel, initialValues }: CharacterFormProps) {
+  const [name, setName] = useState(initialValues?.name ?? '');
+  const [charType, setCharType] = useState<CharacterType>(initialValues?.character_type ?? 'pc');
+  const [charClass, setCharClass] = useState(initialValues?.class ?? '');
+  const [race, setRace] = useState(initialValues?.race ?? '');
+  const [level, setLevel] = useState(initialValues?.level ?? 1);
+  const [maxHp, setMaxHp] = useState(initialValues?.max_hp ?? 10);
+  const [ac, setAc] = useState(initialValues?.armor_class ?? 10);
+  const [speed, setSpeed] = useState(initialValues?.speed ?? 30);
+  const [str, setStr] = useState(initialValues?.ability_scores?.strength ?? 10);
+  const [dex, setDex] = useState(initialValues?.ability_scores?.dexterity ?? 10);
+  const [con, setCon] = useState(initialValues?.ability_scores?.constitution ?? 10);
+  const [int, setInt] = useState(initialValues?.ability_scores?.intelligence ?? 10);
+  const [wis, setWis] = useState(initialValues?.ability_scores?.wisdom ?? 10);
+  const [cha, setCha] = useState(initialValues?.ability_scores?.charisma ?? 10);
+  const [backstory, setBackstory] = useState(initialValues?.backstory_text ?? '');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
@@ -63,6 +64,11 @@ export function CharacterForm({ onSubmit, onCancel }: CharacterFormProps) {
   return (
     <form onSubmit={handleSubmit} className="form">
       {error && <div className="form-error-banner">{error}</div>}
+      {initialValues?.parse_confidence !== undefined && initialValues.parse_confidence < 0.7 && (
+        <div className="form-warning-banner">
+          Low parse confidence ({(initialValues.parse_confidence * 100).toFixed(0)}%) — please review the pre-filled values.
+        </div>
+      )}
 
       <FormField label="Name" htmlFor="ch-name">
         <input id="ch-name" className="form-input" value={name} onChange={(e) => setName(e.target.value)} required />

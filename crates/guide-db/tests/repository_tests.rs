@@ -61,6 +61,7 @@ async fn test_campaign_update(pool: SqlitePool) -> Result<(), Box<dyn std::error
                 name: Some("Updated Name".into()),
                 description: Some("Added later".into()),
                 world_state: None,
+                current_chapter: None,
             },
         )
         .await?;

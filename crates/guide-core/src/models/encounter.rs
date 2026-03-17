@@ -131,3 +131,13 @@ pub struct EnemySuggestion {
     pub count: u32,
     pub cr: Option<f32>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct EncounterTurnSnapshot {
+    pub id: Uuid,
+    pub encounter_id: Uuid,
+    pub turn_number: i32,
+    pub round_number: i32,
+    pub snapshot: Encounter,
+    pub recorded_at: DateTime<Utc>,
+}

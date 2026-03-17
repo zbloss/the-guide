@@ -11,6 +11,8 @@ pub mod homebrew;
 pub mod loot;
 pub mod openapi;
 pub mod plot_hooks;
+pub mod prep;
+pub mod relationships;
 pub mod sessions;
 pub mod templates;
 pub mod webhooks;
@@ -38,6 +40,8 @@ pub fn all_routes(state: AppState) -> Router {
         .merge(factions::router())
         .merge(templates::router())
         .merge(plot_hooks::router())
+        .merge(prep::router())
+        .merge(relationships::router())
         .merge(webhooks::router())
         .nest_service("/portraits", ServeDir::new("data/portraits"))
         .nest_service("/maps", ServeDir::new("data/maps"))

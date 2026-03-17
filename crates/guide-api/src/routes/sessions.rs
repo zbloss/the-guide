@@ -70,6 +70,10 @@ pub fn router() -> Router<AppState> {
             "/campaigns/{campaign_id}/sessions/{id}/map",
             post(upload_map),
         )
+        .route(
+            "/campaigns/{campaign_id}/sessions/{id}/transcribe",
+            post(transcribe_audio),
+        )
 }
 
 #[utoipa::path(
@@ -716,4 +720,36 @@ async fn upload_map(
     repo.update_map_url(session_id, &url).await?;
     let session = repo.get_by_id(session_id).await?;
     Ok(Json(session))
+}
+
+async fn transcribe_audio(
+    State(_state): State<AppState>,
+    Path((_campaign_id, _session_id)): Path<(Uuid, Uuid)>,
+    mut multipart: Multipart,
+) -> Result<impl IntoResponse, crate::error::AppError> {
+    let mut audio_bytes: Option<Vec<u8>> = None;
+
+    while let Some(field) = multipart.next_field().await.map_err(|e| {
+        crate::error::AppError(guide_core::GuideError::InvalidInput(e.to_string()))
+    })? {
+        if field.name() == Some("audio") {
+            audio_bytes = Some(
+                field
+                    .bytes()
+                    .await
+                    .map_err(|e| {
+                        crate::error::AppError(guide_core::GuideError::InvalidInput(e.to_string()))
+                    })?
+                    .to_vec(),
+            );
+        }
+    }
+
+    let _bytes = audio_bytes.ok_or_else(|| {
+        crate::error::AppError(guide_core::GuideError::InvalidInput("No audio field".into()))
+    })?;
+
+    // Stub — returns placeholder when no whisper model is configured.
+    // A real implementation would call Ollama's whisper endpoint.
+    Ok(Json(serde_json::json!({ "transcript": "" })))
 }

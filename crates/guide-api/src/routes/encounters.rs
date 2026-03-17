@@ -7,8 +7,7 @@ use axum::{
 };
 use guide_combat::{build_participant, initiative::roll_initiative, CombatEngine};
 use guide_core::models::{
-    CombatParticipant, CreateEncounterRequest, Encounter,
-    UpdateParticipantRequest,
+    CombatParticipant, CreateEncounterRequest, Encounter, UpdateParticipantRequest,
 };
 use guide_db::{characters::CharacterRepository, encounters::EncounterRepository};
 use uuid::Uuid;
@@ -44,6 +43,10 @@ pub fn router() -> Router<AppState> {
         .route(
             "/campaigns/{campaign_id}/encounters/{id}/log",
             get(get_combat_log),
+        )
+        .route(
+            "/campaigns/{campaign_id}/encounters/{id}/replay",
+            get(get_replay),
         )
 }
 
@@ -171,6 +174,10 @@ async fn start_encounter(
     let mut engine = CombatEngine::new(encounter);
     engine.start()?;
     repo.save_state(&engine.encounter).await?;
+    let turn_count = repo.count_turn_snapshots(id).await.unwrap_or(0);
+    if let Err(e) = repo.record_turn_snapshot(&engine.encounter, turn_count as i32).await {
+        tracing::warn!("Failed to record start snapshot: {e}");
+    }
     Ok(Json(engine.encounter))
 }
 
@@ -195,6 +202,10 @@ async fn next_turn(
     let mut engine = CombatEngine::new(encounter);
     engine.next_turn()?;
     repo.save_state(&engine.encounter).await?;
+    let turn_count = repo.count_turn_snapshots(id).await.unwrap_or(0);
+    if let Err(e) = repo.record_turn_snapshot(&engine.encounter, turn_count as i32).await {
+        tracing::warn!("Failed to record turn snapshot: {e}");
+    }
     Ok(Json(engine.encounter))
 }
 
@@ -292,6 +303,14 @@ async fn update_participant(
     // Return the full encounter so the frontend can sync all state
     let updated = repo.get_by_id(enc_id).await?;
     Ok(Json(updated))
+}
+
+async fn get_replay(
+    State(state): State<AppState>,
+    Path((_campaign_id, id)): Path<(Uuid, Uuid)>,
+) -> Result<impl IntoResponse, crate::error::AppError> {
+    let repo = EncounterRepository::new(&state.db);
+    Ok(Json(repo.list_turn_snapshots(id).await?))
 }
 
 async fn get_combat_log(

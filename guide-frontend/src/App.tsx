@@ -16,6 +16,8 @@ import { SharedViewPage } from "./pages/SharedViewPage";
 import { HealthPage } from "./pages/HealthPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
 import { PlaystylePage } from "./pages/PlaystylePage";
+import { PrepPage } from "./pages/PrepPage";
+import { RelationshipMapPage } from "./pages/RelationshipMapPage";
 
 function App() {
   return (
@@ -33,6 +35,8 @@ function App() {
           <Route path="documents" element={<DocumentsPage />} />
           <Route path="chat" element={<ChatPage />} />
           <Route path="analytics" element={<AnalyticsPage />} />
+          <Route path="prep" element={<PrepPage />} />
+          <Route path="relationships" element={<RelationshipMapPage />} />
         </Route>
 
         <Route path="documents" element={<GlobalDocumentsPage />} />

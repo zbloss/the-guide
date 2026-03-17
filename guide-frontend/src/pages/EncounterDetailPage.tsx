@@ -1,12 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useApi } from '../hooks/useApi';
-import { getEncounter, startEncounter, nextTurn, endEncounter } from '../api/encounters';
+import { getEncounter, startEncounter, nextTurn, endEncounter, getEncounterReplay } from '../api/encounters';
 import { saveTemplate } from '../api/templates';
 import { CombatTracker } from '../components/encounters/CombatTracker';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { ErrorBanner } from '../components/common/ErrorBanner';
-import type { EncounterSummary } from '../api/types';
+import type { EncounterSummary, EncounterTurnSnapshot } from '../api/types';
 import { BASE_URL } from '../api/client';
 
 export function EncounterDetailPage() {
@@ -22,6 +22,13 @@ export function EncounterDetailPage() {
   const [actionLoading, setActionLoading] = useState(false);
   const [templateSaved, setTemplateSaved] = useState(false);
   const [templateSaving, setTemplateSaving] = useState(false);
+
+  // Replay state
+  const [showReplay, setShowReplay] = useState(false);
+  const [snapshots, setSnapshots] = useState<EncounterTurnSnapshot[]>([]);
+  const [replayIndex, setReplayIndex] = useState(0);
+  const [replayPlaying, setReplayPlaying] = useState(false);
+  const [snapshotsLoading, setSnapshotsLoading] = useState(false);
 
   const displayed = encounter ?? initialEncounter;
 
@@ -53,6 +60,14 @@ export function EncounterDetailPage() {
     return () => window.removeEventListener('keydown', handleKey);
   }, [displayed?.status, actionLoading, campaignId, encId, doAction]);
 
+  // Replay auto-play
+  useEffect(() => {
+    if (!replayPlaying) return;
+    if (replayIndex >= snapshots.length - 1) { setReplayPlaying(false); return; }
+    const t = setTimeout(() => setReplayIndex((i) => i + 1), 1500);
+    return () => clearTimeout(t);
+  }, [replayPlaying, replayIndex, snapshots.length]);
+
   const handleSaveAsTemplate = async () => {
     setTemplateSaving(true);
     setActionError('');
@@ -76,6 +91,20 @@ export function EncounterDetailPage() {
     a.download = `combat-log.md`;
     a.click();
     URL.revokeObjectURL(url);
+  };
+
+  const handleLoadReplay = async () => {
+    setSnapshotsLoading(true);
+    try {
+      const snaps = await getEncounterReplay(campaignId!, encId!);
+      setSnapshots(snaps);
+      setReplayIndex(0);
+      setShowReplay(true);
+    } catch (e: unknown) {
+      setActionError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSnapshotsLoading(false);
+    }
   };
 
   if (loading) return <div className="page"><LoadingSpinner /></div>;
@@ -107,6 +136,11 @@ export function EncounterDetailPage() {
           )}
           {displayed.status === 'completed' && (
             <span className="badge badge-success">Encounter Completed</span>
+          )}
+          {(displayed.status === 'active' || displayed.status === 'completed') && (
+            <button className="btn btn-secondary" onClick={handleLoadReplay} disabled={snapshotsLoading}>
+              {snapshotsLoading ? 'Loading…' : 'Replay'}
+            </button>
           )}
           {templateSaved ? (
             <span className="badge badge-success">Template saved</span>
@@ -143,6 +177,38 @@ export function EncounterDetailPage() {
           campaignId={campaignId!}
           onUpdate={setEncounter}
         />
+      )}
+
+      {showReplay && snapshots.length > 0 && (
+        <div className="replay-panel" style={{ marginTop: 24, border: '1px solid var(--color-border, #333)', borderRadius: 8, padding: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+            <h3 style={{ margin: 0 }}>Encounter Replay</h3>
+            <span style={{ color: '#aaa', fontSize: 13 }}>
+              Turn {replayIndex + 1} of {snapshots.length} — Round {snapshots[replayIndex].round_number}
+            </span>
+            <button className="btn btn-sm" onClick={() => setShowReplay(false)} style={{ marginLeft: 'auto' }}>✕ Close</button>
+          </div>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 12, alignItems: 'center' }}>
+            <button className="btn btn-sm" onClick={() => { setReplayIndex(0); setReplayPlaying(false); }} disabled={replayIndex === 0}>|◀</button>
+            <button className="btn btn-sm" onClick={() => setReplayIndex((i) => Math.max(0, i - 1))} disabled={replayIndex === 0}>◀</button>
+            <button className="btn btn-sm btn-primary" onClick={() => setReplayPlaying((p) => !p)}>
+              {replayPlaying ? 'Pause' : 'Play'}
+            </button>
+            <button className="btn btn-sm" onClick={() => setReplayIndex((i) => Math.min(snapshots.length - 1, i + 1))} disabled={replayIndex >= snapshots.length - 1}>▶</button>
+            <button className="btn btn-sm" onClick={() => { setReplayIndex(snapshots.length - 1); setReplayPlaying(false); }} disabled={replayIndex >= snapshots.length - 1}>▶|</button>
+            <input
+              type="range" min={0} max={snapshots.length - 1} value={replayIndex}
+              onChange={(e) => { setReplayPlaying(false); setReplayIndex(Number(e.target.value)); }}
+              style={{ flex: 1 }}
+            />
+          </div>
+          <CombatTracker
+            encounter={snapshots[replayIndex].snapshot}
+            campaignId={campaignId!}
+            onUpdate={() => {}}
+            readOnly
+          />
+        </div>
       )}
     </div>
   );

@@ -1,5 +1,5 @@
 import { apiGet, apiPost, apiPut, apiDelete, BASE_URL } from './client';
-import type { Character, Backstory, CreateCharacterRequest, UpdateCharacterRequest, GenerateNpcRequest } from './types';
+import type { Character, Backstory, CreateCharacterRequest, UpdateCharacterRequest, GenerateNpcRequest, ParsedSheetResult } from './types';
 
 export function listCharacters(campaignId: string): Promise<Character[]> {
   return apiGet<Character[]>(`/campaigns/${campaignId}/characters`);
@@ -65,4 +65,15 @@ export async function uploadPortrait(campaignId: string, charId: string, file: F
   });
   if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
   return res.json() as Promise<Character>;
+}
+
+export async function parseCharacterSheet(campaignId: string, file: File): Promise<ParsedSheetResult> {
+  const form = new FormData();
+  form.append('file', file);
+  const res = await fetch(`${BASE_URL}/campaigns/${campaignId}/characters/parse-sheet`, {
+    method: 'POST',
+    body: form,
+  });
+  if (!res.ok) throw new Error(`PDF parse failed: ${res.status}`);
+  return res.json() as Promise<ParsedSheetResult>;
 }

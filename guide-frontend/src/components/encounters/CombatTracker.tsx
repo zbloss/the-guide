@@ -5,9 +5,10 @@ interface CombatTrackerProps {
   encounter: EncounterSummary;
   campaignId: string;
   onUpdate: (updated: EncounterSummary) => void;
+  readOnly?: boolean;
 }
 
-export function CombatTracker({ encounter, campaignId, onUpdate }: CombatTrackerProps) {
+export function CombatTracker({ encounter, campaignId, onUpdate, readOnly }: CombatTrackerProps) {
   const sorted = [...encounter.participants].sort((a, b) =>
     b.initiative_total - a.initiative_total || a.id.localeCompare(b.id)
   );
@@ -20,7 +21,7 @@ export function CombatTracker({ encounter, campaignId, onUpdate }: CombatTracker
         {currentParticipant && (
           <span className="current-turn-name">Current Turn: <strong>{currentParticipant.name}</strong></span>
         )}
-        {encounter.status === 'active' && (
+        {encounter.status === 'active' && !readOnly && (
           <span className="keyboard-hint">Press <kbd>Space</kbd> for next turn</span>
         )}
       </div>
@@ -35,7 +36,7 @@ export function CombatTracker({ encounter, campaignId, onUpdate }: CombatTracker
               <th>AC</th>
               <th>Conditions</th>
               <th>Budget</th>
-              <th>Controls</th>
+              {!readOnly && <th>Controls</th>}
             </tr>
           </thead>
           <tbody>
@@ -47,6 +48,7 @@ export function CombatTracker({ encounter, campaignId, onUpdate }: CombatTracker
                 campaignId={campaignId}
                 encounterId={encounter.id}
                 onUpdate={onUpdate}
+                readOnly={readOnly}
               />
             ))}
           </tbody>

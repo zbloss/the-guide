@@ -39,7 +39,8 @@ impl<'a> CampaignRepository<'a> {
 
     pub async fn get_by_id(&self, id: Uuid) -> Result<Campaign> {
         let row = sqlx::query(
-            "SELECT id, name, description, game_system, world_state, share_token, created_at, updated_at \
+            "SELECT id, name, description, game_system, world_state, share_token, \
+             current_chapter, created_at, updated_at \
              FROM campaigns WHERE id = ?",
         )
         .bind(id.to_string())
@@ -52,7 +53,8 @@ impl<'a> CampaignRepository<'a> {
 
     pub async fn list(&self) -> Result<Vec<Campaign>> {
         let rows = sqlx::query(
-            "SELECT id, name, description, game_system, world_state, share_token, created_at, updated_at \
+            "SELECT id, name, description, game_system, world_state, share_token, \
+             current_chapter, created_at, updated_at \
              FROM campaigns ORDER BY created_at DESC",
         )
         .fetch_all(self.pool)
@@ -93,6 +95,15 @@ impl<'a> CampaignRepository<'a> {
                 .await?;
         }
 
+        if let Some(chapter) = &req.current_chapter {
+            sqlx::query("UPDATE campaigns SET current_chapter = ?, updated_at = ? WHERE id = ?")
+                .bind(chapter)
+                .bind(&now)
+                .bind(&id_str)
+                .execute(self.pool)
+                .await?;
+        }
+
         self.get_by_id(id).await
     }
 
@@ -123,7 +134,8 @@ impl<'a> CampaignRepository<'a> {
 
     pub async fn get_by_share_token(&self, token: &str) -> Result<Campaign> {
         let row = sqlx::query(
-            "SELECT id, name, description, game_system, world_state, share_token, created_at, updated_at \
+            "SELECT id, name, description, game_system, world_state, share_token, \
+             current_chapter, created_at, updated_at \
              FROM campaigns WHERE share_token = ?",
         )
         .bind(token)
@@ -207,6 +219,7 @@ fn row_to_campaign(row: SqliteRow) -> Result<Campaign> {
     let created_at_str: String = row.try_get("created_at")?;
     let updated_at_str: String = row.try_get("updated_at")?;
     let share_token: Option<String> = row.try_get("share_token").unwrap_or(None);
+    let current_chapter: Option<String> = row.try_get("current_chapter")?;
 
     Ok(Campaign {
         id: Uuid::parse_str(&id_str).map_err(|e| GuideError::Internal(e.to_string()))?,
@@ -217,6 +230,7 @@ fn row_to_campaign(row: SqliteRow) -> Result<Campaign> {
             .as_deref()
             .and_then(|s| serde_json::from_str(s).ok()),
         share_token,
+        current_chapter,
         created_at: created_at_str.parse().unwrap_or_else(|_| Utc::now()),
         updated_at: updated_at_str.parse().unwrap_or_else(|_| Utc::now()),
     })

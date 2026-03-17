@@ -12,6 +12,7 @@ pub struct Campaign {
     pub game_system: GameSystem,
     pub world_state: Option<WorldState>,
     pub share_token: Option<String>,
+    pub current_chapter: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -37,4 +38,5 @@ pub struct UpdateCampaignRequest {
     pub name: Option<String>,
     pub description: Option<String>,
     pub world_state: Option<WorldState>,
+    pub current_chapter: Option<String>,
 }

@@ -67,6 +67,7 @@ export interface Campaign {
   game_system: GameSystem;
   world_state: WorldState | null;
   share_token: string | null;
+  current_chapter?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -287,6 +288,7 @@ export interface UpdateCampaignRequest {
   description?: string;
   game_system?: GameSystem;
   world_state?: WorldState;
+  current_chapter?: string;
 }
 
 export interface CreateCharacterRequest {
@@ -634,4 +636,88 @@ export interface HealthResponse {
 export interface VersionResponse {
   version: string;
   name: string;
+}
+
+// ==================== DM Prep ====================
+
+export type PrepType = 'session_recap' | 'story_so_far' | 'story_ahead' | 'character_roadmap';
+
+export interface DmPrepResult {
+  id: string;
+  campaign_id: string;
+  prep_type: PrepType;
+  content: string;
+  character_id: string | null;
+  generated_at: string;
+}
+
+export interface SessionRecapRequest {
+  force_regenerate?: boolean;
+}
+
+export interface StoryContextRequest {
+  current_chapter?: string;
+  force_regenerate?: boolean;
+}
+
+export interface CharacterRoadmapRequest {
+  current_chapter?: string;
+  force_regenerate?: boolean;
+}
+
+export interface ParsedSheetResult {
+  name: string;
+  class: string | null;
+  race: string | null;
+  level: number;
+  max_hp: number;
+  armor_class: number;
+  speed: number;
+  ability_scores: AbilityScores;
+  backstory_text: string | null;
+  raw_extracted_text: string;
+  parse_confidence: number;
+}
+
+// ==================== Relationships ====================
+
+export const RELATIONSHIP_TYPES = [
+  'ally', 'enemy', 'rival', 'mentor', 'student', 'family', 'lover',
+  'employer', 'employee', 'friend', 'nemesis', 'neutral', 'unknown',
+] as const;
+
+export type RelationshipType = typeof RELATIONSHIP_TYPES[number];
+
+export interface CharacterRelationship {
+  id: string;
+  campaign_id: string;
+  from_character_id: string;
+  to_character_id: string;
+  relationship_type: string;
+  notes: string | null;
+  created_at: string;
+}
+
+export interface CreateRelationshipRequest {
+  from_character_id: string;
+  to_character_id: string;
+  relationship_type: string;
+  notes?: string;
+}
+
+// ==================== Encounter Replay ====================
+
+export interface EncounterTurnSnapshot {
+  id: string;
+  encounter_id: string;
+  turn_number: number;
+  round_number: number;
+  snapshot: EncounterSummary;
+  recorded_at: string;
+}
+
+// ==================== Voice Transcription ====================
+
+export interface TranscribeResponse {
+  transcript: string;
 }

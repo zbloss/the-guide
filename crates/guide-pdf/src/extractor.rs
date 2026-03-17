@@ -30,6 +30,44 @@ fn pdfium_lib_path() -> Result<&'static std::path::PathBuf> {
     Ok(PDFIUM_LIB_PATH.get_or_init(|| path))
 }
 
+/// Extract raw text from PDF bytes using pdfium's text layer (no vision LLM).
+/// Writes bytes to a temp file, extracts text from each page, then cleans up.
+pub fn extract_text_sync(pdf_bytes: &[u8]) -> Result<String> {
+    use pdfium_render::prelude::*;
+
+    // Write to temp file
+    let temp_path = std::env::temp_dir().join(format!(
+        "guide-sheet-{}.pdf",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
+    std::fs::write(&temp_path, pdf_bytes)
+        .map_err(|e| GuideError::PdfProcessing(format!("failed to write temp pdf: {e}")))?;
+
+    let lib_path = pdfium_lib_path()?;
+    let pdfium = Pdfium::new(
+        Pdfium::bind_to_library(lib_path)
+            .map_err(|e| GuideError::PdfProcessing(format!("pdfium load failed: {e}")))?,
+    );
+
+    let doc = pdfium
+        .load_pdf_from_file(&temp_path, None)
+        .map_err(|e| GuideError::PdfProcessing(format!("PDF open failed: {e}")))?;
+
+    let mut all_text = String::new();
+    for page in doc.pages().iter() {
+        if let Ok(text_obj) = page.text() {
+            all_text.push_str(&text_obj.all());
+            all_text.push('\n');
+        }
+    }
+
+    let _ = std::fs::remove_file(&temp_path);
+    Ok(all_text)
+}
+
 pub struct PageExtraction {
     pub page_num: u32,
     pub raw_text: String,

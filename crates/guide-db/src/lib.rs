@@ -8,12 +8,15 @@ pub mod factions;
 pub mod homebrew;
 pub mod loot;
 pub mod plot_hooks;
+pub mod prep;
 pub mod qdrant;
+pub mod relationships;
 pub mod sessions;
 pub mod templates;
 pub mod webhooks;
 
 pub use plot_hooks::PlotHookRepository;
+pub use prep::DmPrepRepository;
 pub use templates::TemplateRepository;
 pub use webhooks::WebhookRepository;
 

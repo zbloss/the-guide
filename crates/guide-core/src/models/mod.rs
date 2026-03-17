@@ -8,6 +8,8 @@ pub mod faction;
 pub mod homebrew;
 pub mod loot;
 pub mod plot_hook_tracker;
+pub mod prep;
+pub mod relationship;
 pub mod session;
 pub mod shared;
 pub mod template;
@@ -25,6 +27,8 @@ pub use loot::*;
 pub use plot_hook_tracker::{
     CreateTrackedPlotHookRequest, PlotHookStatus, TrackedPlotHook, UpdateTrackedPlotHookRequest,
 };
+pub use prep::*;
+pub use relationship::*;
 pub use session::*;
 pub use shared::*;
 pub use template::{EncounterTemplate, SaveTemplateRequest, TemplateParticipant};

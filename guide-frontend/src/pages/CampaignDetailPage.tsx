@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, NavLink, Outlet } from 'react-router-dom';
 import { useCampaign } from '../hooks/useCampaign';
 import { updateCampaign, generateShareToken } from '../api/campaigns';
@@ -13,10 +13,17 @@ import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { ErrorBanner } from '../components/common/ErrorBanner';
 import { Badge } from '../components/common/Badge';
 import type { Campaign, GameSystem } from '../api/types';
+import { cacheItems } from '../lib/offlineDb';
 
 export function CampaignDetailPage() {
   const { campaignId } = useParams<{ campaignId: string }>();
   const { campaign, loading, error, refetch } = useCampaign(campaignId);
+
+  useEffect(() => {
+    if (campaign) {
+      cacheItems('campaigns', [campaign]).catch(console.error);
+    }
+  }, [campaign]);
 
   const [editingMeta, setEditingMeta] = useState(false);
   const [editName, setEditName] = useState('');
@@ -76,6 +83,8 @@ export function CampaignDetailPage() {
     { label: 'Documents', to: 'documents' },
     { label: 'Chat', to: 'chat' },
     { label: 'Analytics', to: 'analytics' },
+    { label: 'Prep', to: 'prep' },
+    { label: 'Relationships', to: 'relationships' },
   ];
 
   return (

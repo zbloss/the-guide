@@ -12,6 +12,12 @@ pub enum LlmTask {
     BackstoryAnalysis,
     EncounterGeneration,
     SessionSummary,
+    SessionRecap,
+    StorySoFar,
+    StoryAhead,
+    CharacterRoadmap,
+    CharacterSheetParse,
+    AudioTranscription,
     General,
 }
 

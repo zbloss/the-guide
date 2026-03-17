@@ -8,6 +8,7 @@ import { SessionEventList } from '../components/sessions/SessionEventList';
 import { SessionEventForm } from '../components/sessions/SessionEventForm';
 import { SummaryView } from '../components/sessions/SummaryView';
 import { LootLog } from '../components/sessions/LootLog';
+import { VoiceNoteCapture } from '../components/sessions/VoiceNoteCapture';
 import { PerspectiveSelector } from '../components/chat/PerspectiveSelector';
 import { Modal } from '../components/common/Modal';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
@@ -30,7 +31,8 @@ export function SessionDetailPage() {
     [campaignId],
   );
 
-  const [tab, setTab] = useState<'events' | 'summary' | 'debrief' | 'loot' | 'map'>('events');
+  const [tab, setTab] = useState<'events' | 'summary' | 'debrief' | 'loot' | 'map' | 'voice'>('events');
+  const [voiceTranscript, setVoiceTranscript] = useState('');
   const [showAddEvent, setShowAddEvent] = useState(false);
   const [perspective, setPerspective] = useState<Perspective>('dm');
   const [summary, setSummary] = useState<SessionSummary | null>(null);
@@ -165,6 +167,7 @@ export function SessionDetailPage() {
         <button className={`tab-link ${tab === 'debrief' ? 'active' : ''}`} onClick={() => setTab('debrief')}>Debrief</button>
         <button className={`tab-link ${tab === 'loot' ? 'active' : ''}`} onClick={() => setTab('loot')}>Loot</button>
         <button className={`tab-link ${tab === 'map' ? 'active' : ''}`} onClick={() => setTab('map')}>Map</button>
+        <button className={`tab-link ${tab === 'voice' ? 'active' : ''}`} onClick={() => setTab('voice')}>Voice</button>
       </div>
 
       {tab === 'events' && (
@@ -176,12 +179,17 @@ export function SessionDetailPage() {
           {events && <SessionEventList events={events} onDelete={handleDeleteEvent} />}
 
           {showAddEvent && (
-            <Modal title="Add Event" onClose={() => setShowAddEvent(false)}>
+            <Modal title="Add Event" onClose={() => { setShowAddEvent(false); setVoiceTranscript(''); }}>
               {eventError && <ErrorBanner message={eventError} />}
+              {voiceTranscript && (
+                <div style={{ marginBottom: 8, padding: 8, background: 'var(--color-surface-2, #2a2a3e)', borderRadius: 4, fontSize: 13, color: '#ccc' }}>
+                  <strong>Voice transcript:</strong> {voiceTranscript}
+                </div>
+              )}
               <SessionEventForm
                 characters={characters ?? []}
                 onSubmit={handleAddEvent}
-                onCancel={() => setShowAddEvent(false)}
+                onCancel={() => { setShowAddEvent(false); setVoiceTranscript(''); }}
               />
             </Modal>
           )}
@@ -284,6 +292,25 @@ export function SessionDetailPage() {
           ) : (
             <p className="empty-state">No map uploaded for this session yet.</p>
           )}
+        </div>
+      )}
+
+      {tab === 'voice' && (
+        <div className="voice-tab">
+          <div className="section-header">
+            <h3>Voice Notes</h3>
+          </div>
+          <p style={{ color: '#aaa', fontSize: 13, marginBottom: 12 }}>
+            Speak session notes. Save as an event to add them to the session log.
+          </p>
+          <VoiceNoteCapture
+            campaignId={campaignId!}
+            sessionId={sessionId!}
+            onTranscript={(text) => {
+              setVoiceTranscript(text);
+              setShowAddEvent(true);
+            }}
+          />
         </div>
       )}
     </div>
