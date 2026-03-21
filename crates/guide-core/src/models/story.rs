@@ -130,12 +130,17 @@ pub struct PrepopulatedEncounter {
 }
 
 /// LLM output shape for story extraction
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct StoryExtractionResult {
+    #[serde(default)]
     pub arcs: Vec<StoryArcInput>,
+    #[serde(default)]
     pub events: Vec<StoryEventInput>,
+    #[serde(default)]
     pub subplots: Vec<StorySubplotInput>,
+    #[serde(default)]
     pub character_arcs: Vec<CharacterArcInput>,
+    #[serde(default)]
     pub encounters: Vec<PrepopulatedEncounterInput>,
 }
 

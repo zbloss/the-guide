@@ -19,8 +19,8 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
     }
     throw new ApiError(response.status, message);
   }
-  // Handle 204 No Content
-  if (response.status === 204) {
+  // Handle no-body responses
+  if (response.status === 204 || response.status === 202) {
     return undefined as T;
   }
   return response.json() as Promise<T>;

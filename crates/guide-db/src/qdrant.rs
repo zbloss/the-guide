@@ -6,8 +6,8 @@ use guide_core::{
 };
 use qdrant_client::{
     qdrant::{
-        Condition, CreateCollectionBuilder, Distance, Filter, PointStruct, SearchParamsBuilder,
-        SearchPointsBuilder, UpsertPointsBuilder, VectorParamsBuilder,
+        Condition, CreateCollectionBuilder, DeletePointsBuilder, Distance, Filter, PointStruct,
+        SearchParamsBuilder, SearchPointsBuilder, UpsertPointsBuilder, VectorParamsBuilder,
     },
     Qdrant,
 };
@@ -81,8 +81,11 @@ pub async fn upsert_chunks(
                 let entities_json =
                     serde_json::to_string(&chunk.entities).unwrap_or_else(|_| "[]".into());
                 let doc_kind_str = match chunk.document_kind {
+                    DocumentKind::DmGuide => "dm_guide",
+                    DocumentKind::MonsterManual => "monster_manual",
+                    DocumentKind::Srd => "srd",
                     DocumentKind::Campaign => "campaign",
-                    DocumentKind::Rulebook => "rulebook",
+                    DocumentKind::Supplemental => "supplemental",
                 };
 
                 let mut payload: HashMap<String, qdrant_client::qdrant::Value> = HashMap::new();
@@ -171,6 +174,41 @@ pub async fn query_chunks(
         .collect();
 
     Ok(chunks)
+}
+
+pub async fn delete_document_vectors(client: &Qdrant, collection: &str, doc_id: Uuid) -> Result<()> {
+    let exists = client
+        .collection_exists(collection)
+        .await
+        .map_err(|e| GuideError::Qdrant(e.to_string()))?;
+    if !exists {
+        return Ok(());
+    }
+
+    let filter = Filter::must([Condition::matches("source_document_id", doc_id.to_string())]);
+    client
+        .delete_points(DeletePointsBuilder::new(collection).points(filter))
+        .await
+        .map_err(|e| GuideError::Qdrant(e.to_string()))?;
+
+    Ok(())
+}
+
+pub async fn delete_collection(client: &Qdrant, collection: &str) -> Result<()> {
+    let exists = client
+        .collection_exists(collection)
+        .await
+        .map_err(|e| GuideError::Qdrant(e.to_string()))?;
+    if !exists {
+        return Ok(());
+    }
+
+    client
+        .delete_collection(collection)
+        .await
+        .map_err(|e| GuideError::Qdrant(e.to_string()))?;
+
+    Ok(())
 }
 
 pub fn campaign_collection_name(campaign_id: &str) -> String {

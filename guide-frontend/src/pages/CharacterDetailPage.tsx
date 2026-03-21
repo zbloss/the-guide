@@ -239,6 +239,12 @@ export function CharacterDetailPage() {
         <div>
           <Link to={`/campaigns/${campaignId}/characters`} className="breadcrumb">← Characters</Link>
           <h1>{character.name}</h1>
+          <Link
+            to={`/campaigns/${campaignId}/relationships`}
+            style={{ fontSize: 13, color: 'var(--color-primary, #7c6af7)', marginTop: 4, display: 'inline-block' }}
+          >
+            View on Relationship Map →
+          </Link>
         </div>
         <div className="character-type-badges">
           <span className="badge badge-info">{character.character_type}</span>

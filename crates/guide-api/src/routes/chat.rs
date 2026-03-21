@@ -8,7 +8,7 @@ use axum::{
     Json, Router,
 };
 use futures::StreamExt;
-use guide_core::{models::Perspective, GuideError};
+use guide_core::GuideError;
 
 const MAX_MESSAGE_LEN: usize = 4000;
 use serde::Deserialize;
@@ -26,7 +26,6 @@ pub fn router() -> Router<AppState> {
 #[derive(Deserialize, utoipa::ToSchema)]
 pub struct ChatRequest {
     pub message: String,
-    pub perspective: Option<String>,
     pub context_limit: Option<usize>,
 }
 
@@ -64,17 +63,9 @@ async fn chat(
         .into());
     }
 
-    let perspective = match req.perspective.as_deref() {
-        Some("player") => Perspective::Player,
-        _ => Perspective::Dm,
-    };
-    let player_visible_only = perspective == Perspective::Player;
+    let player_visible_only = false;
     let context_limit = req.context_limit.unwrap_or(5);
-    let perspective_str = match perspective {
-        Perspective::Player => "player",
-        Perspective::Dm => "dm",
-    }
-    .to_string();
+    let perspective_str = "dm".to_string();
     let user_message = req.message.clone();
 
     // Retrieve RAG context
@@ -102,10 +93,7 @@ async fn chat(
         .collect::<Vec<_>>()
         .join("\n\n---\n\n");
 
-    let system_prompt = match perspective {
-        Perspective::Dm => prompts::campaign_assistant_dm_system(&context),
-        Perspective::Player => prompts::campaign_assistant_player_system(&context),
-    };
+    let system_prompt = prompts::campaign_assistant_dm_system(&context);
 
     let llm_req = CompletionRequest {
         task: LlmTask::CampaignAssistant,
@@ -122,6 +110,7 @@ async fn chat(
         model_override: None,
         temperature: Some(0.7),
         max_tokens: Some(2048),
+        json_mode: false,
     };
 
     let stream = state.llm.complete_stream(llm_req).await?;

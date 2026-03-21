@@ -24,8 +24,6 @@ pub fn router() -> Router<AppState> {
             post(generate_plot_twist),
         )
         .route("/campaigns/{id}/analytics", get(get_analytics))
-        .route("/campaigns/{id}/share", post(generate_share_token))
-        .route("/view/{token}", get(get_shared_view))
 }
 
 #[utoipa::path(
@@ -117,6 +115,14 @@ async fn delete_campaign(
 ) -> Result<impl IntoResponse, crate::error::AppError> {
     let repo = CampaignRepository::new(&state.db);
     repo.delete(id).await?;
+
+    if let Some(q) = state.qdrant.as_deref() {
+        let col = guide_db::qdrant::campaign_collection_name(&id.to_string());
+        if let Err(e) = guide_db::qdrant::delete_collection(q, &col).await {
+            tracing::warn!("Qdrant collection deletion failed for campaign {id}: {e}");
+        }
+    }
+
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -167,6 +173,7 @@ async fn generate_plot_twist(
         model_override: None,
         temperature: Some(0.9),
         max_tokens: Some(512),
+        json_mode: false,
     };
 
     let resp = state.llm.complete(req).await?;
@@ -186,55 +193,3 @@ async fn get_analytics(
     Ok(Json(data))
 }
 
-async fn generate_share_token(
-    State(state): State<AppState>,
-    Path(campaign_id): Path<Uuid>,
-) -> Result<impl IntoResponse, crate::error::AppError> {
-    let repo = CampaignRepository::new(&state.db);
-    let campaign = repo.generate_share_token(campaign_id).await?;
-    Ok(Json(campaign))
-}
-
-async fn get_shared_view(
-    State(state): State<AppState>,
-    Path(token): Path<String>,
-) -> Result<impl IntoResponse, crate::error::AppError> {
-    use guide_db::{characters::CharacterRepository, sessions::SessionRepository};
-    let repo = CampaignRepository::new(&state.db);
-    let campaign = repo.get_by_share_token(&token).await?;
-
-    let char_repo = CharacterRepository::new(&state.db);
-    let characters = char_repo.list_by_campaign(campaign.id).await.unwrap_or_default();
-    let pc_characters: Vec<_> = characters
-        .into_iter()
-        .filter(|c| matches!(c.character_type, guide_core::models::CharacterType::Pc))
-        .map(|c| serde_json::json!({
-            "name": c.name,
-            "class": c.class,
-            "race": c.race,
-            "level": c.level,
-            "portrait_url": c.portrait_url,
-        }))
-        .collect();
-
-    let session_repo = SessionRepository::new(&state.db);
-    let sessions = session_repo.list_by_campaign(campaign.id).await.unwrap_or_default();
-    let last_session = sessions.first().map(|s| serde_json::json!({
-        "session_number": s.session_number,
-        "title": s.title,
-        "created_at": s.created_at,
-    }));
-
-    Ok(Json(serde_json::json!({
-        "campaign": {
-            "id": campaign.id,
-            "name": campaign.name,
-            "description": campaign.description,
-            "game_system": campaign.game_system,
-            "world_state": campaign.world_state,
-        },
-        "party": pc_characters,
-        "last_session": last_session,
-        "session_count": sessions.len(),
-    })))
-}

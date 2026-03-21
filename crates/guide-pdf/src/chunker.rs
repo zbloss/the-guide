@@ -35,7 +35,7 @@ pub async fn chunk_document(
         for line in page.raw_text.lines() {
             let trimmed = line.trim();
 
-            if trimmed.starts_with("## ") || trimmed.starts_with("### ") {
+            if trimmed.starts_with("## ") || trimmed.starts_with("### ") || looks_like_heading(trimmed) {
                 if !current_lines.is_empty() {
                     candidates.push(SectionCandidate {
                         content: current_lines.join("\n"),
@@ -49,11 +49,15 @@ pub async fn chunk_document(
                 if trimmed.starts_with("## ") {
                     heading_stack.clear();
                     heading_stack.push(trimmed.trim_start_matches("## ").to_string());
-                } else {
+                } else if trimmed.starts_with("### ") {
                     if heading_stack.len() > 1 {
                         heading_stack.truncate(1);
                     }
                     heading_stack.push(trimmed.trim_start_matches("### ").to_string());
+                } else {
+                    // Plain-text heading detected via looks_like_heading
+                    heading_stack.clear();
+                    heading_stack.push(trimmed.to_string());
                 }
 
                 current_page_start = page_num;
@@ -137,6 +141,42 @@ struct SectionCandidate {
     is_player_visible: bool,
 }
 
+fn looks_like_heading(line: &str) -> bool {
+    let t = line.trim();
+    if t.is_empty() || t.len() > 80 {
+        return false;
+    }
+    // Already handled upstream (guard kept for standalone-call safety)
+    if t.starts_with("## ") || t.starts_with("### ") {
+        return false;
+    }
+    let lower = t.to_lowercase();
+
+    // "Chapter N / Part N / Act N / Scene N" — require a digit or uppercase letter immediately
+    // after the keyword space so we don't match ordinary sentences like
+    // "Chapter contains…" or "Act accordingly." or "part of the dungeon".
+    let section_keyword = ["chapter ", "part ", "act ", "scene "].iter().any(|prefix| {
+        if !lower.starts_with(prefix) {
+            return false;
+        }
+        t[prefix.len()..].chars().next().is_some_and(|c| c.is_ascii_digit() || c.is_uppercase())
+    });
+
+    // All-caps title (e.g., "THE AMBER TEMPLE", "CASTLE RAVENLOFT"):
+    // • Every alphabetic character in the line must be uppercase.
+    // • At least one whitespace-separated word must have ≥5 consecutive uppercase alpha chars.
+    //   This excludes common D&D abbreviations (STR, DEX, CON, NPC, ATK, …) and
+    //   single-word stat labels that appear inline in stat blocks.
+    let has_long_caps_word = t.split_whitespace().any(|word| {
+        let alpha: Vec<char> = word.chars().filter(|c| c.is_alphabetic()).collect();
+        alpha.len() >= 5 && alpha.iter().all(|c| c.is_uppercase())
+    });
+    let all_caps_title = has_long_caps_word
+        && t.chars().filter(|c| c.is_alphabetic()).all(|c| c.is_uppercase());
+
+    section_keyword || all_caps_title
+}
+
 fn section_path(stack: &[String]) -> String {
     stack.join(" > ")
 }
@@ -184,6 +224,8 @@ fn tail_overlap(content: &str, overlap: usize) -> Option<String> {
     } else if content.len() <= overlap {
         Some(content.to_string())
     } else {
-        Some(content[content.len() - overlap..].to_string())
+        let start = content.len() - overlap;
+        let start = content.floor_char_boundary(start);
+        Some(content[start..].to_string())
     }
 }

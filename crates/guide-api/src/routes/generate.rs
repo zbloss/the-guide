@@ -83,6 +83,7 @@ async fn generate_encounter(
         model_override: None,
         temperature: Some(0.8),
         max_tokens: Some(4096),
+        json_mode: false,
     };
 
     let resp = state.llm.complete(llm_req).await?;

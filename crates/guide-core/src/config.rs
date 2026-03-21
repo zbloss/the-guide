@@ -19,6 +19,7 @@ pub struct AppConfig {
     pub qdrant_url: String,
     pub qdrant_collection: String,
     pub embedding_dims: u64,
+    pub whisper_model: String,
 }
 
 impl Default for AppConfig {
@@ -39,6 +40,7 @@ impl Default for AppConfig {
             qdrant_url: "http://localhost:6333".into(),
             qdrant_collection: "guide_chunks".into(),
             embedding_dims: 768,
+            whisper_model: "whisper".into(),
         }
     }
 }
@@ -65,6 +67,7 @@ impl AppConfig {
             .set_default("qdrant_url", defaults.qdrant_url)?
             .set_default("qdrant_collection", defaults.qdrant_collection)?
             .set_default("embedding_dims", defaults.embedding_dims as i64)?
+            .set_default("whisper_model", defaults.whisper_model)?
             .add_source(
                 config::Environment::with_prefix("GUIDE")
                     .separator("__")

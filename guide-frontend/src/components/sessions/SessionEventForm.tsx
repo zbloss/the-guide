@@ -7,11 +7,12 @@ interface SessionEventFormProps {
   characters: Character[];
   onSubmit: (data: CreateSessionEventRequest) => Promise<void>;
   onCancel: () => void;
+  initialDescription?: string;
 }
 
-export function SessionEventForm({ characters, onSubmit, onCancel }: SessionEventFormProps) {
+export function SessionEventForm({ characters, onSubmit, onCancel, initialDescription }: SessionEventFormProps) {
   const [eventType, setEventType] = useState<EventType>('combat');
-  const [description, setDescription] = useState('');
+  const [description, setDescription] = useState(initialDescription ?? '');
   const [significance, setSignificance] = useState<EventSignificance>('minor');
   const [playerVisible, setPlayerVisible] = useState(true);
   const [selectedChars, setSelectedChars] = useState<string[]>([]);

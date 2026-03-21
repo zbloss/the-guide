@@ -5,7 +5,10 @@ use futures::stream::BoxStream;
 use guide_core::{AppConfig, Result};
 
 use crate::{
-    client::{CompletionRequest, CompletionResponse, EmbeddingRequest, LlmClient, LlmTask, VisionRequest},
+    client::{
+        AudioRequest, CompletionRequest, CompletionResponse, EmbeddingRequest, LlmClient, LlmTask,
+        VisionRequest,
+    },
     CloudProvider, OllamaProvider,
 };
 
@@ -37,6 +40,7 @@ impl LlmRouter {
             &config.default_model,
             &config.ocr_model,
             &config.embedding_model,
+            &config.whisper_model,
         );
         Self::new(RoutingStrategy::AlwaysLocal, Arc::new(ollama), None)
     }
@@ -63,6 +67,7 @@ impl LlmRouter {
             &config.default_model,
             &config.ocr_model,
             &config.embedding_model,
+            &config.whisper_model,
         );
         let cloud = CloudProvider::new(api_key, model, base_url, label.clone());
 
@@ -80,7 +85,7 @@ impl LlmRouter {
     fn select_provider(&self, task: &LlmTask) -> Arc<dyn LlmClient> {
         // Specialised local-only tasks always go to Ollama
         match task {
-            LlmTask::OcrExtraction | LlmTask::EmbeddingGeneration => {
+            LlmTask::OcrExtraction | LlmTask::EmbeddingGeneration | LlmTask::CharacterSheetOcr => {
                 return Arc::clone(&self.local);
             }
             _ => {}
@@ -143,6 +148,11 @@ impl LlmClient for LlmRouter {
 
     async fn complete_with_vision(&self, req: VisionRequest) -> Result<CompletionResponse> {
         self.local.complete_with_vision(req).await
+    }
+
+    async fn transcribe(&self, req: AudioRequest) -> Result<String> {
+        // Transcription is always local — Whisper runs via Ollama.
+        self.local.transcribe(req).await
     }
 
     fn provider_name(&self) -> &str {

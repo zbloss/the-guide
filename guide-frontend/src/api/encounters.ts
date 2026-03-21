@@ -1,4 +1,4 @@
-import { apiGet, apiPost, apiPut, apiDelete } from './client';
+import { apiGet, apiPost, apiPut, apiDelete, BASE_URL } from './client';
 import type { EncounterSummary, GeneratedEncounter, CreateEncounterRequest, UpdateParticipantRequest, GenerateRequest, EncounterTurnSnapshot } from './types';
 
 export function listEncounters(campaignId: string): Promise<EncounterSummary[]> {
@@ -37,6 +37,27 @@ export function generateEncounter(campaignId: string, data: GenerateRequest): Pr
   return apiPost<GeneratedEncounter>(`/campaigns/${campaignId}/encounters/generate`, data);
 }
 
-export function getEncounterReplay(campaignId: string, encId: string): Promise<EncounterTurnSnapshot[]> {
-  return apiGet<EncounterTurnSnapshot[]>(`/campaigns/${campaignId}/encounters/${encId}/replay`);
+export function getEncounterReplay(
+  campaignId: string,
+  encId: string,
+): Promise<EncounterTurnSnapshot[]> {
+  return new Promise((resolve, reject) => {
+    const url = `${BASE_URL}/campaigns/${campaignId}/encounters/${encId}/replay`;
+    const es = new EventSource(url);
+    const snapshots: EncounterTurnSnapshot[] = [];
+
+    es.addEventListener('snapshot', (e: MessageEvent) => {
+      snapshots.push(JSON.parse(e.data) as EncounterTurnSnapshot);
+    });
+
+    es.addEventListener('done', () => {
+      es.close();
+      resolve(snapshots);
+    });
+
+    es.onerror = () => {
+      es.close();
+      reject(new Error('SSE connection failed'));
+    };
+  });
 }

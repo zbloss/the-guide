@@ -1,20 +1,22 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
-import { useApi } from '../hooks/useApi';
 import { listSessions, createSession, deleteSession, generateSessionPrep } from '../api/sessions';
 import { SessionList } from '../components/sessions/SessionList';
 import { SessionForm } from '../components/sessions/SessionForm';
 import { Modal } from '../components/common/Modal';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { ErrorBanner } from '../components/common/ErrorBanner';
+import { cacheItems, getCachedItems } from '../lib/offlineDb';
+import { useNetworkStatus } from '../hooks/useNetworkStatus';
 import type { Session, CreateSessionRequest } from '../api/types';
 
 export function SessionsPage() {
   const { campaignId } = useParams<{ campaignId: string }>();
-  const { data: sessions, loading, error, refetch } = useApi<Session[]>(
-    () => listSessions(campaignId!),
-    [campaignId],
-  );
+  const { isOnline } = useNetworkStatus();
+  const [sessions, setSessions] = useState<Session[] | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [tick, setTick] = useState(0);
   const [showCreate, setShowCreate] = useState(false);
 
   const [showPrep, setShowPrep] = useState(false);
@@ -24,15 +26,41 @@ export function SessionsPage() {
   const [prepError, setPrepError] = useState('');
   const [prepCopied, setPrepCopied] = useState(false);
 
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    listSessions(campaignId!)
+      .then((result) => {
+        if (!cancelled) {
+          setSessions(result);
+          setLoading(false);
+          cacheItems('sessions', result).catch(console.error);
+        }
+      })
+      .catch(async (err: unknown) => {
+        if (!cancelled) {
+          const cached = await getCachedItems<Session>('sessions');
+          if (cached.length > 0) {
+            setSessions(cached);
+          } else {
+            setError(err instanceof Error ? err.message : String(err));
+          }
+          setLoading(false);
+        }
+      });
+    return () => { cancelled = true; };
+  }, [campaignId, tick]);
+
   const handleCreate = async (data: CreateSessionRequest) => {
     await createSession(campaignId!, data);
     setShowCreate(false);
-    refetch();
+    setTick((t) => t + 1);
   };
 
   const handleDelete = async (id: string) => {
     await deleteSession(campaignId!, id);
-    refetch();
+    setTick((t) => t + 1);
   };
 
   const handleGeneratePrep = async () => {
@@ -70,8 +98,22 @@ export function SessionsPage() {
       <div className="section-header">
         <h2>Sessions</h2>
         <div style={{ display: 'flex', gap: '0.5rem' }}>
-          <button className="btn btn-sm btn-primary" onClick={() => setShowPrep(true)}>Session Prep</button>
-          <button className="btn btn-primary" onClick={() => setShowCreate(true)}>+ New Session</button>
+          <button
+            className="btn btn-sm btn-primary"
+            onClick={() => setShowPrep(true)}
+            disabled={!isOnline}
+            title={!isOnline ? 'Unavailable offline' : undefined}
+          >
+            Session Prep
+          </button>
+          <button
+            className="btn btn-primary"
+            onClick={() => setShowCreate(true)}
+            disabled={!isOnline}
+            title={!isOnline ? 'Unavailable offline' : undefined}
+          >
+            + New Session
+          </button>
         </div>
       </div>
 

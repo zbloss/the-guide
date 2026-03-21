@@ -17,7 +17,9 @@ pub enum LlmTask {
     StoryAhead,
     CharacterRoadmap,
     CharacterSheetParse,
+    CharacterSheetOcr,
     AudioTranscription,
+    StoryExtraction,
     General,
 }
 
@@ -42,6 +44,7 @@ pub struct CompletionRequest {
     pub model_override: Option<String>,
     pub temperature: Option<f32>,
     pub max_tokens: Option<u32>,
+    pub json_mode: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -66,6 +69,20 @@ pub struct VisionRequest {
     pub image_bytes: Vec<u8>,
     pub image_mime_type: String,
     pub model_override: Option<String>,
+    pub max_tokens: Option<u32>,
+    pub temperature: Option<f32>,
+    /// Note: top_k = 50 and repetition_penalty = 1.1 from GLM-OCR reference
+    /// cannot be forwarded via async-openai's OpenAI-compatible builder.
+    pub top_p: Option<f32>,
+}
+
+/// Audio bytes submitted for speech-to-text transcription.
+#[derive(Debug, Clone)]
+pub struct AudioRequest {
+    /// Raw audio bytes (e.g. a WebM or WAV recording).
+    pub audio_bytes: Vec<u8>,
+    /// MIME type of the audio data, e.g. `"audio/webm"`.
+    pub mime_type: String,
 }
 
 #[async_trait]
@@ -77,5 +94,7 @@ pub trait LlmClient: Send + Sync {
     ) -> Result<BoxStream<'static, Result<String>>>;
     async fn embed(&self, req: EmbeddingRequest) -> Result<Vec<f32>>;
     async fn complete_with_vision(&self, req: VisionRequest) -> Result<CompletionResponse>;
+    /// Transcribe audio bytes to text using a Whisper-compatible model.
+    async fn transcribe(&self, req: AudioRequest) -> Result<String>;
     fn provider_name(&self) -> &str;
 }

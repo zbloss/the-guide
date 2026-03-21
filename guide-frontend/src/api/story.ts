@@ -7,11 +7,11 @@ export function listArcs(campaignId: string): Promise<StoryArc[]> {
 }
 
 export function updateArcNotes(campaignId: string, arcId: string, dm_notes: string | null): Promise<void> {
-  return apiPatch<void>(`/campaigns/${campaignId}/story/arcs/${arcId}`, { dm_notes });
+  return apiPatch<void>(`/campaigns/${campaignId}/story/arcs/${arcId}/notes`, { dm_notes });
 }
 
 export function updateArcStatus(campaignId: string, arcId: string, status: string): Promise<void> {
-  return apiPatch<void>(`/campaigns/${campaignId}/story/arcs/${arcId}`, { status });
+  return apiPatch<void>(`/campaigns/${campaignId}/story/arcs/${arcId}/status`, { status });
 }
 
 // Story Events
@@ -21,7 +21,7 @@ export function listEvents(campaignId: string, arcId?: string): Promise<StoryEve
 }
 
 export function updateEventNotes(campaignId: string, eventId: string, dm_notes: string | null): Promise<void> {
-  return apiPatch<void>(`/campaigns/${campaignId}/story/events/${eventId}`, { dm_notes });
+  return apiPatch<void>(`/campaigns/${campaignId}/story/events/${eventId}/notes`, { dm_notes });
 }
 
 // Subplots
@@ -30,11 +30,11 @@ export function listSubplots(campaignId: string): Promise<StorySubplot[]> {
 }
 
 export function updateSubplotNotes(campaignId: string, subplotId: string, dm_notes: string | null): Promise<void> {
-  return apiPatch<void>(`/campaigns/${campaignId}/story/subplots/${subplotId}`, { dm_notes });
+  return apiPatch<void>(`/campaigns/${campaignId}/story/subplots/${subplotId}/notes`, { dm_notes });
 }
 
 export function updateSubplotStatus(campaignId: string, subplotId: string, status: string): Promise<void> {
-  return apiPatch<void>(`/campaigns/${campaignId}/story/subplots/${subplotId}`, { status });
+  return apiPatch<void>(`/campaigns/${campaignId}/story/subplots/${subplotId}/status`, { status });
 }
 
 // Character Arcs
@@ -43,7 +43,7 @@ export function listCharacterArcs(campaignId: string): Promise<CharacterArc[]> {
 }
 
 export function updateCharacterArcNotes(campaignId: string, arcId: string, dm_notes: string | null): Promise<void> {
-  return apiPatch<void>(`/campaigns/${campaignId}/story/character-arcs/${arcId}`, { dm_notes });
+  return apiPatch<void>(`/campaigns/${campaignId}/story/character-arcs/${arcId}/notes`, { dm_notes });
 }
 
 // Prepopulated Encounters
@@ -52,7 +52,7 @@ export function listStoryEncounters(campaignId: string): Promise<PrepopulatedEnc
 }
 
 export function updateStoryEncounterNotes(campaignId: string, encId: string, dm_notes: string | null): Promise<void> {
-  return apiPatch<void>(`/campaigns/${campaignId}/story/encounters/${encId}`, { dm_notes });
+  return apiPatch<void>(`/campaigns/${campaignId}/story/encounters/${encId}/notes`, { dm_notes });
 }
 
 export function activateEncounter(campaignId: string, encId: string): Promise<{ encounter_id: string }> {

@@ -5,7 +5,7 @@ use async_openai::{
         ChatCompletionRequestMessageContentPartText, ChatCompletionRequestSystemMessageArgs,
         ChatCompletionRequestUserMessageArgs, ChatCompletionRequestUserMessageContent,
         ChatCompletionRequestUserMessageContentPart, CreateChatCompletionRequestArgs,
-        CreateEmbeddingRequestArgs, ImageUrl,
+        CreateEmbeddingRequestArgs, ImageUrl, ResponseFormat,
     },
     Client,
 };
@@ -17,8 +17,8 @@ use tracing::{debug, instrument};
 use guide_core::{GuideError, Result};
 
 use crate::client::{
-    CompletionRequest, CompletionResponse, EmbeddingRequest, LlmClient, LlmTask, MessageRole,
-    VisionRequest,
+    AudioRequest, CompletionRequest, CompletionResponse, EmbeddingRequest, LlmClient, LlmTask,
+    MessageRole, VisionRequest,
 };
 
 /// Strip `<think>…</think>` blocks that Qwen3 thinking models embed in content.
@@ -35,6 +35,7 @@ pub struct OllamaProvider {
     default_model: String,
     ocr_model: String,
     embedding_model: String,
+    whisper_model: String,
 }
 
 impl OllamaProvider {
@@ -43,6 +44,7 @@ impl OllamaProvider {
         default_model: impl Into<String>,
         ocr_model: impl Into<String>,
         embedding_model: impl Into<String>,
+        whisper_model: impl Into<String>,
     ) -> Self {
         let base_url = base_url.into();
         let config = OpenAIConfig::new()
@@ -54,6 +56,7 @@ impl OllamaProvider {
             default_model: default_model.into(),
             ocr_model: ocr_model.into(),
             embedding_model: embedding_model.into(),
+            whisper_model: whisper_model.into(),
         }
     }
 
@@ -62,7 +65,7 @@ impl OllamaProvider {
             return m.to_string();
         }
         match task {
-            LlmTask::OcrExtraction => self.ocr_model.clone(),
+            LlmTask::OcrExtraction | LlmTask::CharacterSheetOcr => self.ocr_model.clone(),
             LlmTask::EmbeddingGeneration => self.embedding_model.clone(),
             _ => self.default_model.clone(),
         }
@@ -112,6 +115,9 @@ impl LlmClient for OllamaProvider {
         }
         if let Some(max) = req.max_tokens {
             builder.max_tokens(max as u16);
+        }
+        if req.json_mode {
+            builder.response_format(ResponseFormat::JsonObject);
         }
         let request = builder.build().map_err(|e| GuideError::Llm(e.to_string()))?;
 
@@ -301,16 +307,23 @@ impl LlmClient for OllamaProvider {
             ),
         ]);
 
-        let request = CreateChatCompletionRequestArgs::default()
-            .model(model.clone())
-            .messages(vec![ChatCompletionRequestMessage::User(
-                ChatCompletionRequestUserMessageArgs::default()
-                    .content(content)
-                    .build()
-                    .map_err(|e| GuideError::Llm(e.to_string()))?,
-            )])
-            .build()
-            .map_err(|e| GuideError::Llm(e.to_string()))?;
+        let mut builder = CreateChatCompletionRequestArgs::default();
+        builder.model(model.clone()).messages(vec![ChatCompletionRequestMessage::User(
+            ChatCompletionRequestUserMessageArgs::default()
+                .content(content)
+                .build()
+                .map_err(|e| GuideError::Llm(e.to_string()))?,
+        )]);
+        if let Some(temp) = req.temperature {
+            builder.temperature(temp);
+        }
+        if let Some(max) = req.max_tokens {
+            builder.max_tokens(max as u16);
+        }
+        if let Some(top_p) = req.top_p {
+            builder.top_p(top_p);
+        }
+        let request = builder.build().map_err(|e| GuideError::Llm(e.to_string()))?;
 
         let response = self
             .client
@@ -338,6 +351,32 @@ impl LlmClient for OllamaProvider {
             prompt_tokens,
             completion_tokens,
         })
+    }
+
+    async fn transcribe(&self, req: AudioRequest) -> Result<String> {
+        use async_openai::types::{AudioInput, CreateTranscriptionRequestArgs, InputSource};
+
+        let audio_input = AudioInput {
+            source: InputSource::VecU8 {
+                filename: "audio.webm".to_string(),
+                vec: req.audio_bytes,
+            },
+        };
+
+        let transcription_req = CreateTranscriptionRequestArgs::default()
+            .file(audio_input)
+            .model(self.whisper_model.clone())
+            .build()
+            .map_err(|e| GuideError::Llm(e.to_string()))?;
+
+        let response = self
+            .client
+            .audio()
+            .transcribe(transcription_req)
+            .await
+            .map_err(|e| GuideError::Llm(e.to_string()))?;
+
+        Ok(response.text)
     }
 
     fn provider_name(&self) -> &str {

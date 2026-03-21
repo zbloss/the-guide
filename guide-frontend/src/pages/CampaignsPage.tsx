@@ -1,27 +1,50 @@
-import { useState } from 'react';
-import { useApi } from '../hooks/useApi';
-import { listCampaigns, createCampaign, deleteCampaign } from '../api/campaigns';
+import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { listCampaigns, deleteCampaign } from '../api/campaigns';
 import { CampaignCard } from '../components/campaigns/CampaignCard';
-import { CampaignForm } from '../components/campaigns/CampaignForm';
-import { Modal } from '../components/common/Modal';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { ErrorBanner } from '../components/common/ErrorBanner';
-import type { Campaign, CreateCampaignRequest } from '../api/types';
+import { cacheItems, getCachedItems } from '../lib/offlineDb';
+import { useNetworkStatus } from '../hooks/useNetworkStatus';
+import type { Campaign } from '../api/types';
 
 export function CampaignsPage() {
-  const { data: campaigns, loading, error, refetch } = useApi<Campaign[]>(listCampaigns, []);
-  const [showCreate, setShowCreate] = useState(false);
+  const navigate = useNavigate();
+  const { isOnline } = useNetworkStatus();
+  const [campaigns, setCampaigns] = useState<Campaign[] | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [tick, setTick] = useState(0);
 
-  const handleCreate = async (data: CreateCampaignRequest) => {
-    await createCampaign(data);
-    setShowCreate(false);
-    refetch();
-    window.dispatchEvent(new CustomEvent('campaigns-changed'));
-  };
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    listCampaigns()
+      .then((result) => {
+        if (!cancelled) {
+          setCampaigns(result);
+          setLoading(false);
+          cacheItems('campaigns', result).catch(console.error);
+        }
+      })
+      .catch(async (err: unknown) => {
+        if (!cancelled) {
+          const cached = await getCachedItems<Campaign>('campaigns');
+          if (cached.length > 0) {
+            setCampaigns(cached);
+          } else {
+            setError(err instanceof Error ? err.message : String(err));
+          }
+          setLoading(false);
+        }
+      });
+    return () => { cancelled = true; };
+  }, [tick]);
 
   const handleDelete = async (id: string) => {
     await deleteCampaign(id);
-    refetch();
+    setTick((t) => t + 1);
     window.dispatchEvent(new CustomEvent('campaigns-changed'));
   };
 
@@ -29,7 +52,12 @@ export function CampaignsPage() {
     <div className="page">
       <div className="page-header">
         <h1>Campaigns</h1>
-        <button className="btn btn-primary" onClick={() => setShowCreate(true)}>
+        <button
+          className="btn btn-primary"
+          onClick={() => navigate('/campaigns/new')}
+          disabled={!isOnline}
+          title={!isOnline ? 'Unavailable offline' : undefined}
+        >
           + New Campaign
         </button>
       </div>
@@ -46,12 +74,6 @@ export function CampaignsPage() {
             <CampaignCard key={c.id} campaign={c} onDelete={handleDelete} />
           ))}
         </div>
-      )}
-
-      {showCreate && (
-        <Modal title="New Campaign" onClose={() => setShowCreate(false)}>
-          <CampaignForm onSubmit={handleCreate} onCancel={() => setShowCreate(false)} />
-        </Modal>
       )}
     </div>
   );

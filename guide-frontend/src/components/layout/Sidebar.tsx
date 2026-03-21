@@ -86,6 +86,9 @@ export function Sidebar() {
         <NavLink to="/health" className={({ isActive }) => `sidebar-link ${isActive ? 'active' : ''}`}>
           🩺 Health
         </NavLink>
+        <NavLink to="/admin" className={({ isActive }) => `sidebar-link ${isActive ? 'active' : ''}`}>
+          ⚙️ Admin
+        </NavLink>
       </div>
     </nav>
   );

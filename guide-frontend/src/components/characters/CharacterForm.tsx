@@ -2,10 +2,25 @@ import { useState } from 'react';
 import { FormField } from '../common/FormField';
 import type { CreateCharacterRequest, CharacterType } from '../../api/types';
 
+interface ParsedExtras {
+  parse_confidence?: number;
+  background?: string | null;
+  languages?: string[];
+  proficiencies?: string[];
+  equipment?: string[];
+  features_and_traits?: string[];
+  personality_traits?: string | null;
+  ideals?: string | null;
+  bonds?: string | null;
+  flaws?: string | null;
+  hit_dice?: string | null;
+  experience_points?: number | null;
+}
+
 interface CharacterFormProps {
   onSubmit: (data: CreateCharacterRequest) => Promise<void>;
   onCancel: () => void;
-  initialValues?: Partial<CreateCharacterRequest & { parse_confidence?: number }>;
+  initialValues?: Partial<CreateCharacterRequest & ParsedExtras>;
 }
 
 export function CharacterForm({ onSubmit, onCancel, initialValues }: CharacterFormProps) {
@@ -110,6 +125,64 @@ export function CharacterForm({ onSubmit, onCancel, initialValues }: CharacterFo
       <FormField label="Backstory" htmlFor="ch-bs">
         <textarea id="ch-bs" className="form-input" value={backstory} onChange={(e) => setBackstory(e.target.value)} rows={4} placeholder="Character backstory…" />
       </FormField>
+
+      {/* Read-only section for extra parsed data from PDF import */}
+      {initialValues && (
+        initialValues.background ||
+        (initialValues.languages && initialValues.languages.length > 0) ||
+        (initialValues.proficiencies && initialValues.proficiencies.length > 0) ||
+        (initialValues.equipment && initialValues.equipment.length > 0) ||
+        (initialValues.features_and_traits && initialValues.features_and_traits.length > 0) ||
+        initialValues.personality_traits ||
+        initialValues.ideals ||
+        initialValues.bonds ||
+        initialValues.flaws
+      ) && (
+        <div className="form-section-label" style={{ marginTop: 16 }}>Parsed Character Info (read-only)</div>
+      )}
+      {initialValues?.background && (
+        <div className="form-parsed-row"><strong>Background:</strong> {initialValues.background}</div>
+      )}
+      {initialValues?.hit_dice && (
+        <div className="form-parsed-row"><strong>Hit Dice:</strong> {initialValues.hit_dice}</div>
+      )}
+      {initialValues?.experience_points != null && (
+        <div className="form-parsed-row"><strong>Experience Points:</strong> {initialValues.experience_points}</div>
+      )}
+      {initialValues?.languages && initialValues.languages.length > 0 && (
+        <div className="form-parsed-row"><strong>Languages:</strong> {initialValues.languages.join(', ')}</div>
+      )}
+      {initialValues?.proficiencies && initialValues.proficiencies.length > 0 && (
+        <div className="form-parsed-row"><strong>Proficiencies:</strong> {initialValues.proficiencies.join(', ')}</div>
+      )}
+      {initialValues?.equipment && initialValues.equipment.length > 0 && (
+        <div className="form-parsed-row">
+          <strong>Equipment:</strong>
+          <ul style={{ margin: '4px 0 0 16px', padding: 0 }}>
+            {initialValues.equipment.map((item, i) => <li key={i}>{item}</li>)}
+          </ul>
+        </div>
+      )}
+      {initialValues?.features_and_traits && initialValues.features_and_traits.length > 0 && (
+        <div className="form-parsed-row">
+          <strong>Features &amp; Traits:</strong>
+          <ul style={{ margin: '4px 0 0 16px', padding: 0 }}>
+            {initialValues.features_and_traits.map((f, i) => <li key={i}>{f}</li>)}
+          </ul>
+        </div>
+      )}
+      {initialValues?.personality_traits && (
+        <div className="form-parsed-row"><strong>Personality Traits:</strong> {initialValues.personality_traits}</div>
+      )}
+      {initialValues?.ideals && (
+        <div className="form-parsed-row"><strong>Ideals:</strong> {initialValues.ideals}</div>
+      )}
+      {initialValues?.bonds && (
+        <div className="form-parsed-row"><strong>Bonds:</strong> {initialValues.bonds}</div>
+      )}
+      {initialValues?.flaws && (
+        <div className="form-parsed-row"><strong>Flaws:</strong> {initialValues.flaws}</div>
+      )}
 
       <div className="form-actions">
         <button type="submit" className="btn btn-primary" disabled={submitting}>

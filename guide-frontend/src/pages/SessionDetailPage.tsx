@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useApi } from '../hooks/useApi';
 import { getSession, startSession, endSession, listEvents, createEvent, getSessionSummary, deleteEvent, generateDebrief } from '../api/sessions';
@@ -9,11 +9,11 @@ import { SessionEventForm } from '../components/sessions/SessionEventForm';
 import { SummaryView } from '../components/sessions/SummaryView';
 import { LootLog } from '../components/sessions/LootLog';
 import { VoiceNoteCapture } from '../components/sessions/VoiceNoteCapture';
-import { PerspectiveSelector } from '../components/chat/PerspectiveSelector';
 import { Modal } from '../components/common/Modal';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { ErrorBanner } from '../components/common/ErrorBanner';
 import type { Session, SessionEvent, SessionSummary, Perspective, Character, CreateSessionEventRequest } from '../api/types';
+// Perspective is always 'dm' — player-facing features removed
 import { deriveSessionStatus } from '../api/types';
 
 export function SessionDetailPage() {
@@ -34,7 +34,7 @@ export function SessionDetailPage() {
   const [tab, setTab] = useState<'events' | 'summary' | 'debrief' | 'loot' | 'map' | 'voice'>('events');
   const [voiceTranscript, setVoiceTranscript] = useState('');
   const [showAddEvent, setShowAddEvent] = useState(false);
-  const [perspective, setPerspective] = useState<Perspective>('dm');
+  const perspective: Perspective = 'dm';
   const [summary, setSummary] = useState<SessionSummary | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [summaryError, setSummaryError] = useState('');
@@ -52,7 +52,7 @@ export function SessionDetailPage() {
   const [debriefError, setDebriefError] = useState('');
   const [showDebriefPanel, setShowDebriefPanel] = useState(false);
 
-  useEffect(() => { setSummary(null); }, [perspective]);
+  // perspective is always 'dm' — no need to reset summary on change
 
   const handleStart = async () => {
     setActionError('');
@@ -190,6 +190,7 @@ export function SessionDetailPage() {
                 characters={characters ?? []}
                 onSubmit={handleAddEvent}
                 onCancel={() => { setShowAddEvent(false); setVoiceTranscript(''); }}
+                initialDescription={voiceTranscript || undefined}
               />
             </Modal>
           )}
@@ -199,7 +200,6 @@ export function SessionDetailPage() {
       {tab === 'summary' && (
         <div className="summary-tab">
           <div className="summary-controls">
-            <PerspectiveSelector value={perspective} onChange={setPerspective} disabled={summaryLoading} />
             <button
               className="btn btn-primary"
               onClick={handleGenerateSummary}

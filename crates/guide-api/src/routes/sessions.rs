@@ -8,7 +8,7 @@ use axum::{
 };
 use guide_core::{
     models::{
-        CreateSessionEventRequest, CreateSessionRequest, ImprovPromptResponse, Perspective,
+        CreateSessionEventRequest, CreateSessionRequest, ImprovPromptResponse,
         Session, SessionEvent, SessionSummary,
     },
     GuideError,
@@ -298,10 +298,11 @@ async fn get_summary(
 ) -> Result<impl IntoResponse, crate::error::AppError> {
     use guide_llm::{prompts, CompletionRequest, LlmTask, Message, MessageRole};
 
-    let perspective = match q.perspective.as_deref().map(str::to_lowercase).as_deref() {
-        Some("player") => Perspective::Player,
-        _ => Perspective::Dm,
-    };
+    if q.perspective.as_deref().map(str::to_lowercase).as_deref() == Some("player") {
+        return Err(
+            GuideError::InvalidInput("Player perspective is no longer supported".into()).into()
+        );
+    }
 
     let event_repo = SessionEventRepository::new(&state.db);
     let events = event_repo.list_by_session(session_id).await?;
@@ -318,10 +319,7 @@ async fn get_summary(
         .collect::<Vec<_>>()
         .join("\n");
 
-    let system_prompt = match perspective {
-        Perspective::Dm => prompts::session_summary_dm_system().to_string(),
-        Perspective::Player => prompts::session_summary_player_system().to_string(),
-    };
+    let system_prompt = prompts::session_summary_dm_system().to_string();
 
     let req = CompletionRequest {
         task: LlmTask::SessionSummary,
@@ -338,13 +336,14 @@ async fn get_summary(
         model_override: None,
         temperature: Some(0.7),
         max_tokens: Some(2048),
+        json_mode: false,
     };
 
     let resp = state.llm.complete(req).await?;
 
     Ok(Json(serde_json::json!({
         "session_id": session_id,
-        "perspective": perspective,
+        "perspective": "dm",
         "content": resp.content,
         "generated_at": chrono::Utc::now().to_rfc3339(),
     })))
@@ -376,10 +375,11 @@ async fn export_summary(
 ) -> Result<Response, crate::error::AppError> {
     use guide_llm::{prompts, CompletionRequest, LlmTask, Message, MessageRole};
 
-    let perspective = match q.perspective.as_deref().map(str::to_lowercase).as_deref() {
-        Some("player") => Perspective::Player,
-        _ => Perspective::Dm,
-    };
+    if q.perspective.as_deref().map(str::to_lowercase).as_deref() == Some("player") {
+        return Err(
+            GuideError::InvalidInput("Player perspective is no longer supported".into()).into()
+        );
+    }
 
     let session_repo = SessionRepository::new(&state.db);
     let session = session_repo.get_by_id(session_id).await?;
@@ -397,10 +397,7 @@ async fn export_summary(
         .collect::<Vec<_>>()
         .join("\n");
 
-    let system_prompt = match perspective {
-        Perspective::Dm => prompts::session_summary_dm_system().to_string(),
-        Perspective::Player => prompts::session_summary_player_system().to_string(),
-    };
+    let system_prompt = prompts::session_summary_dm_system().to_string();
 
     let req = CompletionRequest {
         task: LlmTask::SessionSummary,
@@ -417,18 +414,14 @@ async fn export_summary(
         model_override: None,
         temperature: Some(0.7),
         max_tokens: Some(2048),
+        json_mode: false,
     };
 
     let resp = state.llm.complete(req).await?;
 
-    let perspective_label = match perspective {
-        Perspective::Dm => "DM",
-        Perspective::Player => "Player",
-    };
     let header_text = format!(
-        "# Session {} Summary — {} Perspective\n_Generated: {}_\n\n",
+        "# Session {} Summary — DM Perspective\n_Generated: {}_\n\n",
         session.session_number,
-        perspective_label,
         chrono::Utc::now().to_rfc3339(),
     );
     let content = format!("{}{}", header_text, resp.content);
@@ -498,6 +491,7 @@ async fn get_improv_prompt(
         model_override: None,
         temperature: Some(0.9),
         max_tokens: Some(512),
+        json_mode: false,
     };
 
     let resp = state.llm.complete(req).await?;
@@ -592,6 +586,7 @@ async fn generate_debrief(
         model_override: None,
         temperature: Some(0.7),
         max_tokens: Some(1024),
+        json_mode: false,
     };
 
     let resp = state.llm.complete(req).await?;
@@ -672,6 +667,7 @@ async fn session_prep(
         model_override: None,
         temperature: Some(0.8),
         max_tokens: Some(1500),
+        json_mode: false,
     };
 
     let resp = state.llm.complete(req).await?;
@@ -723,7 +719,7 @@ async fn upload_map(
 }
 
 async fn transcribe_audio(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Path((_campaign_id, _session_id)): Path<(Uuid, Uuid)>,
     mut multipart: Multipart,
 ) -> Result<impl IntoResponse, crate::error::AppError> {
@@ -745,11 +741,14 @@ async fn transcribe_audio(
         }
     }
 
-    let _bytes = audio_bytes.ok_or_else(|| {
+    let bytes = audio_bytes.ok_or_else(|| {
         crate::error::AppError(guide_core::GuideError::InvalidInput("No audio field".into()))
     })?;
 
-    // Stub — returns placeholder when no whisper model is configured.
-    // A real implementation would call Ollama's whisper endpoint.
-    Ok(Json(serde_json::json!({ "transcript": "" })))
+    let req = guide_llm::AudioRequest {
+        audio_bytes: bytes,
+        mime_type: "audio/webm".to_string(),
+    };
+    let transcript = state.llm.transcribe(req).await.unwrap_or_default();
+    Ok(Json(serde_json::json!({ "transcript": transcript })))
 }

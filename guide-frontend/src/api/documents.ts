@@ -1,14 +1,13 @@
-import { apiGet, apiPost, apiMultipart } from './client';
-import type { CampaignDocument, GlobalDocument, RankedChunk } from './types';
+import { apiGet, apiPost, apiMultipart, apiDelete } from './client';
+import type { CampaignDocument, DocumentPageOcr, GlobalDocument, RankedChunk } from './types';
 
 // Campaign documents
 export function listCampaignDocs(campaignId: string): Promise<CampaignDocument[]> {
   return apiGet<CampaignDocument[]>(`/campaigns/${campaignId}/documents`);
 }
 
-export function uploadCampaignDoc(campaignId: string, file: File): Promise<CampaignDocument> {
-  const fd = new FormData();
-  fd.append('file', file);
+export function uploadCampaignDoc(campaignId: string, fileOrForm: File | FormData): Promise<CampaignDocument> {
+  const fd = fileOrForm instanceof FormData ? fileOrForm : (() => { const f = new FormData(); f.append('file', fileOrForm); return f; })();
   return apiMultipart<CampaignDocument>(`/campaigns/${campaignId}/documents`, fd);
 }
 
@@ -37,6 +36,18 @@ export function getGlobalDoc(docId: string): Promise<GlobalDocument> {
 
 export function ingestGlobalDoc(docId: string): Promise<GlobalDocument> {
   return apiPost<GlobalDocument>(`/documents/${docId}/ingest`);
+}
+
+export function deleteCampaignDoc(campaignId: string, docId: string): Promise<void> {
+  return apiDelete(`/campaigns/${campaignId}/documents/${docId}`);
+}
+
+export function deleteGlobalDoc(docId: string): Promise<void> {
+  return apiDelete(`/documents/${docId}`);
+}
+
+export function getCampaignDocPages(campaignId: string, docId: string): Promise<DocumentPageOcr[]> {
+  return apiGet<DocumentPageOcr[]>(`/campaigns/${campaignId}/documents/${docId}/pages`);
 }
 
 // Search

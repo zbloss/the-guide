@@ -1,15 +1,31 @@
 import { useState, useRef, useEffect } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, Link } from 'react-router-dom';
 import { useApi } from '../hooks/useApi';
 import { listCharacters } from '../api/characters';
-import { listRelationships, createRelationship, deleteRelationship } from '../api/relationships';
+import { listRelationships, createRelationship, deleteRelationship, updateRelationship } from '../api/relationships';
 import { Modal } from '../components/common/Modal';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { ErrorBanner } from '../components/common/ErrorBanner';
-import type { Character, CharacterRelationship, CreateRelationshipRequest } from '../api/types';
+import type { Character, CharacterRelationship, CreateRelationshipRequest, UpdateRelationshipRequest } from '../api/types';
 import { RELATIONSHIP_TYPES } from '../api/types';
 
 interface NodePos { x: number; y: number; vx: number; vy: number; }
+
+const EDGE_COLORS: Record<string, string> = {
+  ally: '#22c55e',
+  enemy: '#ef4444',
+  rival: '#f97316',
+  neutral: '#94a3b8',
+  friend: '#3b82f6',
+  family: '#a855f7',
+  mentor: '#eab308',
+};
+
+const DEFAULT_EDGE_COLOR = '#94a3b8';
+
+function getEdgeColor(relationshipType: string): string {
+  return EDGE_COLORS[relationshipType] ?? DEFAULT_EDGE_COLOR;
+}
 
 function useForceLayout(nodeIds: string[], links: { source: string; target: string }[], width: number, height: number) {
   const [positions, setPositions] = useState<Record<string, NodePos>>({});
@@ -97,6 +113,13 @@ export function RelationshipMapPage() {
   const [relNotes, setRelNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
+  // Inline edit state
+  const [editingRelId, setEditingRelId] = useState<string | null>(null);
+  const [editRelType, setEditRelType] = useState('');
+  const [editRelNotes, setEditRelNotes] = useState('');
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState('');
+
   const svgRef = useRef<SVGSVGElement>(null);
   const [svgSize, setSvgSize] = useState({ width: 800, height: 500 });
 
@@ -159,6 +182,38 @@ export function RelationshipMapPage() {
     }
   };
 
+  const handleStartEdit = (rel: CharacterRelationship) => {
+    setEditingRelId(rel.id);
+    setEditRelType(rel.relationship_type);
+    setEditRelNotes(rel.notes ?? '');
+    setEditError('');
+  };
+
+  const handleCancelEdit = () => {
+    setEditingRelId(null);
+    setEditRelType('');
+    setEditRelNotes('');
+    setEditError('');
+  };
+
+  const handleSaveEdit = async (relId: string) => {
+    setEditSaving(true);
+    setEditError('');
+    try {
+      const req: UpdateRelationshipRequest = {
+        relationship_type: editRelType || undefined,
+        notes: editRelNotes.trim() || undefined,
+      };
+      await updateRelationship(campaignId!, relId, req);
+      setEditingRelId(null);
+      refetchRels();
+    } catch (e: unknown) {
+      setEditError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setEditSaving(false);
+    }
+  };
+
   if (charsLoading || relsLoading) return <div className="page"><LoadingSpinner /></div>;
   if (charsError) return <div className="page"><ErrorBanner message={charsError} /></div>;
   if (relsError) return <div className="page"><ErrorBanner message={relsError} /></div>;
@@ -168,6 +223,9 @@ export function RelationshipMapPage() {
     npc: '#4caf8f',
     monster: '#e05a5a',
   };
+
+  // Determine which relationship types are actually used so the legend stays relevant
+  const usedTypes = Array.from(new Set((relationships ?? []).map((r) => r.relationship_type)));
 
   return (
     <div className="page-section">
@@ -198,11 +256,12 @@ export function RelationshipMapPage() {
               if (!a || !b) return null;
               const mx = (a.x + b.x) / 2;
               const my = (a.y + b.y) / 2;
+              const edgeColor = getEdgeColor(rel.relationship_type);
               return (
                 <g key={rel.id}>
                   <line
                     x1={a.x} y1={a.y} x2={b.x} y2={b.y}
-                    stroke="#555" strokeWidth={2}
+                    stroke={edgeColor} strokeWidth={2}
                     markerEnd="url(#arrow)"
                   />
                   <text x={mx} y={my - 4} textAnchor="middle" fill="#aaa" fontSize={10}>
@@ -241,17 +300,36 @@ export function RelationshipMapPage() {
               );
             })}
           </svg>
+
+          {/* Color Legend */}
+          {usedTypes.length > 0 && (
+            <div style={{ padding: '8px 12px', display: 'flex', flexWrap: 'wrap', gap: 10, borderTop: '1px solid var(--color-border, #333)', background: 'var(--color-surface, #1e1e2e)' }}>
+              {usedTypes.map((type) => (
+                <div key={type} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, color: '#ccc' }}>
+                  <span style={{ display: 'inline-block', width: 24, height: 3, borderRadius: 2, background: getEdgeColor(type) }} />
+                  {type}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {selectedChar && (
-          <div style={{ width: 240, padding: 16, border: '1px solid var(--color-border, #333)', borderRadius: 8, background: 'var(--color-surface, #1e1e2e)' }}>
-            <h3 style={{ margin: '0 0 8px' }}>{selectedChar.name}</h3>
+          <div style={{ width: 260, padding: 16, border: '1px solid var(--color-border, #333)', borderRadius: 8, background: 'var(--color-surface, #1e1e2e)' }}>
+            <h3 style={{ margin: '0 0 4px' }}>{selectedChar.name}</h3>
+            <Link
+              to={`/campaigns/${campaignId}/characters/${selectedCharId}`}
+              style={{ display: 'inline-block', marginBottom: 8, fontSize: 12, color: 'var(--color-primary, #7c6af7)' }}
+            >
+              View character detail →
+            </Link>
             <p style={{ margin: '0 0 4px', fontSize: 13, color: '#aaa' }}>
               {selectedChar.character_type} {selectedChar.class ? `· ${selectedChar.class}` : ''} {selectedChar.race ? `· ${selectedChar.race}` : ''}
             </p>
             <p style={{ margin: '0 0 12px', fontSize: 13, color: '#aaa' }}>Level {selectedChar.level}</p>
 
             <h4 style={{ margin: '0 0 8px', fontSize: 13 }}>Relationships</h4>
+            {editError && <div className="form-error-banner" style={{ fontSize: 12, marginBottom: 8 }}>{editError}</div>}
             {selectedRels.length === 0 ? (
               <p style={{ fontSize: 12, color: '#666' }}>No relationships yet.</p>
             ) : (
@@ -260,16 +338,87 @@ export function RelationshipMapPage() {
                   const otherId = rel.from_character_id === selectedCharId ? rel.to_character_id : rel.from_character_id;
                   const other = charMap.get(otherId);
                   const direction = rel.from_character_id === selectedCharId ? '→' : '←';
+                  const isEditing = editingRelId === rel.id;
+
                   return (
-                    <li key={rel.id} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6, fontSize: 12 }}>
-                      <span style={{ flex: 1 }}>{direction} {other?.name ?? 'Unknown'}: <em>{rel.relationship_type}</em></span>
-                      <button
-                        className="btn btn-sm"
-                        style={{ padding: '2px 6px', fontSize: 11 }}
-                        onClick={() => handleDeleteRel(rel.id)}
-                      >
-                        ✕
-                      </button>
+                    <li key={rel.id} style={{ marginBottom: 10, fontSize: 12, borderBottom: '1px solid var(--color-border, #2a2a3a)', paddingBottom: 8 }}>
+                      {isEditing ? (
+                        <div>
+                          <div style={{ marginBottom: 4, color: '#aaa' }}>
+                            {direction} {other?.name ?? 'Unknown'}
+                          </div>
+                          <div className="form-field" style={{ marginBottom: 4 }}>
+                            <select
+                              className="form-input"
+                              style={{ fontSize: 12, padding: '2px 4px' }}
+                              value={editRelType}
+                              onChange={(e) => setEditRelType(e.target.value)}
+                            >
+                              {RELATIONSHIP_TYPES.map((t) => (
+                                <option key={t} value={t}>{t}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="form-field" style={{ marginBottom: 6 }}>
+                            <textarea
+                              className="form-input"
+                              style={{ fontSize: 12, padding: '2px 4px', resize: 'vertical' }}
+                              rows={2}
+                              value={editRelNotes}
+                              onChange={(e) => setEditRelNotes(e.target.value)}
+                              placeholder="Notes (optional)…"
+                            />
+                          </div>
+                          <div style={{ display: 'flex', gap: 4 }}>
+                            <button
+                              className="btn btn-primary btn-sm"
+                              style={{ fontSize: 11, padding: '2px 8px' }}
+                              onClick={() => void handleSaveEdit(rel.id)}
+                              disabled={editSaving}
+                            >
+                              {editSaving ? 'Saving…' : 'Save'}
+                            </button>
+                            <button
+                              className="btn btn-sm"
+                              style={{ fontSize: 11, padding: '2px 8px' }}
+                              onClick={handleCancelEdit}
+                              disabled={editSaving}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
+                          <div style={{ flex: 1 }}>
+                            <div>
+                              <span style={{ color: getEdgeColor(rel.relationship_type), fontWeight: 600 }}>
+                                {direction}
+                              </span>
+                              {' '}{other?.name ?? 'Unknown'}: <em>{rel.relationship_type}</em>
+                            </div>
+                            {rel.notes && (
+                              <div style={{ color: '#888', marginTop: 2, fontSize: 11 }}>{rel.notes}</div>
+                            )}
+                          </div>
+                          <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                            <button
+                              className="btn btn-sm"
+                              style={{ padding: '2px 6px', fontSize: 11 }}
+                              onClick={() => handleStartEdit(rel)}
+                            >
+                              ✏
+                            </button>
+                            <button
+                              className="btn btn-sm"
+                              style={{ padding: '2px 6px', fontSize: 11 }}
+                              onClick={() => void handleDeleteRel(rel.id)}
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </li>
                   );
                 })}

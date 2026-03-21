@@ -1,9 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
-import { PerspectiveSelector } from './PerspectiveSelector';
 import { MessageBubble } from './MessageBubble';
 import { ErrorBanner } from '../common/ErrorBanner';
 import { useChat } from '../../hooks/useChat';
-import type { Perspective } from '../../api/types';
 
 interface ChatPanelProps {
   campaignId: string;
@@ -11,7 +9,6 @@ interface ChatPanelProps {
 
 export function ChatPanel({ campaignId }: ChatPanelProps) {
   const [input, setInput] = useState('');
-  const [perspective, setPerspective] = useState<Perspective>('dm');
   const { messages, streaming, error, sendMessage, cancel, clearMessages } = useChat(campaignId);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -23,7 +20,7 @@ export function ChatPanel({ campaignId }: ChatPanelProps) {
     const text = input.trim();
     if (!text || streaming) return;
     setInput('');
-    sendMessage(text, perspective);
+    sendMessage(text, 'dm');
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -36,7 +33,6 @@ export function ChatPanel({ campaignId }: ChatPanelProps) {
   return (
     <div className="chat-panel">
       <div className="chat-toolbar">
-        <PerspectiveSelector value={perspective} onChange={setPerspective} disabled={streaming} />
         <button className="btn btn-sm" onClick={clearMessages} disabled={streaming}>Clear</button>
       </div>
 

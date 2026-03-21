@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use serde::Serialize;
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 use uuid::Uuid;
 
@@ -6,6 +7,14 @@ use guide_core::{
     models::{CampaignDocument, DocumentKind, GlobalDocument, IngestionStatus},
     GuideError, Result,
 };
+
+/// A single page's OCR text stored in `document_page_ocr`.
+#[derive(Serialize)]
+pub struct PageOcrRow {
+    pub page_num: i64,
+    pub raw_text: String,
+    pub is_dm_only: bool,
+}
 
 pub struct DocumentRepository<'a> {
     pool: &'a SqlitePool,
@@ -133,6 +142,71 @@ impl<'a> DocumentRepository<'a> {
         .await?;
         Ok(())
     }
+
+    pub async fn delete(&self, doc_id: Uuid) -> Result<()> {
+        let affected = sqlx::query("DELETE FROM campaign_documents WHERE id = ?")
+            .bind(doc_id.to_string())
+            .execute(self.pool)
+            .await?
+            .rows_affected();
+        if affected == 0 {
+            return Err(GuideError::NotFound(format!("Document {doc_id}")));
+        }
+        Ok(())
+    }
+
+    /// Persist raw OCR text for each page of a campaign document.
+    ///
+    /// Uses INSERT OR REPLACE so re-ingestion overwrites stale rows.
+    /// `pages` is a slice of `(page_num, raw_text, is_dm_only)` tuples.
+    pub async fn save_page_ocr(
+        &self,
+        doc_id: Uuid,
+        pages: &[(u32, String, bool)],
+    ) -> Result<()> {
+        for (page_num, raw_text, is_dm_only) in pages {
+            let row_id = Uuid::new_v4().to_string();
+            sqlx::query(
+                "INSERT OR REPLACE INTO document_page_ocr \
+                 (id, document_id, page_num, raw_text, is_dm_only) \
+                 VALUES (?, ?, ?, ?, ?)",
+            )
+            .bind(&row_id)
+            .bind(doc_id.to_string())
+            .bind(*page_num as i64)
+            .bind(raw_text)
+            .bind(if *is_dm_only { 1i64 } else { 0i64 })
+            .execute(self.pool)
+            .await?;
+        }
+        Ok(())
+    }
+
+    /// Return all OCR page rows for a document, ordered by page number.
+    pub async fn list_page_ocr(&self, doc_id: Uuid) -> Result<Vec<PageOcrRow>> {
+        let rows = sqlx::query(
+            "SELECT page_num, raw_text, is_dm_only \
+             FROM document_page_ocr \
+             WHERE document_id = ? \
+             ORDER BY page_num ASC",
+        )
+        .bind(doc_id.to_string())
+        .fetch_all(self.pool)
+        .await?;
+
+        let mut result = Vec::with_capacity(rows.len());
+        for row in rows {
+            let page_num: i64 = row.try_get("page_num")?;
+            let raw_text: String = row.try_get("raw_text")?;
+            let is_dm_only_int: i64 = row.try_get("is_dm_only")?;
+            result.push(PageOcrRow {
+                page_num,
+                raw_text,
+                is_dm_only: is_dm_only_int != 0,
+            });
+        }
+        Ok(result)
+    }
 }
 
 pub struct GlobalDocumentRepository<'a> {
@@ -249,6 +323,18 @@ impl<'a> GlobalDocumentRepository<'a> {
         .await?;
         Ok(())
     }
+
+    pub async fn delete(&self, doc_id: Uuid) -> Result<()> {
+        let affected = sqlx::query("DELETE FROM global_documents WHERE id = ?")
+            .bind(doc_id.to_string())
+            .execute(self.pool)
+            .await?
+            .rows_affected();
+        if affected == 0 {
+            return Err(GuideError::NotFound(format!("Global document {doc_id}")));
+        }
+        Ok(())
+    }
 }
 
 fn row_to_doc(row: SqliteRow) -> Result<CampaignDocument> {
@@ -328,7 +414,7 @@ pub(crate) fn doc_kind_to_str(k: &DocumentKind) -> &'static str {
     }
 }
 
-pub(crate) fn parse_doc_kind(s: &str) -> DocumentKind {
+pub fn parse_doc_kind(s: &str) -> DocumentKind {
     match s {
         "dm_guide" => DocumentKind::DmGuide,
         "monster_manual" => DocumentKind::MonsterManual,

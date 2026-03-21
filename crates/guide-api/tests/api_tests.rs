@@ -8,7 +8,8 @@ use guide_api::{routes::all_routes, state::AppState};
 use guide_core::AppConfig;
 use guide_llm::{
     client::{
-        CompletionRequest, CompletionResponse, EmbeddingRequest, LlmClient, VisionRequest,
+        AudioRequest, CompletionRequest, CompletionResponse, EmbeddingRequest, LlmClient,
+        VisionRequest,
     },
     LlmTask,
 };
@@ -74,6 +75,10 @@ impl LlmClient for MockLlm {
         })
     }
 
+    async fn transcribe(&self, _req: AudioRequest) -> guide_core::Result<String> {
+        Ok("mock transcript".to_string())
+    }
+
     fn provider_name(&self) -> &str {
         "mock"
     }
@@ -99,6 +104,7 @@ async fn make_app() -> axum::Router {
         qdrant_url: String::new(),
         qdrant_collection: "guide_chunks".into(),
         embedding_dims: 768,
+        whisper_model: "whisper".into(),
     });
 
     let state = AppState {
@@ -149,6 +155,15 @@ fn delete(uri: &str) -> Request<Body> {
         .method("DELETE")
         .uri(uri)
         .body(Body::empty())
+        .unwrap()
+}
+
+fn patch_json(uri: &str, body: Value) -> Request<Body> {
+    Request::builder()
+        .method("PATCH")
+        .uri(uri)
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
         .unwrap()
 }
 
@@ -614,6 +629,90 @@ async fn test_end_encounter() {
     assert_eq!(body["status"], "completed");
 }
 
+// ── Encounter Replay SSE ──────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_replay_sse_format() {
+    let app = make_app().await;
+    let (cid, _sid, enc_id) = setup_encounter(&app).await;
+
+    // Start the encounter so at least one snapshot is recorded
+    app.clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(&format!("/campaigns/{cid}/encounters/{enc_id}/start"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let resp = app
+        .oneshot(get(&format!(
+            "/campaigns/{cid}/encounters/{enc_id}/replay"
+        )))
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let ct = resp.headers().get("content-type").unwrap().to_str().unwrap();
+    assert!(ct.contains("text/event-stream"));
+
+    let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let body_text = std::str::from_utf8(&body_bytes).unwrap();
+
+    assert!(body_text.contains("event: snapshot"));
+    assert!(body_text.contains("event: done"));
+}
+
+#[tokio::test]
+async fn test_replay_snapshots_accumulate() {
+    let app = make_app().await;
+    let (cid, _sid, enc_id) = setup_encounter(&app).await;
+
+    // Start → records snapshot 0
+    app.clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(&format!("/campaigns/{cid}/encounters/{enc_id}/start"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Next-turn → records snapshot 1
+    app.clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(&format!("/campaigns/{cid}/encounters/{enc_id}/next-turn"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let resp = app
+        .oneshot(get(&format!(
+            "/campaigns/{cid}/encounters/{enc_id}/replay"
+        )))
+        .await
+        .unwrap();
+
+    let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let body_text = std::str::from_utf8(&body_bytes).unwrap();
+
+    let snapshot_count = body_text.matches("event: snapshot").count();
+    assert_eq!(snapshot_count, 2, "expected 2 snapshots, got {snapshot_count}");
+}
+
 // ── Generate Encounter ────────────────────────────────────────────────────────
 
 #[tokio::test]
@@ -682,4 +781,101 @@ async fn test_list_documents_empty() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     assert_eq!(json_body(resp).await.as_array().unwrap().len(), 0);
+}
+
+// ── Relationships ─────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_relationships_crud() {
+    let app = make_app().await;
+
+    // 1. Create a campaign
+    let cid = create_campaign(&app).await;
+
+    // 2. Create two characters
+    let resp = app
+        .clone()
+        .oneshot(post_json(
+            &format!("/campaigns/{cid}/characters"),
+            json!({"name": "Alice", "character_type": "pc", "max_hp": 30, "armor_class": 14}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let char_a = json_body(resp).await["id"].as_str().unwrap().to_string();
+
+    let resp = app
+        .clone()
+        .oneshot(post_json(
+            &format!("/campaigns/{cid}/characters"),
+            json!({"name": "Bob", "character_type": "npc", "max_hp": 20, "armor_class": 12}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let char_b = json_body(resp).await["id"].as_str().unwrap().to_string();
+
+    // 3. POST a relationship between them
+    let resp = app
+        .clone()
+        .oneshot(post_json(
+            &format!("/campaigns/{cid}/relationships"),
+            json!({
+                "from_character_id": char_a,
+                "to_character_id": char_b,
+                "relationship_type": "ally",
+                "notes": "Met at the tavern"
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let body = json_body(resp).await;
+    assert_eq!(body["relationship_type"], "ally");
+    assert_eq!(body["notes"], "Met at the tavern");
+    let rel_id = body["id"].as_str().unwrap().to_string();
+
+    // 4. GET relationships and verify the array contains the new entry
+    let resp = app
+        .clone()
+        .oneshot(get(&format!("/campaigns/{cid}/relationships")))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = json_body(resp).await;
+    let rels = body.as_array().unwrap();
+    assert_eq!(rels.len(), 1);
+    assert_eq!(rels[0]["id"], rel_id);
+
+    // 5. PATCH the relationship and verify updated fields
+    let resp = app
+        .clone()
+        .oneshot(patch_json(
+            &format!("/campaigns/{cid}/relationships/{rel_id}"),
+            json!({"relationship_type": "rival", "notes": "Things got complicated"}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = json_body(resp).await;
+    assert_eq!(body["relationship_type"], "rival");
+    assert_eq!(body["notes"], "Things got complicated");
+    assert_eq!(body["id"], rel_id);
+
+    // 6. DELETE the relationship and verify 204
+    let resp = app
+        .clone()
+        .oneshot(delete(&format!("/campaigns/{cid}/relationships/{rel_id}")))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+    // Verify it is gone
+    let resp = app
+        .oneshot(get(&format!("/campaigns/{cid}/relationships")))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = json_body(resp).await;
+    assert_eq!(body.as_array().unwrap().len(), 0);
 }

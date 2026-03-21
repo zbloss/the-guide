@@ -1,5 +1,119 @@
 //! Shared system prompt templates — ported verbatim from Python prompts.py.
 
+pub fn ocr_simple_prompt() -> &'static str {
+    "Recognize the text in the image and output in Markdown format. \
+      Preserve the original layout (headings/paragraphs/tables/formulas). \
+      Do not fabricate content that does not exist in the image."
+}
+
+pub fn story_extraction_system() -> &'static str {
+    "You are a D&D campaign story analyst. Extract the narrative structure from the campaign document.\n\
+     Return ONLY valid JSON (no markdown, no explanation) matching this schema:\n\n\
+     {\n\
+       \"arcs\": [\n\
+         { \"title\": \"<arc name>\", \"description\": \"<2-3 sentence description>\", \"arc_order\": <int> }\n\
+       ],\n\
+       \"events\": [\n\
+         {\n\
+           \"title\": \"<event name>\",\n\
+           \"description\": \"<2-3 sentence description>\",\n\
+           \"event_type\": \"combat|social|revelation|travel|rest\",\n\
+           \"significance\": \"major|minor\",\n\
+           \"location\": \"<location or null>\",\n\
+           \"involved_characters\": [\"<name>\", ...],\n\
+           \"event_order\": <int>,\n\
+           \"arc_title\": \"<arc title or null>\",\n\
+           \"is_dm_only\": false\n\
+         }\n\
+       ],\n\
+       \"subplots\": [\n\
+         { \"title\": \"<title>\", \"description\": \"<description>\", \"arc_title\": \"<arc or null>\" }\n\
+       ],\n\
+       \"character_arcs\": [\n\
+         {\n\
+           \"character_name\": \"<name>\",\n\
+           \"description\": \"<arc description>\",\n\
+           \"arc_points\": [{ \"description\": \"<point>\", \"order\": <int> }]\n\
+         }\n\
+       ],\n\
+       \"encounters\": [\n\
+         {\n\
+           \"name\": \"<encounter name>\",\n\
+           \"description\": \"<description>\",\n\
+           \"location\": \"<location or null>\",\n\
+           \"difficulty_hint\": \"easy|medium|hard|deadly or null\",\n\
+           \"monsters\": [{ \"name\": \"<name>\", \"count\": <int or null>, \"cr\": \"<cr string or null>\" }],\n\
+           \"story_event_title\": \"<linked event title or null>\"\n\
+         }\n\
+       ]\n\
+     }\n\n\
+     Guidelines:\n\
+     - Extract 2-6 major story arcs\n\
+     - Extract all key events in chronological order\n\
+     - Mark DM-only events with is_dm_only: true\n\
+     - Use arc_title to link events/subplots to their arc\n\
+     - Be specific: use actual names from the document"
+}
+
+pub fn story_extraction_user(full_text: &str, doc_title: &str) -> String {
+    format!(
+        "Document: {doc_title}\n\n\
+         Full Text:\n{full_text}\n\n\
+         Extract the complete story structure as specified."
+    )
+}
+
+pub fn story_extraction_user_chapter(
+    chapter_text: &str,
+    doc_title: &str,
+    chapter_name: &str,
+) -> String {
+    format!(
+        "Document: {doc_title}\nChapter: {chapter_name}\n\n\
+         # {chapter_name}\n\n{chapter_text}\n\n\
+         Extract the story structure for this chapter only. \
+         Use arc_title and story_event_title to link items within this chapter. \
+         Extract all events in chronological order as they appear here."
+    )
+}
+
+pub fn story_so_far_structured(
+    current_chapter: &str,
+    arcs_json: &str,
+    events_json: &str,
+    rag_context: &str,
+) -> String {
+    format!(
+        "You are a DM's campaign assistant with access to indexed campaign documents.\n\
+         Current chapter / story position: \"{current_chapter}\"\n\n\
+         ## Structured Story Arcs\n{arcs_json}\n\n\
+         ## Structured Story Events\n{events_json}\n\n\
+         ## RAG Context\n{rag_context}\n\n\
+         Summarize the SOURCE MATERIAL content that comes BEFORE \"{current_chapter}\".\n\
+         Write in markdown with sections: ## World & Setting, ## Key Events, ## NPCs Introduced, \
+         ## Secrets the DM Should Remember, ## What Players Know vs Don't."
+    )
+}
+
+pub fn story_ahead_structured(
+    current_chapter: &str,
+    arcs_json: &str,
+    events_json: &str,
+    rag_context: &str,
+) -> String {
+    format!(
+        "You are a DM's campaign assistant with access to indexed campaign documents.\n\
+         Current chapter / story position: \"{current_chapter}\"\n\n\
+         ## Structured Story Arcs\n{arcs_json}\n\n\
+         ## Structured Story Events\n{events_json}\n\n\
+         ## RAG Context\n{rag_context}\n\n\
+         Summarize the SOURCE MATERIAL content that comes AFTER \"{current_chapter}\".\n\
+         Write in markdown with sections: ## What Comes Next, ## Upcoming Key NPCs, \
+         ## Upcoming Locations, ## Upcoming Revelations, ## Encounter Prep Notes, \
+         ## Long-Term Foreshadowing."
+    )
+}
+
 pub fn backstory_analysis_system() -> &'static str {
     "You are a narrative assistant for a Dungeon Master.\n\
      Analyze the character backstory provided and extract structured information.\n\
@@ -36,61 +150,11 @@ pub fn session_summary_dm_system() -> &'static str {
      Write in a concise, professional tone. Use markdown headers."
 }
 
-pub fn session_summary_player_system() -> &'static str {
-    "You are a campaign scribe. Write a player-facing session recap from the events below.\n\
-     Rules:\n\
-     - NEVER include DM-only information, secret plot points, or unrevealed lore\n\
-     - Write in an exciting, narrative tone (like a story recap)\n\
-     - Focus on what the players experienced and discovered\n\
-     - Include notable moments, decisions, and NPC encounters\n\
-     - End with a brief 'what's at stake' or cliffhanger if appropriate\n\
-     Keep it to 3-5 paragraphs."
-}
-
-pub fn ocr_campaign_page_prompt() -> &'static str {
-    "Extract text from this PDF page exactly as written. Return ONLY valid JSON (no markdown):\n\n\
-     {\n\
-       \"raw_text\": \"<full extracted text for this page>\",\n\
-       \"headings\": [\"## Major Section\", \"### Sub-section\"],\n\
-       \"is_dm_only\": false\n\
-     }\n\n\
-     Rules:\n\
-     - raw_text: all text on the page, preserving paragraph breaks with \\n\\n\n\
-     - headings: identify section headings using ## for major, ### for sub-headings\n\
-     - is_dm_only: set true if page contains sections labeled DM Note, Secret, Hidden, or Only the DM\n\
-     - Do NOT chunk or summarize — extract faithfully"
-}
-
-pub fn ocr_rulebook_page_prompt() -> &'static str {
-    "Extract text from this rulebook PDF page exactly as written. Return ONLY valid JSON (no markdown):\n\n\
-     {\n\
-       \"raw_text\": \"<full extracted text for this page>\",\n\
-       \"headings\": [\"## Major Section\", \"### Sub-section\"],\n\
-       \"is_dm_only\": false\n\
-     }\n\n\
-     Rules:\n\
-     - raw_text: all text on the page, preserving paragraph breaks with \\n\\n\n\
-     - headings: identify section headings using ## for major, ### for sub-headings\n\
-     - is_dm_only: always false for rulebooks\n\
-     - Do NOT chunk or summarize — extract faithfully\n\
-     - Include stat blocks, spell descriptions, and tables as plain text"
-}
-
 pub fn campaign_assistant_dm_system(context: &str) -> String {
     format!(
         "You are The Guide, an AI assistant for a Dungeon Master running a D&D campaign. \
          You have access to all campaign lore including DM-only information. \
          Answer accurately and helpfully.\
-         \n\n## Campaign Context\n{context}"
-    )
-}
-
-pub fn campaign_assistant_player_system(context: &str) -> String {
-    format!(
-        "You are The Guide, an AI assistant for players in a D&D campaign. \
-         You MUST NOT reveal DM-only information, secret plot points, or unrevealed lore. \
-         Only share what the players have discovered in-game. \
-         If unsure whether something is player-visible, do not share it.\
          \n\n## Campaign Context\n{context}"
     )
 }
@@ -208,7 +272,11 @@ pub fn character_roadmap_system() -> &'static str {
      - Tie suggestions to actual campaign content, not invented lore."
 }
 
-pub fn character_roadmap_user(character_data: &str, events_data: &str, rag_context: &str) -> String {
+pub fn character_roadmap_user(
+    character_data: &str,
+    events_data: &str,
+    rag_context: &str,
+) -> String {
     format!(
         "## Character Data\n{character_data}\n\n\
          ## Session Events Involving This Character\n{events_data}\n\n\
@@ -217,27 +285,100 @@ pub fn character_roadmap_user(character_data: &str, events_data: &str, rag_conte
     )
 }
 
+pub fn character_sheet_ocr_prompt() -> &'static str {
+    "This is a D&D 5e character sheet image. Extract all visible information and return ONLY valid JSON — no markdown, no explanation, no code fences.\n\
+     Use 0 for missing numeric fields, empty string for missing text fields, empty array [] for missing list fields, and null for optional object fields.\n\
+     Set parse_confidence between 0.0 and 1.0 based on how clearly you could read the sheet (1.0 = all fields clearly legible).\n\n\
+     Return this exact JSON structure:\n\
+     {\n\
+       \"name\": \"\",\n\
+       \"class\": \"\",\n\
+       \"race\": \"\",\n\
+       \"background\": \"\",\n\
+       \"level\": 0,\n\
+       \"experience_points\": 0,\n\
+       \"max_hp\": 0,\n\
+       \"armor_class\": 0,\n\
+       \"speed\": 0,\n\
+       \"hit_dice\": \"\",\n\
+       \"ability_scores\": {\n\
+         \"strength\": 0, \"dexterity\": 0, \"constitution\": 0,\n\
+         \"intelligence\": 0, \"wisdom\": 0, \"charisma\": 0\n\
+       },\n\
+       \"saving_throws\": {\n\
+         \"strength\": null, \"dexterity\": null, \"constitution\": null,\n\
+         \"intelligence\": null, \"wisdom\": null, \"charisma\": null\n\
+       },\n\
+       \"skills\": {\n\
+         \"acrobatics\": null, \"animal_handling\": null, \"arcana\": null,\n\
+         \"athletics\": null, \"deception\": null, \"history\": null,\n\
+         \"insight\": null, \"intimidation\": null, \"investigation\": null,\n\
+         \"medicine\": null, \"nature\": null, \"perception\": null,\n\
+         \"performance\": null, \"persuasion\": null, \"religion\": null,\n\
+         \"sleight_of_hand\": null, \"stealth\": null, \"survival\": null\n\
+       },\n\
+       \"proficiencies\": [],\n\
+       \"languages\": [],\n\
+       \"features_and_traits\": [],\n\
+       \"equipment\": [],\n\
+       \"spell_slots\": [],\n\
+       \"personality_traits\": \"\",\n\
+       \"ideals\": \"\",\n\
+       \"bonds\": \"\",\n\
+       \"flaws\": \"\",\n\
+       \"backstory_text\": \"\",\n\
+       \"parse_confidence\": 0.0\n\
+     }\n\n\
+     For spell_slots, use: [{\"level\": 1, \"total\": 2, \"remaining\": 2}, ...] — one entry per spell level that has slots."
+}
+
 pub fn character_sheet_parse_system() -> &'static str {
-    "You are a D&D character sheet parser. Extract the following fields from the provided character sheet text.\n\
-     Return ONLY valid JSON (no markdown, no explanation):\n\n\
+    "You are a D&D 5e character sheet parser. Extract all fields from the provided character sheet text.\n\
+     Return ONLY valid JSON (no markdown, no explanation, no code fences).\n\n\
      {\n\
        \"name\": \"<character name>\",\n\
        \"class\": \"<class or null>\",\n\
        \"race\": \"<race or null>\",\n\
+       \"background\": \"<background or null>\",\n\
        \"level\": <integer>,\n\
+       \"experience_points\": <integer or null>,\n\
        \"max_hp\": <integer>,\n\
        \"armor_class\": <integer>,\n\
        \"speed\": <integer>,\n\
+       \"hit_dice\": \"<e.g. 5d10 or null>\",\n\
        \"ability_scores\": {\n\
          \"strength\": <int>, \"dexterity\": <int>, \"constitution\": <int>,\n\
          \"intelligence\": <int>, \"wisdom\": <int>, \"charisma\": <int>\n\
        },\n\
+       \"saving_throws\": {\n\
+         \"strength\": <int or null>, \"dexterity\": <int or null>, \"constitution\": <int or null>,\n\
+         \"intelligence\": <int or null>, \"wisdom\": <int or null>, \"charisma\": <int or null>\n\
+       },\n\
+       \"skills\": {\n\
+         \"acrobatics\": <int or null>, \"animal_handling\": <int or null>, \"arcana\": <int or null>,\n\
+         \"athletics\": <int or null>, \"deception\": <int or null>, \"history\": <int or null>,\n\
+         \"insight\": <int or null>, \"intimidation\": <int or null>, \"investigation\": <int or null>,\n\
+         \"medicine\": <int or null>, \"nature\": <int or null>, \"perception\": <int or null>,\n\
+         \"performance\": <int or null>, \"persuasion\": <int or null>, \"religion\": <int or null>,\n\
+         \"sleight_of_hand\": <int or null>, \"stealth\": <int or null>, \"survival\": <int or null>\n\
+       },\n\
+       \"proficiencies\": [\"<string>\", ...],\n\
+       \"languages\": [\"<string>\", ...],\n\
+       \"features_and_traits\": [\"<string>\", ...],\n\
+       \"equipment\": [\"<string>\", ...],\n\
+       \"spell_slots\": [{\"level\": <int>, \"total\": <int>, \"remaining\": <int>}, ...],\n\
+       \"personality_traits\": \"<text or null>\",\n\
+       \"ideals\": \"<text or null>\",\n\
+       \"bonds\": \"<text or null>\",\n\
+       \"flaws\": \"<text or null>\",\n\
        \"backstory_text\": \"<backstory text or null>\",\n\
        \"parse_confidence\": <0.0 to 1.0>\n\
      }\n\n\
      Rules:\n\
-     - Set parse_confidence to 1.0 if all fields found, lower if missing fields or OCR artifacts.\n\
+     - Set parse_confidence to 1.0 if all core fields found, lower if missing fields or OCR artifacts.\n\
      - Default level to 1 if not found. Default ability scores to 10 if not found.\n\
-     - Default max_hp to 10 and armor_class to 10 and speed to 30 if not found.\n\
-     - Set string fields to null if not found."
+     - Default max_hp to 10, armor_class to 10, speed to 30 if not found.\n\
+     - Set optional string fields to null if not found.\n\
+     - For saving_throws and skills, use the modifier integer value (e.g. +3 → 3, -1 → -1).\n\
+     - For spell_slots, include one entry per spell level with available slots."
 }

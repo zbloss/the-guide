@@ -66,7 +66,6 @@ export interface Campaign {
   description: string | null;
   game_system: GameSystem;
   world_state: WorldState | null;
-  share_token: string | null;
   current_chapter?: string | null;
   created_at: string;
   updated_at: string;
@@ -251,6 +250,12 @@ export interface CampaignDocument {
   description: string | null;
   story_extraction_status: string;
   story_extraction_error: string | null;
+}
+
+export interface DocumentPageOcr {
+  page_num: number;
+  raw_text: string;
+  is_dm_only: boolean;
 }
 
 export interface GlobalDocument {
@@ -681,6 +686,20 @@ export interface ParsedSheetResult {
   backstory_text: string | null;
   raw_extracted_text: string;
   parse_confidence: number;
+  background: string | null;
+  experience_points: number | null;
+  hit_dice: string | null;
+  saving_throws: Record<string, number> | null;
+  skills: Record<string, number> | null;
+  proficiencies: string[];
+  languages: string[];
+  features_and_traits: string[];
+  equipment: string[];
+  personality_traits: string | null;
+  ideals: string | null;
+  bonds: string | null;
+  flaws: string | null;
+  spell_slots: SpellSlot[];
 }
 
 // ==================== Relationships ====================
@@ -700,12 +719,18 @@ export interface CharacterRelationship {
   relationship_type: string;
   notes: string | null;
   created_at: string;
+  updated_at?: string;
 }
 
 export interface CreateRelationshipRequest {
   from_character_id: string;
   to_character_id: string;
   relationship_type: string;
+  notes?: string;
+}
+
+export interface UpdateRelationshipRequest {
+  relationship_type?: string;
   notes?: string;
 }
 

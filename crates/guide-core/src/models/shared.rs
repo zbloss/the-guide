@@ -96,5 +96,4 @@ pub enum IngestionStatus {
 #[serde(rename_all = "snake_case")]
 pub enum Perspective {
     Dm,
-    Player,
 }

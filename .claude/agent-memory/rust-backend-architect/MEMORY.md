@@ -28,7 +28,7 @@ Row-to-struct mapping uses `row.try_get("col").ok()` with `.unwrap_or_default()`
 
 ### Migration numbering
 Migrations in `crates/guide-db/migrations/` are numbered sequentially `001`–`NNN`.
-As of FEAT-037: highest is `023_encounter_turns.sql`. Next migration: `024_`.
+As of FEAT-011 gaps: highest is `028_relationship_updated_at.sql`. Next migration: `029_`.
 
 ### AppState
 `AppState.llm` is `Arc<dyn LlmClient>` — use trait object dispatch, not concrete type.
@@ -47,11 +47,13 @@ As of FEAT-037: highest is `023_encounter_turns.sql`. Next migration: `024_`.
 - In `relationships.rs`: import only `CreateRelationshipRequest` (not response type) to avoid unused-import warning
 
 ## NPC Relationship Web (FEAT-011)
-- Migration: `022_relationships.sql` — `character_relationships` with UNIQUE(campaign_id, from, to)
-- Core types: `CharacterRelationship`, `CreateRelationshipRequest` in `guide-core/src/models/relationship.rs`
-- Repo: `guide-db/src/relationships.rs`, module in `guide-db/src/lib.rs`
-- Routes: `GET/POST /campaigns/{id}/relationships`, `DELETE /{rel_id}` in `guide-api/src/routes/relationships.rs`
+- Migrations: `022_relationships.sql` (initial), `028_relationship_updated_at.sql` (adds nullable `updated_at TEXT`)
+- Core types: `CharacterRelationship` (has `updated_at: Option<DateTime<Utc>>`), `CreateRelationshipRequest`, `UpdateRelationshipRequest` in `guide-core/src/models/relationship.rs`
+- Repo: `guide-db/src/relationships.rs` — `RelationshipRepository` exported via `guide-db/src/lib.rs`
+- `update()` method: COALESCE pattern for partial updates, sets `updated_at = now`
+- Routes: `GET/POST /campaigns/{id}/relationships`, `DELETE/PATCH /{rel_id}` in `guide-api/src/routes/relationships.rs`
 - `post` routing import not needed in relationships.rs — `.post()` is a method on axum MethodRouter
+- `updated_at` column is nullable (added via ALTER TABLE); `row_to_relationship` reads it with `.try_get().ok()` to tolerate pre-migration rows
 
 ## Encounter Replay (FEAT-037)
 - Migration: `023_encounter_turns.sql` — upsert on UNIQUE(encounter_id, turn_number)
@@ -74,9 +76,9 @@ As of FEAT-037: highest is `023_encounter_turns.sql`. Next migration: `024_`.
 - story-so-far and story-ahead require Qdrant-indexed documents; return 422 if none found
 - character-roadmap validates `character.campaign_id == campaign_id` before generating
 
-## Test Status (at DM Prep Suite)
-- `test_start_encounter` is a **pre-existing failure** unrelated to this feature — do not fix unless tasked
-- All 55 tests pass (23 api + 12 db + 11 combat + 9 pdf)
+## Test Status (at FEAT-011 gaps)
+- `test_start_encounter` resolved — all tests passing
+- 62 tests pass (24 api + 12 db + 11 combat + 15 pdf)
 
 ## Frontend Notes
 - Package manager: **bun** (not npm/yarn)

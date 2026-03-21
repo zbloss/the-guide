@@ -3,7 +3,7 @@ use uuid::Uuid;
 
 use guide_core::{models::GlobalDocument, GuideError, Result};
 
-use crate::documents::{doc_kind_to_str, parse_doc_kind};
+use crate::documents::parse_doc_kind;
 
 pub struct CampaignGlobalDocRepository<'a> {
     pool: &'a SqlitePool,
@@ -99,14 +99,10 @@ impl<'a> CampaignGlobalDocRepository<'a> {
                     ingestion_status,
                     ingestion_error: row.try_get("ingestion_error")?,
                     uploaded_at: parse_dt(&uploaded_at_str),
-                    ingested_at: ingested_at_str.as_deref().map(|s| parse_dt(s)),
+                    ingested_at: ingested_at_str.as_deref().map(parse_dt),
                 })
             })
             .collect()
     }
 }
 
-// Silence unused import warning — doc_kind_to_str is used in list_for_campaign indirectly
-// but we import it to keep visibility consistent with documents.rs.
-#[allow(unused_imports)]
-use self::doc_kind_to_str as _;

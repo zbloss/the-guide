@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, NavLink, Outlet } from 'react-router-dom';
 import { useCampaign } from '../hooks/useCampaign';
-import { updateCampaign, generateShareToken } from '../api/campaigns';
+import { updateCampaign } from '../api/campaigns';
 import { WorldStateEditor } from '../components/campaigns/WorldStateEditor';
 import { ConsistencyReportPanel } from '../components/campaigns/ConsistencyReportPanel';
 import { CampaignSearch } from '../components/campaigns/CampaignSearch';
@@ -31,21 +31,6 @@ export function CampaignDetailPage() {
   const [editGameSystem, setEditGameSystem] = useState<GameSystem>('dnd5e');
   const [metaSaving, setMetaSaving] = useState(false);
   const [metaError, setMetaError] = useState('');
-  const [shareUrl, setShareUrl] = useState('');
-  const [shareCopied, setShareCopied] = useState(false);
-
-  const handleShare = async () => {
-    const updated = await generateShareToken(campaignId!);
-    if (updated.share_token) {
-      const url = `${window.location.origin}/view/${updated.share_token}`;
-      setShareUrl(url);
-      await navigator.clipboard.writeText(url).catch(() => {});
-      setShareCopied(true);
-      setTimeout(() => setShareCopied(false), 3000);
-      refetch();
-    }
-  };
-
   if (loading) return <div className="page"><LoadingSpinner /></div>;
   if (error) return <div className="page"><ErrorBanner message={error} /></div>;
   if (!campaign) return null;
@@ -77,6 +62,7 @@ export function CampaignDetailPage() {
   };
 
   const tabs = [
+    { label: 'Story', to: 'story' },
     { label: 'Characters', to: 'characters' },
     { label: 'Sessions', to: 'sessions' },
     { label: 'Encounters', to: 'encounters' },
@@ -121,10 +107,6 @@ export function CampaignDetailPage() {
             <h1>{campaign.name}</h1>
             <Badge label={campaign.game_system} variant="info" />
             <button className="btn btn-sm" onClick={handleEditOpen}>Edit</button>
-            <button className="btn btn-sm" onClick={handleShare} title="Generate a public read-only share link">
-              {shareCopied ? 'Link Copied!' : campaign.share_token ? 'Share (regenerate)' : 'Share'}
-            </button>
-            {shareUrl && <span className="share-url-display">{shareUrl}</span>}
             <PlotTwistModal campaignId={campaignId!} />
           </>
         )}

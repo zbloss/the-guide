@@ -41,10 +41,3 @@ export function getCampaignAnalytics(campaignId: string): Promise<CampaignAnalyt
   return apiGet<CampaignAnalytics>(`/campaigns/${campaignId}/analytics`);
 }
 
-export function generateShareToken(campaignId: string): Promise<Campaign> {
-  return apiPost<Campaign>(`/campaigns/${campaignId}/share`);
-}
-
-export function getSharedView(token: string): Promise<unknown> {
-  return apiGet(`/view/${token}`);
-}

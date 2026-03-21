@@ -17,6 +17,7 @@ use guide_db::{
     characters::CharacterRepository,
     prep::DmPrepRepository,
     sessions::{SessionEventRepository, SessionRepository},
+    story::StoryRepository,
 };
 use uuid::Uuid;
 
@@ -168,6 +169,7 @@ async fn generate_session_recap(
         model_override: None,
         temperature: Some(0.7),
         max_tokens: Some(6000),
+        json_mode: false,
     };
 
     let resp = state.llm.complete(req).await?;
@@ -218,6 +220,11 @@ async fn generate_story_so_far(
         .or(campaign.current_chapter)
         .unwrap_or_else(|| "beginning".to_string());
 
+    // Fetch structured story data first so it can satisfy the guard
+    let story_repo = StoryRepository::new(&state.db);
+    let arcs = story_repo.list_arcs(campaign_id).await.unwrap_or_default();
+    let events = story_repo.list_events(campaign_id).await.unwrap_or_default();
+
     // RAG query for past content
     let query = format!("campaign history setting lore up to {current_chapter}");
     let chunks = query_indexes(
@@ -231,7 +238,7 @@ async fn generate_story_so_far(
     .await
     .unwrap_or_default();
 
-    if chunks.is_empty() {
+    if chunks.is_empty() && arcs.is_empty() && events.is_empty() {
         return Err(GuideError::InvalidInput(
             "No indexed documents found. Please ingest campaign documents first.".into(),
         )
@@ -251,24 +258,30 @@ async fn generate_story_so_far(
         .collect::<Vec<_>>()
         .join("\n\n---\n\n");
 
-    let system_prompt = prompts::story_so_far_system(&current_chapter);
+    let arcs_json = serde_json::to_string(&arcs).unwrap_or_else(|_| "[]".into());
+    let events_json = serde_json::to_string(&events).unwrap_or_else(|_| "[]".into());
+
     let req = CompletionRequest {
         task: LlmTask::StorySoFar,
         messages: vec![
             Message {
                 role: MessageRole::System,
-                content: system_prompt,
+                content: "You are a DM narrative assistant. Summarize the story so far for the Dungeon Master.".to_string(),
             },
             Message {
                 role: MessageRole::User,
-                content: format!(
-                    "## Document Context\n\n{context}\n\nGenerate the Story So Far analysis."
+                content: prompts::story_so_far_structured(
+                    &current_chapter,
+                    &arcs_json,
+                    &events_json,
+                    &context,
                 ),
             },
         ],
         model_override: None,
         temperature: Some(0.5),
         max_tokens: Some(5000),
+        json_mode: false,
     };
 
     let resp = state.llm.complete(req).await?;
@@ -319,6 +332,11 @@ async fn generate_story_ahead(
         .or(campaign.current_chapter)
         .unwrap_or_else(|| "beginning".to_string());
 
+    // Fetch structured story data first so it can satisfy the guard
+    let story_repo = StoryRepository::new(&state.db);
+    let arcs = story_repo.list_arcs(campaign_id).await.unwrap_or_default();
+    let events = story_repo.list_events(campaign_id).await.unwrap_or_default();
+
     // RAG query for future content
     let query = format!("upcoming encounters events revelations after {current_chapter}");
     let chunks = query_indexes(
@@ -332,7 +350,7 @@ async fn generate_story_ahead(
     .await
     .unwrap_or_default();
 
-    if chunks.is_empty() {
+    if chunks.is_empty() && arcs.is_empty() && events.is_empty() {
         return Err(GuideError::InvalidInput(
             "No indexed documents found. Please ingest campaign documents first.".into(),
         )
@@ -352,24 +370,30 @@ async fn generate_story_ahead(
         .collect::<Vec<_>>()
         .join("\n\n---\n\n");
 
-    let system_prompt = prompts::story_ahead_system(&current_chapter);
+    let arcs_json = serde_json::to_string(&arcs).unwrap_or_else(|_| "[]".into());
+    let events_json = serde_json::to_string(&events).unwrap_or_else(|_| "[]".into());
+
     let req = CompletionRequest {
         task: LlmTask::StoryAhead,
         messages: vec![
             Message {
                 role: MessageRole::System,
-                content: system_prompt,
+                content: "You are a DM narrative assistant. Describe upcoming story possibilities for the Dungeon Master.".to_string(),
             },
             Message {
                 role: MessageRole::User,
-                content: format!(
-                    "## Document Context\n\n{context}\n\nGenerate the Story Ahead analysis."
+                content: prompts::story_ahead_structured(
+                    &current_chapter,
+                    &arcs_json,
+                    &events_json,
+                    &context,
                 ),
             },
         ],
         model_override: None,
         temperature: Some(0.6),
         max_tokens: Some(5000),
+        json_mode: false,
     };
 
     let resp = state.llm.complete(req).await?;
@@ -536,6 +560,7 @@ async fn generate_character_roadmap(
         model_override: None,
         temperature: Some(0.7),
         max_tokens: Some(5000),
+        json_mode: false,
     };
 
     let resp = state.llm.complete(req).await?;

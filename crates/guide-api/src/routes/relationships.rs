@@ -5,7 +5,7 @@ use axum::{
     routing::{delete, get},
     Json, Router,
 };
-use guide_core::models::CreateRelationshipRequest;
+use guide_core::models::{CreateRelationshipRequest, UpdateRelationshipRequest};
 use guide_db::relationships::RelationshipRepository;
 use uuid::Uuid;
 
@@ -19,7 +19,7 @@ pub fn router() -> Router<AppState> {
         )
         .route(
             "/campaigns/{campaign_id}/relationships/{rel_id}",
-            delete(delete_relationship),
+            delete(delete_relationship).patch(update_relationship),
         )
 }
 
@@ -47,4 +47,13 @@ async fn delete_relationship(
     let repo = RelationshipRepository::new(&state.db);
     repo.delete(rel_id).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+async fn update_relationship(
+    State(state): State<AppState>,
+    Path((_campaign_id, rel_id)): Path<(Uuid, Uuid)>,
+    Json(req): Json<UpdateRelationshipRequest>,
+) -> Result<impl IntoResponse, crate::error::AppError> {
+    let repo = RelationshipRepository::new(&state.db);
+    Ok(Json(repo.update(rel_id, req).await?))
 }

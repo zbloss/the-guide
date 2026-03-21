@@ -14,7 +14,9 @@ export default defineConfig(async () => ({
         globPatterns: ['**/*.{js,css,html,ico,png,svg}'],
         runtimeCaching: [
           {
-            urlPattern: /^http:\/\/localhost:8000\/.*/i,
+            urlPattern: ({ request, url }: { request: Request; url: URL }) =>
+              request.method === 'GET' &&
+              ['/campaigns', '/documents', '/health', '/version'].some(p => url.pathname.startsWith(p)),
             handler: 'NetworkFirst',
             options: {
               cacheName: 'api-cache',
@@ -31,7 +33,8 @@ export default defineConfig(async () => ({
         background_color: '#1e1e2e',
         display: 'standalone',
         icons: [
-          { src: '/vite.svg', sizes: '192x192', type: 'image/svg+xml' },
+          { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' },
+          { src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' },
         ],
       },
     }),

@@ -3,7 +3,7 @@ use async_openai::{
     types::{
         ChatCompletionRequestMessage, ChatCompletionRequestSystemMessageArgs,
         ChatCompletionRequestUserMessageArgs, CreateChatCompletionRequestArgs,
-        CreateEmbeddingRequestArgs,
+        CreateEmbeddingRequestArgs, ResponseFormat,
     },
     Client,
 };
@@ -15,7 +15,8 @@ use tracing::{debug, instrument};
 use guide_core::{GuideError, Result};
 
 use crate::client::{
-    CompletionRequest, CompletionResponse, EmbeddingRequest, LlmClient, MessageRole, VisionRequest,
+    AudioRequest, CompletionRequest, CompletionResponse, EmbeddingRequest, LlmClient, MessageRole,
+    VisionRequest,
 };
 
 pub struct CloudProvider {
@@ -90,6 +91,9 @@ impl LlmClient for CloudProvider {
         }
         if let Some(max) = req.max_tokens {
             builder.max_tokens(max as u16);
+        }
+        if req.json_mode {
+            builder.response_format(ResponseFormat::JsonObject);
         }
         let request = builder.build().map_err(|e| GuideError::Llm(e.to_string()))?;
 
@@ -208,16 +212,23 @@ impl LlmClient for CloudProvider {
             { "type": "text", "text": req.prompt }
         ]);
 
-        let request = CreateChatCompletionRequestArgs::default()
-            .model(model.clone())
-            .messages(vec![ChatCompletionRequestMessage::User(
-                ChatCompletionRequestUserMessageArgs::default()
-                    .content(content_parts.to_string())
-                    .build()
-                    .map_err(|e| GuideError::Llm(e.to_string()))?,
-            )])
-            .build()
-            .map_err(|e| GuideError::Llm(e.to_string()))?;
+        let mut builder = CreateChatCompletionRequestArgs::default();
+        builder.model(model.clone()).messages(vec![ChatCompletionRequestMessage::User(
+            ChatCompletionRequestUserMessageArgs::default()
+                .content(content_parts.to_string())
+                .build()
+                .map_err(|e| GuideError::Llm(e.to_string()))?,
+        )]);
+        if let Some(temp) = req.temperature {
+            builder.temperature(temp);
+        }
+        if let Some(max) = req.max_tokens {
+            builder.max_tokens(max as u16);
+        }
+        if let Some(top_p) = req.top_p {
+            builder.top_p(top_p);
+        }
+        let request = builder.build().map_err(|e| GuideError::Llm(e.to_string()))?;
 
         let response = self
             .client
@@ -245,6 +256,12 @@ impl LlmClient for CloudProvider {
             prompt_tokens,
             completion_tokens,
         })
+    }
+
+    async fn transcribe(&self, _req: AudioRequest) -> Result<String> {
+        Err(GuideError::Llm(
+            "audio transcription not supported for cloud provider".to_string(),
+        ))
     }
 
     fn provider_name(&self) -> &str {

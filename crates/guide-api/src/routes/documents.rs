@@ -3,16 +3,20 @@ use axum::{
     extract::{Multipart, Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
-    routing::{get, post},
+    routing::{delete, get, post},
     Json, Router,
 };
-use serde::Deserialize;
 use chrono::Utc;
+use serde::{Deserialize, Serialize};
 use guide_core::{
     models::{CampaignDocument, DocumentKind, GlobalDocument, IngestionStatus, RankedChunk},
     GuideError,
 };
-use guide_db::documents::{DocumentRepository, GlobalDocumentRepository};
+use guide_db::{
+    campaign_global_docs::CampaignGlobalDocRepository,
+    documents::{parse_doc_kind, DocumentRepository, GlobalDocumentRepository},
+    PageOcrRow,
+};
 use uuid::Uuid;
 
 use crate::state::AppState;
@@ -26,7 +30,7 @@ pub fn router() -> Router<AppState> {
         )
         .route(
             "/campaigns/{campaign_id}/documents/{doc_id}",
-            get(get_document),
+            get(get_document).delete(delete_campaign_document),
         )
         .route(
             "/campaigns/{campaign_id}/documents/{doc_id}/ingest",
@@ -36,9 +40,26 @@ pub fn router() -> Router<AppState> {
             "/campaigns/{campaign_id}/documents/{doc_id}/search",
             get(search_campaign_document),
         )
+        .route(
+            "/campaigns/{campaign_id}/documents/{doc_id}/pages",
+            get(get_document_pages),
+        )
+        .route(
+            "/campaigns/{campaign_id}/documents/{doc_id}/story-extraction-status",
+            get(story_extraction_status),
+        )
+        // Campaign ↔ GlobalDoc associations
+        .route(
+            "/campaigns/{campaign_id}/global-docs",
+            get(list_campaign_global_docs).post(associate_global_doc),
+        )
+        .route(
+            "/campaigns/{campaign_id}/global-docs/{gdoc_id}",
+            delete(remove_global_doc),
+        )
         // Global (rulebook) documents
         .route("/documents", get(list_global).post(upload_global))
-        .route("/documents/{doc_id}", get(get_global))
+        .route("/documents/{doc_id}", get(get_global).delete(delete_global_document))
         .route("/documents/{doc_id}/ingest", post(ingest_global))
         // Rules search (global PageIndex)
         .route("/rules/search", get(search_rules))
@@ -78,7 +99,56 @@ async fn upload_document(
     Path(campaign_id): Path<Uuid>,
     mut multipart: Multipart,
 ) -> Result<impl IntoResponse, crate::error::AppError> {
-    let (filename, data) = extract_file_from_multipart(&mut multipart).await?;
+    let mut filename = String::new();
+    let mut data = Bytes::new();
+    let mut kind_str: Option<String> = None;
+    let mut description: Option<String> = None;
+
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| GuideError::InvalidInput(e.to_string()))?
+    {
+        match field.name() {
+            Some("file") => {
+                filename = field
+                    .file_name()
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "upload.pdf".to_string());
+                data = field
+                    .bytes()
+                    .await
+                    .map_err(|e| GuideError::InvalidInput(e.to_string()))?;
+            }
+            Some("kind") => {
+                kind_str = Some(
+                    field
+                        .text()
+                        .await
+                        .map_err(|e| GuideError::InvalidInput(e.to_string()))?,
+                );
+            }
+            Some("description") => {
+                description = Some(
+                    field
+                        .text()
+                        .await
+                        .map_err(|e| GuideError::InvalidInput(e.to_string()))?,
+                );
+            }
+            _ => {}
+        }
+    }
+
+    if filename.is_empty() {
+        return Err(GuideError::InvalidInput("No file provided".into()).into());
+    }
+
+    let document_kind = kind_str
+        .as_deref()
+        .map(parse_doc_kind)
+        .unwrap_or(DocumentKind::Campaign);
+
     let doc_id = Uuid::new_v4();
     let stored_path = format!("data/uploads/{doc_id}/{filename}");
 
@@ -91,9 +161,12 @@ async fn upload_document(
         file_size_bytes: data.len() as i64,
         stored_path,
         page_count: None,
-        document_kind: DocumentKind::Campaign,
+        document_kind,
+        description,
         ingestion_status: IngestionStatus::Pending,
         ingestion_error: None,
+        story_extraction_status: "pending".to_string(),
+        story_extraction_error: None,
         uploaded_at: Utc::now(),
         ingested_at: None,
     };
@@ -195,7 +268,47 @@ async fn upload_global(
     State(state): State<AppState>,
     mut multipart: Multipart,
 ) -> Result<impl IntoResponse, crate::error::AppError> {
-    let (filename, data) = extract_file_from_multipart(&mut multipart).await?;
+    let mut filename = String::new();
+    let mut data = Bytes::new();
+    let mut kind_str: Option<String> = None;
+
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| GuideError::InvalidInput(e.to_string()))?
+    {
+        match field.name() {
+            Some("file") => {
+                filename = field
+                    .file_name()
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "upload.pdf".to_string());
+                data = field
+                    .bytes()
+                    .await
+                    .map_err(|e| GuideError::InvalidInput(e.to_string()))?;
+            }
+            Some("kind") => {
+                kind_str = Some(
+                    field
+                        .text()
+                        .await
+                        .map_err(|e| GuideError::InvalidInput(e.to_string()))?,
+                );
+            }
+            _ => {}
+        }
+    }
+
+    if filename.is_empty() {
+        return Err(GuideError::InvalidInput("No file provided".into()).into());
+    }
+
+    let document_kind = kind_str
+        .as_deref()
+        .map(parse_doc_kind)
+        .unwrap_or(DocumentKind::DmGuide);
+
     let doc_id = Uuid::new_v4();
     let stored_path = format!("data/uploads/global/{doc_id}/{filename}");
 
@@ -212,6 +325,7 @@ async fn upload_global(
         file_size_bytes: data.len() as i64,
         stored_path,
         page_count: None,
+        document_kind,
         ingestion_status: IngestionStatus::Pending,
         ingestion_error: None,
         uploaded_at: Utc::now(),
@@ -289,26 +403,132 @@ async fn ingest_global(
     Ok(StatusCode::ACCEPTED)
 }
 
-async fn extract_file_from_multipart(
-    multipart: &mut Multipart,
-) -> Result<(String, Bytes), GuideError> {
-    if let Some(field) = multipart
-        .next_field()
-        .await
-        .map_err(|e| GuideError::InvalidInput(e.to_string()))?
-    {
-        let filename = field
-            .file_name()
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| "upload.pdf".to_string());
-        let data = field
-            .bytes()
-            .await
-            .map_err(|e| GuideError::InvalidInput(e.to_string()))?;
-        return Ok((filename, data));
+async fn delete_campaign_document(
+    State(state): State<AppState>,
+    Path((campaign_id, doc_id)): Path<(Uuid, Uuid)>,
+) -> Result<impl IntoResponse, crate::error::AppError> {
+    let repo = DocumentRepository::new(&state.db);
+    let doc = repo.get_by_id(doc_id).await?;
+
+    if let Some(q) = state.qdrant.as_deref() {
+        let col = guide_db::qdrant::campaign_collection_name(&campaign_id.to_string());
+        if let Err(e) = guide_db::qdrant::delete_document_vectors(q, &col, doc_id).await {
+            tracing::warn!("Failed to delete Qdrant vectors for doc {doc_id}: {e}");
+        }
     }
-    Err(GuideError::InvalidInput("No file provided".into()))
+
+    if let Err(e) = tokio::fs::remove_file(format!("data/indexes/{}/{}.json", campaign_id, doc_id)).await {
+        tracing::warn!("Failed to remove index file for doc {doc_id}: {e}");
+    }
+
+    if let Some(parent) = std::path::Path::new(&doc.stored_path).parent() {
+        if let Err(e) = tokio::fs::remove_dir_all(parent).await {
+            tracing::warn!("Failed to remove upload dir for doc {doc_id}: {e}");
+        }
+    }
+
+    repo.delete(doc_id).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
+
+async fn delete_global_document(
+    State(state): State<AppState>,
+    Path(doc_id): Path<Uuid>,
+) -> Result<impl IntoResponse, crate::error::AppError> {
+    let repo = GlobalDocumentRepository::new(&state.db);
+    let doc = repo.get_by_id(doc_id).await?;
+
+    if let Some(q) = state.qdrant.as_deref() {
+        let col = guide_db::qdrant::global_collection_name();
+        if let Err(e) = guide_db::qdrant::delete_document_vectors(q, col, doc_id).await {
+            tracing::warn!("Failed to delete Qdrant vectors for global doc {doc_id}: {e}");
+        }
+    }
+
+    if let Err(e) = tokio::fs::remove_file(format!("data/indexes/global/{}.json", doc_id)).await {
+        tracing::warn!("Failed to remove index file for global doc {doc_id}: {e}");
+    }
+
+    if let Some(parent) = std::path::Path::new(&doc.stored_path).parent() {
+        if let Err(e) = tokio::fs::remove_dir_all(parent).await {
+            tracing::warn!("Failed to remove upload dir for global doc {doc_id}: {e}");
+        }
+    }
+
+    repo.delete(doc_id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// ─── OCR Page Preview ─────────────────────────────────────────────────────────
+
+/// GET /campaigns/:campaign_id/documents/:doc_id/pages
+///
+/// Returns the raw OCR text for every page of a campaign document,
+/// ordered by page number ascending.
+async fn get_document_pages(
+    State(state): State<AppState>,
+    Path((_campaign_id, doc_id)): Path<(Uuid, Uuid)>,
+) -> Result<Json<Vec<PageOcrRow>>, crate::error::AppError> {
+    let repo = DocumentRepository::new(&state.db);
+    let rows = repo.list_page_ocr(doc_id).await?;
+    Ok(Json(rows))
+}
+
+// ─── Story Extraction Status ──────────────────────────────────────────────────
+
+#[derive(Serialize)]
+struct StoryExtractionStatusResponse {
+    status: String,
+    error: Option<String>,
+}
+
+async fn story_extraction_status(
+    State(state): State<AppState>,
+    Path((_campaign_id, doc_id)): Path<(Uuid, Uuid)>,
+) -> Result<impl IntoResponse, crate::error::AppError> {
+    let repo = DocumentRepository::new(&state.db);
+    let doc = repo.get_by_id(doc_id).await?;
+    Ok(Json(StoryExtractionStatusResponse {
+        status: doc.story_extraction_status,
+        error: doc.story_extraction_error,
+    }))
+}
+
+// ─── Campaign ↔ GlobalDoc Associations ────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct AssociateGlobalDocRequest {
+    global_doc_id: Uuid,
+}
+
+async fn list_campaign_global_docs(
+    State(state): State<AppState>,
+    Path(campaign_id): Path<Uuid>,
+) -> Result<impl IntoResponse, crate::error::AppError> {
+    let repo = CampaignGlobalDocRepository::new(&state.db);
+    Ok(Json(repo.list_for_campaign(campaign_id).await?))
+}
+
+async fn associate_global_doc(
+    State(state): State<AppState>,
+    Path(campaign_id): Path<Uuid>,
+    Json(body): Json<AssociateGlobalDocRequest>,
+) -> Result<impl IntoResponse, crate::error::AppError> {
+    let repo = CampaignGlobalDocRepository::new(&state.db);
+    repo.associate(campaign_id, body.global_doc_id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn remove_global_doc(
+    State(state): State<AppState>,
+    Path((campaign_id, gdoc_id)): Path<(Uuid, Uuid)>,
+) -> Result<impl IntoResponse, crate::error::AppError> {
+    let repo = CampaignGlobalDocRepository::new(&state.db);
+    repo.remove(campaign_id, gdoc_id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 async fn save_file(path: &str, data: &[u8]) -> Result<(), GuideError> {
     let path = std::path::Path::new(path);

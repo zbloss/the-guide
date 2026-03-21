@@ -1,10 +1,15 @@
 use axum::{
     extract::{Path, State},
     http::StatusCode,
-    response::IntoResponse,
+    response::{
+        sse::{Event, Sse},
+        IntoResponse,
+    },
     routing::{get, post, put},
     Json, Router,
 };
+use futures::stream::{self, Stream, StreamExt};
+use std::convert::Infallible;
 use guide_combat::{build_participant, initiative::roll_initiative, CombatEngine};
 use guide_core::models::{
     CombatParticipant, CreateEncounterRequest, Encounter, UpdateParticipantRequest,
@@ -308,9 +313,20 @@ async fn update_participant(
 async fn get_replay(
     State(state): State<AppState>,
     Path((_campaign_id, id)): Path<(Uuid, Uuid)>,
-) -> Result<impl IntoResponse, crate::error::AppError> {
+) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, crate::error::AppError> {
     let repo = EncounterRepository::new(&state.db);
-    Ok(Json(repo.list_turn_snapshots(id).await?))
+    let snapshots = repo.list_turn_snapshots(id).await?;
+
+    let sse_stream = stream::iter(snapshots)
+        .map(|snap| {
+            let data = serde_json::to_string(&snap)
+                .unwrap_or_else(|e| format!("{{\"error\":\"{e}\"}}"));
+            Ok::<Event, Infallible>(Event::default().event("snapshot").data(data))
+        })
+        .chain(stream::once(async {
+            Ok::<Event, Infallible>(Event::default().event("done").data("[DONE]"))
+        }));
+    Ok(Sse::new(sse_stream))
 }
 
 async fn get_combat_log(

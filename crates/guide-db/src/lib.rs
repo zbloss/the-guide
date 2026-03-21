@@ -1,4 +1,5 @@
 pub mod calendar;
+pub mod campaign_global_docs;
 pub mod campaigns;
 pub mod characters;
 pub mod chat;
@@ -12,11 +13,14 @@ pub mod prep;
 pub mod qdrant;
 pub mod relationships;
 pub mod sessions;
+pub mod story;
 pub mod templates;
 pub mod webhooks;
 
+pub use documents::PageOcrRow;
 pub use plot_hooks::PlotHookRepository;
 pub use prep::DmPrepRepository;
+pub use relationships::RelationshipRepository;
 pub use templates::TemplateRepository;
 pub use webhooks::WebhookRepository;
 

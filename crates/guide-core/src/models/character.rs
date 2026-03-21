@@ -130,6 +130,38 @@ pub struct UpdateCharacterRequest {
     pub spell_slots: Option<Vec<SpellSlot>>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema, Default)]
+pub struct SavingThrows {
+    pub strength: Option<i32>,
+    pub dexterity: Option<i32>,
+    pub constitution: Option<i32>,
+    pub intelligence: Option<i32>,
+    pub wisdom: Option<i32>,
+    pub charisma: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema, Default)]
+pub struct SkillScores {
+    pub acrobatics: Option<i32>,
+    pub animal_handling: Option<i32>,
+    pub arcana: Option<i32>,
+    pub athletics: Option<i32>,
+    pub deception: Option<i32>,
+    pub history: Option<i32>,
+    pub insight: Option<i32>,
+    pub intimidation: Option<i32>,
+    pub investigation: Option<i32>,
+    pub medicine: Option<i32>,
+    pub nature: Option<i32>,
+    pub perception: Option<i32>,
+    pub performance: Option<i32>,
+    pub persuasion: Option<i32>,
+    pub religion: Option<i32>,
+    pub sleight_of_hand: Option<i32>,
+    pub stealth: Option<i32>,
+    pub survival: Option<i32>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ParsedSheetResult {
     pub name: String,
@@ -143,4 +175,32 @@ pub struct ParsedSheetResult {
     pub backstory_text: Option<String>,
     pub raw_extracted_text: String,
     pub parse_confidence: f32,
+    #[serde(default)]
+    pub background: Option<String>,
+    #[serde(default)]
+    pub experience_points: Option<i32>,
+    #[serde(default)]
+    pub hit_dice: Option<String>,
+    #[serde(default)]
+    pub saving_throws: Option<SavingThrows>,
+    #[serde(default)]
+    pub skills: Option<SkillScores>,
+    #[serde(default)]
+    pub proficiencies: Vec<String>,
+    #[serde(default)]
+    pub languages: Vec<String>,
+    #[serde(default)]
+    pub features_and_traits: Vec<String>,
+    #[serde(default)]
+    pub equipment: Vec<String>,
+    #[serde(default)]
+    pub personality_traits: Option<String>,
+    #[serde(default)]
+    pub ideals: Option<String>,
+    #[serde(default)]
+    pub bonds: Option<String>,
+    #[serde(default)]
+    pub flaws: Option<String>,
+    #[serde(default)]
+    pub spell_slots: Vec<SpellSlot>,
 }

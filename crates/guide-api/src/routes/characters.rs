@@ -7,9 +7,10 @@ use axum::{
 };
 use guide_core::{
     models::{
-        Backstory, Character, CharacterType, CreateCharacterRequest, CreateTrackedPlotHookRequest,
-        GenerateNpcRequest, HookPriority, ParsedSheetResult, PlotHook, PlotHookStatus,
-        RestoreSlotRequest, SpendSlotRequest, UpdateCharacterRequest,
+        AbilityScores, Backstory, Character, CharacterType, CreateCharacterRequest,
+        CreateTrackedPlotHookRequest, GenerateNpcRequest, HookPriority, ParsedSheetResult,
+        PlotHook, PlotHookStatus, RestoreSlotRequest, SavingThrows, SkillScores, SpellSlot,
+        SpendSlotRequest, UpdateCharacterRequest,
     },
     GuideError,
 };
@@ -17,6 +18,196 @@ use guide_db::{characters::CharacterRepository, PlotHookRepository};
 use uuid::Uuid;
 
 use crate::state::AppState;
+
+// ── Type-coercing helpers for LLM JSON output ────────────────────────────────
+
+fn jv_str(v: &serde_json::Value) -> String {
+    match v {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Number(n) => n.to_string(),
+        serde_json::Value::Bool(b) => b.to_string(),
+        _ => String::new(),
+    }
+}
+
+fn jv_str_opt(v: &serde_json::Value) -> Option<String> {
+    match v {
+        serde_json::Value::Null => None,
+        serde_json::Value::String(s) if s.is_empty() => None,
+        other => {
+            let s = jv_str(other);
+            if s.is_empty() { None } else { Some(s) }
+        }
+    }
+}
+
+fn jv_i32(v: &serde_json::Value) -> i32 {
+    match v {
+        serde_json::Value::Number(n) => n.as_i64().unwrap_or(0) as i32,
+        serde_json::Value::String(s) => s.trim().parse().unwrap_or(0),
+        _ => 0,
+    }
+}
+
+fn jv_i32_opt(v: &serde_json::Value) -> Option<i32> {
+    match v {
+        serde_json::Value::Null => None,
+        other => Some(jv_i32(other)),
+    }
+}
+
+fn jv_f32(v: &serde_json::Value) -> f32 {
+    match v {
+        serde_json::Value::Number(n) => n.as_f64().unwrap_or(0.0) as f32,
+        serde_json::Value::String(s) => s.trim().parse().unwrap_or(0.0),
+        _ => 0.0,
+    }
+}
+
+fn jv_str_vec(v: &serde_json::Value) -> Vec<String> {
+    match v {
+        serde_json::Value::Array(arr) => arr
+            .iter()
+            .filter_map(|item| match item {
+                serde_json::Value::String(s) if !s.is_empty() => Some(s.clone()),
+                serde_json::Value::Number(n) => Some(n.to_string()),
+                _ => None,
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn jv_ability_scores(v: &serde_json::Value) -> AbilityScores {
+    let null = serde_json::Value::Null;
+    if let serde_json::Value::Object(m) = v {
+        AbilityScores {
+            strength:     jv_i32(m.get("strength").unwrap_or(&null)),
+            dexterity:    jv_i32(m.get("dexterity").unwrap_or(&null)),
+            constitution: jv_i32(m.get("constitution").unwrap_or(&null)),
+            intelligence: jv_i32(m.get("intelligence").unwrap_or(&null)),
+            wisdom:       jv_i32(m.get("wisdom").unwrap_or(&null)),
+            charisma:     jv_i32(m.get("charisma").unwrap_or(&null)),
+        }
+    } else {
+        AbilityScores::default()
+    }
+}
+
+fn jv_saving_throws(v: &serde_json::Value) -> Option<SavingThrows> {
+    if let serde_json::Value::Object(m) = v {
+        let null = serde_json::Value::Null;
+        Some(SavingThrows {
+            strength:     jv_i32_opt(m.get("strength").unwrap_or(&null)),
+            dexterity:    jv_i32_opt(m.get("dexterity").unwrap_or(&null)),
+            constitution: jv_i32_opt(m.get("constitution").unwrap_or(&null)),
+            intelligence: jv_i32_opt(m.get("intelligence").unwrap_or(&null)),
+            wisdom:       jv_i32_opt(m.get("wisdom").unwrap_or(&null)),
+            charisma:     jv_i32_opt(m.get("charisma").unwrap_or(&null)),
+        })
+    } else {
+        None
+    }
+}
+
+fn jv_skill_scores(v: &serde_json::Value) -> Option<SkillScores> {
+    if let serde_json::Value::Object(m) = v {
+        let null = serde_json::Value::Null;
+        Some(SkillScores {
+            acrobatics:      jv_i32_opt(m.get("acrobatics").unwrap_or(&null)),
+            animal_handling: jv_i32_opt(m.get("animal_handling").unwrap_or(&null)),
+            arcana:          jv_i32_opt(m.get("arcana").unwrap_or(&null)),
+            athletics:       jv_i32_opt(m.get("athletics").unwrap_or(&null)),
+            deception:       jv_i32_opt(m.get("deception").unwrap_or(&null)),
+            history:         jv_i32_opt(m.get("history").unwrap_or(&null)),
+            insight:         jv_i32_opt(m.get("insight").unwrap_or(&null)),
+            intimidation:    jv_i32_opt(m.get("intimidation").unwrap_or(&null)),
+            investigation:   jv_i32_opt(m.get("investigation").unwrap_or(&null)),
+            medicine:        jv_i32_opt(m.get("medicine").unwrap_or(&null)),
+            nature:          jv_i32_opt(m.get("nature").unwrap_or(&null)),
+            perception:      jv_i32_opt(m.get("perception").unwrap_or(&null)),
+            performance:     jv_i32_opt(m.get("performance").unwrap_or(&null)),
+            persuasion:      jv_i32_opt(m.get("persuasion").unwrap_or(&null)),
+            religion:        jv_i32_opt(m.get("religion").unwrap_or(&null)),
+            sleight_of_hand: jv_i32_opt(m.get("sleight_of_hand").unwrap_or(&null)),
+            stealth:         jv_i32_opt(m.get("stealth").unwrap_or(&null)),
+            survival:        jv_i32_opt(m.get("survival").unwrap_or(&null)),
+        })
+    } else {
+        None
+    }
+}
+
+fn jv_spell_slots(v: &serde_json::Value) -> Vec<SpellSlot> {
+    let null = serde_json::Value::Null;
+    match v {
+        serde_json::Value::Array(arr) => arr
+            .iter()
+            .filter_map(|item| {
+                if let serde_json::Value::Object(m) = item {
+                    Some(SpellSlot {
+                        level:     jv_i32(m.get("level").unwrap_or(&null)),
+                        total:     jv_i32(m.get("total").unwrap_or(&null)),
+                        remaining: jv_i32(m.get("remaining").unwrap_or(&null)),
+                    })
+                } else {
+                    None
+                }
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn build_parsed_sheet_result(val: serde_json::Value, raw_extracted_text: String) -> ParsedSheetResult {
+    let null = serde_json::Value::Null;
+
+    let name = jv_str(val.get("name").unwrap_or(&null));
+    let name = if name.is_empty() { "Unknown".into() } else { name };
+
+    let level = jv_i32(val.get("level").unwrap_or(&null));
+    let level = if level <= 0 { 1 } else { level };
+
+    let max_hp = jv_i32(val.get("max_hp").unwrap_or(&null));
+    let max_hp = if max_hp <= 0 { 10 } else { max_hp };
+
+    let armor_class = jv_i32(val.get("armor_class").unwrap_or(&null));
+    let armor_class = if armor_class <= 0 { 10 } else { armor_class };
+
+    let speed = jv_i32(val.get("speed").unwrap_or(&null));
+    let speed = if speed <= 0 { 30 } else { speed };
+
+    ParsedSheetResult {
+        name,
+        class: jv_str_opt(val.get("class").unwrap_or(&null)),
+        race: jv_str_opt(val.get("race").unwrap_or(&null)),
+        level,
+        max_hp,
+        armor_class,
+        speed,
+        ability_scores: jv_ability_scores(val.get("ability_scores").unwrap_or(&null)),
+        backstory_text: jv_str_opt(val.get("backstory_text").unwrap_or(&null)),
+        raw_extracted_text,
+        parse_confidence: jv_f32(val.get("parse_confidence").unwrap_or(&null)),
+        background: jv_str_opt(val.get("background").unwrap_or(&null)),
+        experience_points: {
+            let xp = jv_i32(val.get("experience_points").unwrap_or(&null));
+            if xp == 0 { None } else { Some(xp) }
+        },
+        hit_dice: jv_str_opt(val.get("hit_dice").unwrap_or(&null)),
+        saving_throws: jv_saving_throws(val.get("saving_throws").unwrap_or(&null)),
+        skills: jv_skill_scores(val.get("skills").unwrap_or(&null)),
+        proficiencies: jv_str_vec(val.get("proficiencies").unwrap_or(&null)),
+        languages: jv_str_vec(val.get("languages").unwrap_or(&null)),
+        features_and_traits: jv_str_vec(val.get("features_and_traits").unwrap_or(&null)),
+        equipment: jv_str_vec(val.get("equipment").unwrap_or(&null)),
+        personality_traits: jv_str_opt(val.get("personality_traits").unwrap_or(&null)),
+        ideals: jv_str_opt(val.get("ideals").unwrap_or(&null)),
+        bonds: jv_str_opt(val.get("bonds").unwrap_or(&null)),
+        flaws: jv_str_opt(val.get("flaws").unwrap_or(&null)),
+        spell_slots: jv_spell_slots(val.get("spell_slots").unwrap_or(&null)),
+    }
+}
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -231,6 +422,7 @@ async fn analyze_backstory(
         model_override: None,
         temperature: Some(0.7),
         max_tokens: Some(1024),
+        json_mode: false,
     };
 
     let resp = state.llm.complete(req).await?;
@@ -333,6 +525,7 @@ async fn generate_villain_profile(
         model_override: None,
         temperature: Some(0.8),
         max_tokens: Some(1024),
+        json_mode: false,
     };
 
     let resp = state.llm.complete(req).await?;
@@ -380,6 +573,7 @@ async fn generate_npc(
         model_override: None,
         temperature: Some(0.8),
         max_tokens: Some(512),
+        json_mode: false,
     };
 
     let resp = state.llm.complete(llm_req).await?;
@@ -557,6 +751,7 @@ async fn level_up_assist(
         model_override: None,
         temperature: Some(0.7),
         max_tokens: Some(512),
+        json_mode: false,
     };
 
     let resp = state.llm.complete(llm_req).await?;
@@ -656,17 +851,75 @@ async fn parse_sheet(
         crate::error::AppError(guide_core::GuideError::InvalidInput("No file field".into()))
     })?;
 
-    let raw_extracted_text =
-        guide_pdf::extractor::extract_text_sync(&bytes).unwrap_or_else(|_| String::new());
-
     use guide_llm::{CompletionRequest, LlmTask, Message, MessageRole};
 
+    // Strategy 1: Direct AcroForm field parser (no LLM) — works for standard D&D Beyond sheets.
+    if let Some(result) = guide_pdf::extractor::parse_character_sheet_from_form(&bytes) {
+        if result.parse_confidence >= 0.5 {
+            tracing::info!(
+                "Direct form parse succeeded: {} (confidence {:.2})",
+                result.name, result.parse_confidence
+            );
+            return Ok(Json(result));
+        }
+        tracing::info!(
+            "Direct form parse confidence too low ({:.2}), falling back to LLM",
+            result.parse_confidence
+        );
+    }
+
+    // Strategy 2: Extract text, then run the text LLM to produce structured JSON.
+    // Vision models are not reliable at emitting complex structured JSON in one shot,
+    // so we always separate extraction from parsing.
+    let raw_extracted_text = guide_pdf::extractor::extract_character_sheet_text(
+        &bytes,
+        state.llm.as_ref(),
+        &state.config.ocr_model,
+    )
+    .await;
+
+    tracing::info!(
+        "Character sheet text extracted: {} chars, {} words",
+        raw_extracted_text.len(),
+        raw_extracted_text.split_whitespace().count()
+    );
+
+    if raw_extracted_text.trim().is_empty() {
+        return Ok(Json(ParsedSheetResult {
+            name: "Unknown".into(),
+            class: None,
+            race: None,
+            level: 1,
+            max_hp: 10,
+            armor_class: 10,
+            speed: 30,
+            ability_scores: guide_core::models::AbilityScores::default(),
+            backstory_text: None,
+            raw_extracted_text,
+            parse_confidence: 0.0,
+            background: None,
+            experience_points: None,
+            hit_dice: None,
+            saving_throws: None,
+            skills: None,
+            proficiencies: Vec::new(),
+            languages: Vec::new(),
+            features_and_traits: Vec::new(),
+            equipment: Vec::new(),
+            personality_traits: None,
+            ideals: None,
+            bonds: None,
+            flaws: None,
+            spell_slots: Vec::new(),
+        }));
+    }
+
     let user_msg = format!(
-        "Parse this character sheet text and return the JSON:\n\n{}",
+        "Parse this D&D 5e character sheet and return JSON:\n\n{}",
         &raw_extracted_text
     );
 
-    let req = CompletionRequest {
+    let llm_req = CompletionRequest {
         task: LlmTask::CharacterSheetParse,
         messages: vec![
             Message {
@@ -680,26 +933,54 @@ async fn parse_sheet(
         ],
         model_override: None,
         temperature: Some(0.0),
-        max_tokens: Some(1024),
+        max_tokens: Some(2048),
+        json_mode: false,
     };
 
-    let resp = state.llm.complete(req).await?;
+    let resp = state.llm.complete(llm_req).await?;
 
-    let mut parsed: ParsedSheetResult =
-        serde_json::from_str(resp.content.trim()).unwrap_or_else(|_| ParsedSheetResult {
-            name: "Unknown".into(),
-            class: None,
-            race: None,
-            level: 1,
-            max_hp: 10,
-            armor_class: 10,
-            speed: 30,
-            ability_scores: guide_core::models::AbilityScores::default(),
-            backstory_text: None,
-            raw_extracted_text: raw_extracted_text.clone(),
-            parse_confidence: 0.0,
-        });
-    parsed.raw_extracted_text = raw_extracted_text;
+    // Strip markdown fences the LLM may wrap around the JSON
+    let raw_resp = resp.content.trim();
+    let json_str = raw_resp
+        .trim_start_matches("```json")
+        .trim_start_matches("```")
+        .trim_end_matches("```")
+        .trim();
+
+    // Use type-coercing Value deserialization to tolerate minor field type mismatches
+    let parsed = match serde_json::from_str::<serde_json::Value>(json_str) {
+        Ok(val) => build_parsed_sheet_result(val, raw_extracted_text.clone()),
+        Err(e) => {
+            tracing::warn!("Failed to parse LLM sheet JSON: {e}\nRaw response: {json_str}");
+            ParsedSheetResult {
+                name: "Unknown".into(),
+                class: None,
+                race: None,
+                level: 1,
+                max_hp: 10,
+                armor_class: 10,
+                speed: 30,
+                ability_scores: guide_core::models::AbilityScores::default(),
+                backstory_text: None,
+                raw_extracted_text,
+                parse_confidence: 0.0,
+                background: None,
+                experience_points: None,
+                hit_dice: None,
+                saving_throws: None,
+                skills: None,
+                proficiencies: Vec::new(),
+                languages: Vec::new(),
+                features_and_traits: Vec::new(),
+                equipment: Vec::new(),
+                personality_traits: None,
+                ideals: None,
+                bonds: None,
+                flaws: None,
+                spell_slots: Vec::new(),
+            }
+        }
+    };
 
     Ok(Json(parsed))
 }

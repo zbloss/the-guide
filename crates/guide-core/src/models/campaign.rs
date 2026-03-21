@@ -11,7 +11,6 @@ pub struct Campaign {
     pub description: Option<String>,
     pub game_system: GameSystem,
     pub world_state: Option<WorldState>,
-    pub share_token: Option<String>,
     pub current_chapter: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,

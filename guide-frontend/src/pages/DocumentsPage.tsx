@@ -1,9 +1,11 @@
+import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useApi } from '../hooks/useApi';
 import { listCampaignDocs, uploadCampaignDoc, getCampaignDoc, ingestCampaignDoc } from '../api/documents';
 import { DocumentList } from '../components/documents/DocumentList';
 import { UploadForm } from '../components/documents/UploadForm';
 import { IngestButton } from '../components/documents/IngestButton';
+import { OcrPreviewModal } from '../components/documents/OcrPreviewModal';
 import { DocumentChunkSearch } from '../components/documents/DocumentChunkSearch';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { ErrorBanner } from '../components/common/ErrorBanner';
@@ -15,6 +17,7 @@ export function DocumentsPage() {
     () => listCampaignDocs(campaignId!),
     [campaignId],
   );
+  const [previewDocId, setPreviewDocId] = useState<string | null>(null);
 
   const handleUpload = async (file: File) => {
     await uploadCampaignDoc(campaignId!, file);
@@ -39,18 +42,34 @@ export function DocumentsPage() {
             renderActions={(doc) => {
               const d = doc as CampaignDocument;
               return (
-                <IngestButton
-                  docId={d.id}
-                  currentStatus={d.ingestion_status}
-                  onIngest={() => ingestCampaignDoc(campaignId!, d.id).then(() => {})}
-                  onPoll={() => getCampaignDoc(campaignId!, d.id)}
-                  onComplete={refetch}
-                />
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                  <IngestButton
+                    docId={d.id}
+                    currentStatus={d.ingestion_status}
+                    onIngest={() => ingestCampaignDoc(campaignId!, d.id).then(() => {})}
+                    onPoll={() => getCampaignDoc(campaignId!, d.id)}
+                    onComplete={refetch}
+                  />
+                  {d.ingestion_status === 'completed' && (
+                    <button className="btn btn-sm" onClick={() => setPreviewDocId(d.id)}>
+                      Preview OCR
+                    </button>
+                  )}
+                </div>
               );
             }}
           />
           <DocumentChunkSearch campaignId={campaignId!} documents={docs} />
         </>
+      )}
+
+      {previewDocId && (
+        <OcrPreviewModal
+          campaignId={campaignId!}
+          docId={previewDocId}
+          filename={docs?.find((d) => d.id === previewDocId)?.filename ?? ''}
+          onClose={() => setPreviewDocId(null)}
+        />
       )}
     </div>
   );
