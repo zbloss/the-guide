@@ -101,6 +101,7 @@ async fn make_app() -> axum::Router {
         cloud_model: None,
         ocr_provider: "local".into(),
         story_provider: "local".into(),
+        context_window: 8192,
         max_upload_bytes: 10 * 1024 * 1024,
         chunk_max_chars: 1600,
         chunk_overlap_chars: 200,

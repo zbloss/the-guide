@@ -103,6 +103,7 @@ async fn analyze_document_structure(
     chunks: &[crate::chunker::DocumentChunk],
     doc_title: &str,
     llm: &dyn LlmClient,
+    max_chars: usize,
 ) -> DocumentContext {
     use guide_llm::{CompletionRequest, LlmTask, Message, MessageRole};
 
@@ -113,7 +114,7 @@ async fn analyze_document_structure(
         .collect::<Vec<_>>()
         .join("\n\n")
         .chars()
-        .take(5_000)
+        .take(max_chars)
         .collect();
 
     if excerpt.trim().is_empty() {
@@ -252,7 +253,7 @@ pub async fn ingest_campaign_document(
         doc.document_kind,
         DocumentKind::Campaign | DocumentKind::Supplemental
     ) {
-        if let Err(e) = extract_story(doc, &chunks, llm.clone(), db).await {
+        if let Err(e) = extract_story(doc, &chunks, llm.clone(), db, config).await {
             tracing::error!("Story extraction failed for doc {}: {e}", doc.id);
             let _ = DocumentRepository::new(db)
                 .update_story_extraction_status(doc.id, "failed", Some(&e.to_string()))
@@ -531,6 +532,7 @@ async fn extract_story_for_chapter(
     doc_ctx: &DocumentContext,
     prev_chapter_summary: Option<&str>,
     llm: &dyn LlmClient,
+    max_output_tokens: u32,
 ) -> Result<StoryExtractionResult> {
     use guide_llm::{CompletionRequest, LlmTask, Message, MessageRole};
 
@@ -554,7 +556,7 @@ async fn extract_story_for_chapter(
         ],
         model_override: None,
         temperature: Some(0.3),
-        max_tokens: Some(8192),
+        max_tokens: Some(max_output_tokens),
         json_mode: true,
     };
 
@@ -681,6 +683,7 @@ pub async fn extract_story(
     chunks: &[crate::chunker::DocumentChunk],
     llm: Arc<dyn LlmClient>,
     db: &SqlitePool,
+    config: &AppConfig,
 ) -> Result<()> {
     use guide_llm::{CompletionRequest, LlmTask, Message, MessageRole};
     use std::collections::HashMap;
@@ -690,8 +693,17 @@ pub async fn extract_story(
         .update_story_extraction_status(doc.id, "processing", None)
         .await?;
 
+    let max_input_chars = config.max_input_chars();
+    let max_output_tokens = config.max_output_tokens();
+
     // Phase 1: Quick document pre-analysis for campaign context.
-    let doc_ctx = analyze_document_structure(chunks, &doc.filename, llm.as_ref()).await;
+    let doc_ctx = analyze_document_structure(
+        chunks,
+        &doc.filename,
+        llm.as_ref(),
+        config.max_preanalysis_chars(),
+    )
+    .await;
     tracing::info!(
         doc_id = %doc.id,
         setting = doc_ctx.setting_str(),
@@ -704,7 +716,7 @@ pub async fn extract_story(
 
     let extraction: StoryExtractionResult = if chapter_groups.len() < 2 {
         // Fallback: single-call path with v2 prompt and context.
-        let full_text = join_and_truncate(&chunks.iter().collect::<Vec<_>>(), 40_000);
+        let full_text = join_and_truncate(&chunks.iter().collect::<Vec<_>>(), max_input_chars);
         let system = guide_llm::prompts::story_extraction_system_v2(
             doc_ctx.setting_str(),
             &doc_ctx.themes_str(),
@@ -724,7 +736,7 @@ pub async fn extract_story(
             ],
             model_override: None,
             temperature: Some(0.3),
-            max_tokens: Some(8192),
+            max_tokens: Some(max_output_tokens),
             json_mode: true,
         };
         let resp = llm.complete(req).await?;
@@ -745,7 +757,7 @@ pub async fn extract_story(
         let mut prev_chapter_summary: Option<String> = None;
 
         for (chapter_name, chapter_chunks) in &chapter_groups {
-            let windows = windows_for_chapter(chapter_chunks, 20_000);
+            let windows = windows_for_chapter(chapter_chunks, max_input_chars);
             let window_count = windows.len();
             for (w_idx, window) in windows.into_iter().enumerate() {
                 let text = join_chunks(&window);
@@ -761,6 +773,7 @@ pub async fn extract_story(
                     &doc_ctx,
                     prev_chapter_summary.as_deref(),
                     llm.as_ref(),
+                    max_output_tokens,
                 )
                 .await
                 {
