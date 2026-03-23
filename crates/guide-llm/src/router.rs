@@ -23,6 +23,8 @@ pub struct LlmRouter {
     strategy: RoutingStrategy,
     local: Arc<dyn LlmClient>,
     cloud: Option<Arc<dyn LlmClient>>,
+    ocr_uses_cloud: bool,
+    story_uses_cloud: bool,
 }
 
 impl LlmRouter {
@@ -30,8 +32,10 @@ impl LlmRouter {
         strategy: RoutingStrategy,
         local: Arc<dyn LlmClient>,
         cloud: Option<Arc<dyn LlmClient>>,
+        ocr_uses_cloud: bool,
+        story_uses_cloud: bool,
     ) -> Self {
-        Self { strategy, local, cloud }
+        Self { strategy, local, cloud, ocr_uses_cloud, story_uses_cloud }
     }
 
     pub fn always_local(config: &AppConfig) -> Self {
@@ -42,18 +46,18 @@ impl LlmRouter {
             &config.embedding_model,
             &config.whisper_model,
         );
-        Self::new(RoutingStrategy::AlwaysLocal, Arc::new(ollama), None)
+        Self::new(RoutingStrategy::AlwaysLocal, Arc::new(ollama), None, false, false)
     }
 
     pub fn with_cloud_fallback(config: &AppConfig) -> Option<Self> {
         let api_key = config.cloud_api_key.as_deref()?;
         let provider_name = config.cloud_fallback.as_deref()?;
 
-        let (base_url, model, label) = match provider_name {
-            "openai" => (None, "gpt-4o".to_string(), "openai".to_string()),
+        let (base_url, default_model, label) = match provider_name {
+            "openai" => (None, "gpt-4o-mini".to_string(), "openai".to_string()),
             "gemini" => (
                 Some("https://generativelanguage.googleapis.com/v1beta/openai".to_string()),
-                "gemini-1.5-flash".to_string(),
+                "gemini-2.5-flash-lite".to_string(),
                 "gemini".to_string(),
             ),
             unknown => {
@@ -61,6 +65,9 @@ impl LlmRouter {
                 return None;
             }
         };
+
+        // Allow explicit cloud_model override from config
+        let model = config.cloud_model.clone().unwrap_or(default_model);
 
         let ollama = OllamaProvider::new(
             &config.ollama_base_url,
@@ -71,10 +78,15 @@ impl LlmRouter {
         );
         let cloud = CloudProvider::new(api_key, model, base_url, label.clone());
 
+        let ocr_uses_cloud = config.ocr_provider == "cloud";
+        let story_uses_cloud = config.story_provider == "cloud";
+
         Some(Self::new(
             RoutingStrategy::LocalWithFallback { fallback_provider: label },
             Arc::new(ollama),
             Some(Arc::new(cloud)),
+            ocr_uses_cloud,
+            story_uses_cloud,
         ))
     }
 
@@ -83,10 +95,14 @@ impl LlmRouter {
     }
 
     fn select_provider(&self, task: &LlmTask) -> Arc<dyn LlmClient> {
-        // Specialised local-only tasks always go to Ollama
+        // Embedding and character-sheet OCR always stay local
         match task {
-            LlmTask::OcrExtraction | LlmTask::EmbeddingGeneration | LlmTask::CharacterSheetOcr => {
+            LlmTask::EmbeddingGeneration | LlmTask::CharacterSheetOcr => {
                 return Arc::clone(&self.local);
+            }
+            // Story extraction routes to cloud if configured
+            LlmTask::StoryExtraction if self.story_uses_cloud => {
+                return self.cloud.as_ref().map(Arc::clone).unwrap_or_else(|| Arc::clone(&self.local));
             }
             _ => {}
         }
@@ -147,6 +163,11 @@ impl LlmClient for LlmRouter {
     }
 
     async fn complete_with_vision(&self, req: VisionRequest) -> Result<CompletionResponse> {
+        if self.ocr_uses_cloud {
+            if let Some(cloud) = &self.cloud {
+                return cloud.complete_with_vision(req).await;
+            }
+        }
         self.local.complete_with_vision(req).await
     }
 

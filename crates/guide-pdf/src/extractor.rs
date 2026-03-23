@@ -275,23 +275,52 @@ pub async fn extract_pages(
     ocr_model: &str,
     delay_ms: u64,
 ) -> Result<Vec<PageExtraction>> {
-    let _ = document_kind; // kind no longer affects prompt — all use simple OCR
-    let prompt = prompts::ocr_simple_prompt();
+    let is_campaign_doc = matches!(
+        document_kind,
+        DocumentKind::Campaign | DocumentKind::Supplemental
+    );
 
     let path_buf = pdf_path.to_path_buf();
-    let pages = tokio::task::spawn_blocking(move || render_pages_to_jpeg(&path_buf))
-        .await
-        .map_err(|e| GuideError::PdfProcessing(format!("render task panicked: {e}")))??;
 
-    if pages.is_empty() {
-        return Err(GuideError::PdfProcessing(format!(
-            "pdfium rendered 0 pages from {:?}",
+    // For campaign documents: render pages with per-page layout detection.
+    // Text-layer pages (>= 80 words in the native text layer) skip vision OCR entirely,
+    // with column-ordered text extraction for multi-column layouts.
+    // Pages with sparse or no text layer fall back to vision OCR with a layout-aware prompt.
+    if is_campaign_doc {
+        let pages = tokio::task::spawn_blocking(move || render_pages_with_layout(&path_buf))
+            .await
+            .map_err(|e| GuideError::PdfProcessing(format!("render task panicked: {e}")))??;
+
+        if pages.is_empty() {
+            return Err(GuideError::PdfProcessing(format!(
+                "pdfium rendered 0 pages from {:?}",
+                pdf_path
+            )));
+        }
+
+        tracing::info!(
+            "Rendered {} pages (with layout detection) from {:?}",
+            pages.len(),
             pdf_path
-        )));
-    }
+        );
+        ocr_pages_campaign(pages, llm, ocr_model, delay_ms).await
+    } else {
+        // Non-campaign documents (character sheets, rulebooks) use the simple prompt.
+        let path_buf2 = pdf_path.to_path_buf();
+        let pages = tokio::task::spawn_blocking(move || render_pages_to_jpeg(&path_buf2))
+            .await
+            .map_err(|e| GuideError::PdfProcessing(format!("render task panicked: {e}")))??;
 
-    tracing::info!("Rendered {} pages via pdfium from {:?}", pages.len(), pdf_path);
-    ocr_pages(pages, llm, ocr_model, prompt, delay_ms).await
+        if pages.is_empty() {
+            return Err(GuideError::PdfProcessing(format!(
+                "pdfium rendered 0 pages from {:?}",
+                pdf_path
+            )));
+        }
+
+        tracing::info!("Rendered {} pages via pdfium from {:?}", pages.len(), pdf_path);
+        ocr_pages(pages, llm, ocr_model, prompts::ocr_simple_prompt(), delay_ms).await
+    }
 }
 
 /// t_patch_size=2 from GLM-OCR config, 14=ViT spatial patch → align to 14×2=28px
@@ -369,6 +398,338 @@ fn render_pages_to_jpeg(pdf_path: &std::path::PathBuf) -> Result<Vec<(u32, Vec<u
     }
 
     Ok(result)
+}
+
+// ── Column layout detection ────────────────────────────────────────────────────
+
+/// A page that has been either rendered (needs vision OCR) or extracted from the text layer.
+enum PageData {
+    /// Page rendered to JPEG bytes + detected layout hint for vision OCR
+    NeedsOcr { page_num: u32, jpeg: Vec<u8>, layout: &'static str },
+    /// Page text extracted directly from the PDF text layer (no LLM needed)
+    TextLayer { page_num: u32, text: String, headings: Vec<String>, is_dm_only: bool },
+}
+
+/// Detect the column layout of a PDF page by analyzing the x-coordinate distribution
+/// of text characters.  Returns one of: "single-column", "two-column", "three-column",
+/// or "unknown layout".
+fn detect_page_layout(page: &pdfium_render::prelude::PdfPage<'_>) -> &'static str {
+    let text_obj = match page.text() {
+        Ok(t) => t,
+        Err(_) => return "unknown layout",
+    };
+
+    let page_width = page.page_size().width().value;
+    if page_width < 50.0 {
+        return "unknown layout";
+    }
+
+    // Collect x-center positions of non-whitespace characters.
+    let mut x_positions: Vec<f32> = Vec::new();
+    for c in text_obj.chars().iter() {
+        if let Some(ch) = c.unicode_char() {
+            if ch.is_whitespace() || ch.is_control() || ch == '\0' {
+                continue;
+            }
+            if let Ok(bounds) = c.loose_bounds() {
+                let cx = (bounds.left().value + bounds.right().value) / 2.0;
+                x_positions.push(cx);
+            }
+        }
+    }
+
+    if x_positions.len() < 40 {
+        return "unknown layout";
+    }
+
+    // Normalize to the observed text extent (not the full page width, to handle margins).
+    let min_x = x_positions.iter().cloned().fold(f32::INFINITY, f32::min);
+    let max_x = x_positions.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+    let range = max_x - min_x;
+    if range < 20.0 {
+        return "single-column";
+    }
+
+    // Bucket into 24 histogram bins.
+    const BINS: usize = 24;
+    let mut hist = [0u32; BINS];
+    for &x in &x_positions {
+        let bin = (((x - min_x) / range) * (BINS as f32 - 1.0)) as usize;
+        hist[bin.min(BINS - 1)] += 1;
+    }
+
+    let peak = *hist.iter().max().unwrap_or(&1);
+    if peak == 0 {
+        return "single-column";
+    }
+    let valley_threshold = (peak as f32 * 0.15) as u32; // < 15% of peak = valley bin
+
+    // Search for contiguous low-density "gap" regions in the middle portion (bins 8..16).
+    let search_start = BINS / 3;
+    let search_end = 2 * BINS / 3;
+
+    let mut in_valley = false;
+    let mut valley_count = 0usize;
+    for &bin_count in hist.iter().take(search_end).skip(search_start) {
+        if bin_count <= valley_threshold {
+            if !in_valley {
+                in_valley = true;
+                valley_count += 1;
+            }
+        } else {
+            in_valley = false;
+        }
+    }
+
+    match valley_count {
+        0 => "single-column",
+        1 => "two-column",
+        _ => "three-column",
+    }
+}
+
+/// Extract column-ordered text from a page's text layer.
+/// For single-column pages, returns `text_obj.all()` directly.
+/// For two-column pages, extracts left-column characters first, then right-column,
+/// each sorted top-to-bottom (PDF y-axis is inverted: higher value = higher on page).
+fn extract_column_ordered_text(
+    page: &pdfium_render::prelude::PdfPage<'_>,
+    layout: &str,
+) -> String {
+    let text_obj = match page.text() {
+        Ok(t) => t,
+        Err(_) => return String::new(),
+    };
+
+    match layout {
+        "two-column" => {
+            let page_width = page.page_size().width().value;
+            let mid = page_width / 2.0;
+
+            // Collect (y_desc, x, char) for sorting: negative y so higher page position sorts first.
+            let mut left: Vec<(f32, f32, char)> = Vec::new();
+            let mut right: Vec<(f32, f32, char)> = Vec::new();
+
+            for c in text_obj.chars().iter() {
+                if let Some(ch) = c.unicode_char() {
+                    if let Ok(bounds) = c.loose_bounds() {
+                        let cx = (bounds.left().value + bounds.right().value) / 2.0;
+                        let cy = bounds.top().value; // higher = higher on page
+                        if cx < mid {
+                            left.push((-cy, cx, ch));
+                        } else {
+                            right.push((-cy, cx, ch));
+                        }
+                    }
+                }
+            }
+
+            // Sort each column: top-to-bottom, then left-to-right within same line.
+            left.sort_by(|a, b| {
+                a.0.partial_cmp(&b.0)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then(a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
+            });
+            right.sort_by(|a, b| {
+                a.0.partial_cmp(&b.0)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then(a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
+            });
+
+            let left_text: String = left.iter().map(|&(_, _, c)| c).collect();
+            let right_text: String = right.iter().map(|&(_, _, c)| c).collect();
+            format!("{left_text}\n\n{right_text}")
+        }
+        _ => text_obj.all(),
+    }
+}
+
+/// Render campaign PDF pages to JPEG AND detect each page's column layout.
+/// Returns a `PageData` per page — either `TextLayer` (if native text is sufficient)
+/// or `NeedsOcr` (JPEG + layout hint for vision OCR).
+fn render_pages_with_layout(pdf_path: &std::path::PathBuf) -> Result<Vec<PageData>> {
+    use image::ImageFormat;
+    use pdfium_render::prelude::*;
+
+    const TEXT_LAYER_MIN_WORDS: usize = 80;
+
+    let lib_path = pdfium_lib_path()?;
+    let pdfium = Pdfium::new(
+        Pdfium::bind_to_library(lib_path)
+            .map_err(|e| GuideError::PdfProcessing(format!("pdfium load failed: {e}")))?,
+    );
+
+    let doc = pdfium
+        .load_pdf_from_file(pdf_path, None)
+        .map_err(|e| GuideError::PdfProcessing(format!("PDF open failed: {e}")))?;
+
+    let page_count = doc.pages().len();
+    tracing::info!("Processing {page_count} pages with layout detection from {:?}", pdf_path);
+
+    let render_config = PdfRenderConfig::new()
+        .set_target_width(1700)
+        .set_maximum_height(2400)
+        .rotate_if_landscape(PdfPageRenderRotation::None, true);
+
+    let mut result = Vec::with_capacity(page_count as usize);
+
+    for (index, page) in doc.pages().iter().enumerate() {
+        let page_num = (index + 1) as u32;
+
+        // Detect column layout from text layer (always available, fast).
+        let layout = detect_page_layout(&page);
+
+        // Check native text layer word count.
+        let native_text = page.text().map(|t| t.all()).unwrap_or_default();
+        let word_count = native_text.split_whitespace().count();
+
+        if word_count >= TEXT_LAYER_MIN_WORDS {
+            // Sufficient text layer — extract column-ordered text, skip vision OCR.
+            let text = if layout != "unknown layout" {
+                extract_column_ordered_text(&page, layout)
+            } else {
+                native_text
+            };
+
+            tracing::debug!(
+                "Page {page_num}: text-layer path ({word_count} words, layout={layout})"
+            );
+
+            // Basic heading detection from the text layer.
+            let headings: Vec<String> = text
+                .lines()
+                .filter(|l| {
+                    let l = l.trim();
+                    !l.is_empty()
+                        && l.len() < 80
+                        && (l.starts_with('#') || l.chars().filter(|c| c.is_uppercase()).count() > l.len() / 2)
+                })
+                .take(10)
+                .map(|l| l.trim_start_matches('#').trim().to_string())
+                .collect();
+
+            result.push(PageData::TextLayer {
+                page_num,
+                text,
+                headings,
+                is_dm_only: false,
+            });
+            continue;
+        }
+
+        // Sparse or no text layer — render to JPEG for vision OCR.
+        tracing::debug!(
+            "Page {page_num}: vision OCR path ({word_count} words, layout={layout})"
+        );
+
+        let bitmap = page
+            .render_with_config(&render_config)
+            .map_err(|e| GuideError::PdfProcessing(format!("render page {page_num}: {e}")))?;
+
+        let image = bitmap.as_image();
+        let pixel_area = image.width() * image.height();
+        let image = if pixel_area < OCR_MIN_PIXELS {
+            let scale = (OCR_MIN_PIXELS as f64 / pixel_area as f64).sqrt();
+            let new_w = (image.width() as f64 * scale).round() as u32;
+            let new_h = (image.height() as f64 * scale).round() as u32;
+            image.resize_exact(new_w, new_h, image::imageops::FilterType::Lanczos3)
+        } else if pixel_area > OCR_MAX_PIXELS {
+            let scale = (OCR_MAX_PIXELS as f64 / pixel_area as f64).sqrt();
+            let new_w = (image.width() as f64 * scale).round() as u32;
+            let new_h = (image.height() as f64 * scale).round() as u32;
+            image.resize_exact(new_w, new_h, image::imageops::FilterType::Lanczos3)
+        } else {
+            image
+        };
+        let aligned_w = align_to_patch(image.width());
+        let aligned_h = align_to_patch(image.height());
+        let image = if aligned_w != image.width() || aligned_h != image.height() {
+            image.resize_exact(aligned_w, aligned_h, image::imageops::FilterType::Lanczos3)
+        } else {
+            image
+        };
+
+        let mut jpeg_bytes: Vec<u8> = Vec::new();
+        image
+            .write_to(
+                &mut std::io::Cursor::new(&mut jpeg_bytes),
+                ImageFormat::Jpeg,
+            )
+            .map_err(|e| GuideError::PdfProcessing(format!("encode page {page_num}: {e}")))?;
+
+        result.push(PageData::NeedsOcr { page_num, jpeg: jpeg_bytes, layout });
+    }
+
+    Ok(result)
+}
+
+/// OCR pipeline for campaign documents: uses text-layer extractions directly and
+/// calls the vision model only for pages that need it (sparse/no text layer).
+async fn ocr_pages_campaign(
+    pages: Vec<PageData>,
+    llm: &dyn LlmClient,
+    ocr_model: &str,
+    delay_ms: u64,
+) -> Result<Vec<PageExtraction>> {
+    let mut extractions = Vec::with_capacity(pages.len());
+
+    for page_data in pages {
+        match page_data {
+            PageData::TextLayer { page_num, text, headings, is_dm_only } => {
+                extractions.push(PageExtraction { page_num, raw_text: text, headings, is_dm_only });
+            }
+            PageData::NeedsOcr { page_num, jpeg, layout } => {
+                tracing::info!("Vision OCR page {page_num} ({} bytes, layout={layout})", jpeg.len());
+                let prompt = prompts::ocr_campaign_prompt(layout);
+                let vision_result = llm
+                    .complete_with_vision(VisionRequest {
+                        task: LlmTask::OcrExtraction,
+                        prompt,
+                        image_bytes: jpeg,
+                        image_mime_type: "image/jpeg".into(),
+                        model_override: Some(ocr_model.to_string()),
+                        max_tokens: Some(4096),
+                        temperature: Some(0.8),
+                        top_p: Some(0.9),
+                    })
+                    .await;
+
+                match vision_result {
+                    Ok(resp) => {
+                        let page_ocr: PageOcrResponse =
+                            serde_json::from_str(resp.content.trim()).unwrap_or_else(|_| {
+                                PageOcrResponse {
+                                    raw_text: resp.content.clone(),
+                                    headings: Vec::new(),
+                                    is_dm_only: false,
+                                }
+                            });
+                        extractions.push(PageExtraction {
+                            page_num,
+                            raw_text: page_ocr.raw_text,
+                            headings: page_ocr.headings,
+                            is_dm_only: page_ocr.is_dm_only,
+                        });
+                    }
+                    Err(e) => {
+                        tracing::warn!("OCR failed for page {page_num}, skipping: {e}");
+                        extractions.push(PageExtraction {
+                            page_num,
+                            raw_text: String::new(),
+                            headings: Vec::new(),
+                            is_dm_only: false,
+                        });
+                    }
+                }
+
+                if delay_ms > 0 {
+                    tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                }
+            }
+        }
+    }
+
+    Ok(extractions)
 }
 
 /// Directly parse a D&D Beyond fillable PDF character sheet into a ParsedSheetResult

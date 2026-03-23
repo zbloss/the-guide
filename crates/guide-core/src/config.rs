@@ -13,6 +13,9 @@ pub struct AppConfig {
     pub ocr_model: String,
     pub cloud_fallback: Option<String>,
     pub cloud_api_key: Option<String>,
+    pub cloud_model: Option<String>,
+    pub ocr_provider: String,
+    pub story_provider: String,
     pub max_upload_bytes: u64,
     pub chunk_max_chars: usize,
     pub chunk_overlap_chars: usize,
@@ -34,6 +37,9 @@ impl Default for AppConfig {
             ocr_model: "glm-ocr".into(),
             cloud_fallback: None,
             cloud_api_key: None,
+            cloud_model: None,
+            ocr_provider: "local".into(),
+            story_provider: "local".into(),
             max_upload_bytes: 50 * 1024 * 1024,
             chunk_max_chars: 2048,
             chunk_overlap_chars: 64,
@@ -61,6 +67,9 @@ impl AppConfig {
             .set_default("ocr_model", defaults.ocr_model)?
             .set_default("cloud_fallback", Option::<String>::None)?
             .set_default("cloud_api_key", Option::<String>::None)?
+            .set_default("cloud_model", Option::<String>::None)?
+            .set_default("ocr_provider", defaults.ocr_provider)?
+            .set_default("story_provider", defaults.story_provider)?
             .set_default("max_upload_bytes", defaults.max_upload_bytes as i64)?
             .set_default("chunk_max_chars", defaults.chunk_max_chars as i64)?
             .set_default("chunk_overlap_chars", defaults.chunk_overlap_chars as i64)?

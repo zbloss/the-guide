@@ -20,6 +20,12 @@ pub enum StoryEventType {
     Revelation,
     Travel,
     Rest,
+    Discovery,
+    Puzzle,
+    Trap,
+    Boss,
+    QuestGiven,
+    NpcInteraction,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema, Default)]
@@ -28,6 +34,10 @@ pub enum StorySignificance {
     #[default]
     Minor,
     Major,
+    Trivial,
+    Moderate,
+    Pivotal,
+    Climax,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema, Default)]
@@ -142,6 +152,92 @@ pub struct StoryExtractionResult {
     pub character_arcs: Vec<CharacterArcInput>,
     #[serde(default)]
     pub encounters: Vec<PrepopulatedEncounterInput>,
+    #[serde(default)]
+    pub npcs: Vec<StoryNpcInput>,
+    #[serde(default)]
+    pub locations: Vec<StoryLocationInput>,
+    #[serde(default)]
+    pub factions: Vec<StoryFactionInput>,
+}
+
+// ─── NPC / Location / Faction domain types ────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct StoryNpc {
+    pub id: Uuid,
+    pub campaign_id: Uuid,
+    pub source_doc_id: Uuid,
+    pub name: String,
+    pub role: String,
+    pub description: String,
+    pub location: Option<String>,
+    pub is_dm_only: bool,
+    pub dm_notes: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StoryNpcInput {
+    pub name: String,
+    #[serde(default = "default_npc_role")]
+    pub role: String,
+    #[serde(default)]
+    pub description: String,
+    pub location: Option<String>,
+    #[serde(default)]
+    pub is_dm_only: bool,
+}
+
+fn default_npc_role() -> String {
+    "neutral".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct StoryLocation {
+    pub id: Uuid,
+    pub campaign_id: Uuid,
+    pub source_doc_id: Uuid,
+    pub name: String,
+    pub description: String,
+    pub location_type: String,
+    pub dm_notes: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StoryLocationInput {
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default = "default_location_type")]
+    pub location_type: String,
+}
+
+fn default_location_type() -> String {
+    "dungeon".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct StoryFaction {
+    pub id: Uuid,
+    pub campaign_id: Uuid,
+    pub source_doc_id: Uuid,
+    pub name: String,
+    pub description: String,
+    pub alignment_hint: Option<String>,
+    pub dm_notes: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StoryFactionInput {
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    pub alignment_hint: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

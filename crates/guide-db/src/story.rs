@@ -6,7 +6,8 @@ use guide_core::{
     models::{
         ArcPoint, ArcStatus, CharacterArc, CharacterArcInput, MonsterHint, PrepopulatedEncounter,
         PrepopulatedEncounterInput, StoryArc, StoryArcInput, StoryEvent, StoryEventInput,
-        StoryEventType, StorySignificance, StorySubplot, StorySubplotInput, SubplotStatus,
+        StoryEventType, StoryFaction, StoryFactionInput, StoryLocation, StoryLocationInput,
+        StoryNpc, StoryNpcInput, StorySignificance, StorySubplot, StorySubplotInput, SubplotStatus,
     },
     GuideError, Result,
 };
@@ -122,10 +123,20 @@ impl<'a> StoryRepository<'a> {
             StoryEventType::Revelation => "revelation",
             StoryEventType::Travel => "travel",
             StoryEventType::Rest => "rest",
+            StoryEventType::Discovery => "discovery",
+            StoryEventType::Puzzle => "puzzle",
+            StoryEventType::Trap => "trap",
+            StoryEventType::Boss => "boss",
+            StoryEventType::QuestGiven => "quest_given",
+            StoryEventType::NpcInteraction => "npc_interaction",
         };
         let significance_str = match input.significance {
             StorySignificance::Minor => "minor",
             StorySignificance::Major => "major",
+            StorySignificance::Trivial => "trivial",
+            StorySignificance::Moderate => "moderate",
+            StorySignificance::Pivotal => "pivotal",
+            StorySignificance::Climax => "climax",
         };
         let involved_json = serde_json::to_string(&input.involved_characters)
             .map_err(|e| GuideError::Internal(e.to_string()))?;
@@ -468,6 +479,18 @@ impl<'a> StoryRepository<'a> {
     /// Delete all story data sourced from a specific document.
     pub async fn delete_all_for_doc(&self, doc_id: Uuid) -> Result<()> {
         let doc_id_str = doc_id.to_string();
+        sqlx::query("DELETE FROM story_npcs WHERE source_doc_id = ?")
+            .bind(&doc_id_str)
+            .execute(self.pool)
+            .await?;
+        sqlx::query("DELETE FROM story_locations WHERE source_doc_id = ?")
+            .bind(&doc_id_str)
+            .execute(self.pool)
+            .await?;
+        sqlx::query("DELETE FROM story_factions WHERE source_doc_id = ?")
+            .bind(&doc_id_str)
+            .execute(self.pool)
+            .await?;
         sqlx::query("DELETE FROM prepopulated_encounters WHERE source_doc_id = ?")
             .bind(&doc_id_str)
             .execute(self.pool)
@@ -489,6 +512,179 @@ impl<'a> StoryRepository<'a> {
             .execute(self.pool)
             .await?;
         Ok(())
+    }
+
+    // ─── Story NPCs ────────────────────────────────────────────────────────────
+
+    pub async fn insert_npc(
+        &self,
+        campaign_id: Uuid,
+        source_doc_id: Uuid,
+        input: StoryNpcInput,
+    ) -> Result<StoryNpc> {
+        let id = Uuid::new_v4();
+        let now = Utc::now().to_rfc3339();
+        sqlx::query(
+            "INSERT INTO story_npcs \
+             (id, campaign_id, source_doc_id, name, role, description, location, \
+              is_dm_only, dm_notes, created_at, updated_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)",
+        )
+        .bind(id.to_string())
+        .bind(campaign_id.to_string())
+        .bind(source_doc_id.to_string())
+        .bind(&input.name)
+        .bind(&input.role)
+        .bind(&input.description)
+        .bind(input.location.as_deref())
+        .bind(input.is_dm_only as i32)
+        .bind(&now)
+        .bind(&now)
+        .execute(self.pool)
+        .await?;
+
+        self.get_npc(id).await
+    }
+
+    async fn get_npc(&self, npc_id: Uuid) -> Result<StoryNpc> {
+        let row = sqlx::query(
+            "SELECT id, campaign_id, source_doc_id, name, role, description, location, \
+             is_dm_only, dm_notes, created_at, updated_at \
+             FROM story_npcs WHERE id = ?",
+        )
+        .bind(npc_id.to_string())
+        .fetch_optional(self.pool)
+        .await?
+        .ok_or_else(|| GuideError::NotFound(format!("StoryNpc {npc_id}")))?;
+
+        row_to_npc(row)
+    }
+
+    pub async fn list_npcs(&self, campaign_id: Uuid) -> Result<Vec<StoryNpc>> {
+        let rows = sqlx::query(
+            "SELECT id, campaign_id, source_doc_id, name, role, description, location, \
+             is_dm_only, dm_notes, created_at, updated_at \
+             FROM story_npcs WHERE campaign_id = ? ORDER BY name ASC",
+        )
+        .bind(campaign_id.to_string())
+        .fetch_all(self.pool)
+        .await?;
+
+        rows.into_iter().map(row_to_npc).collect()
+    }
+
+    // ─── Story Locations ───────────────────────────────────────────────────────
+
+    pub async fn insert_location(
+        &self,
+        campaign_id: Uuid,
+        source_doc_id: Uuid,
+        input: StoryLocationInput,
+    ) -> Result<StoryLocation> {
+        let id = Uuid::new_v4();
+        let now = Utc::now().to_rfc3339();
+        sqlx::query(
+            "INSERT INTO story_locations \
+             (id, campaign_id, source_doc_id, name, description, location_type, \
+              dm_notes, created_at, updated_at) \
+             VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)",
+        )
+        .bind(id.to_string())
+        .bind(campaign_id.to_string())
+        .bind(source_doc_id.to_string())
+        .bind(&input.name)
+        .bind(&input.description)
+        .bind(&input.location_type)
+        .bind(&now)
+        .bind(&now)
+        .execute(self.pool)
+        .await?;
+
+        self.get_location(id).await
+    }
+
+    async fn get_location(&self, location_id: Uuid) -> Result<StoryLocation> {
+        let row = sqlx::query(
+            "SELECT id, campaign_id, source_doc_id, name, description, location_type, \
+             dm_notes, created_at, updated_at \
+             FROM story_locations WHERE id = ?",
+        )
+        .bind(location_id.to_string())
+        .fetch_optional(self.pool)
+        .await?
+        .ok_or_else(|| GuideError::NotFound(format!("StoryLocation {location_id}")))?;
+
+        row_to_location(row)
+    }
+
+    pub async fn list_locations(&self, campaign_id: Uuid) -> Result<Vec<StoryLocation>> {
+        let rows = sqlx::query(
+            "SELECT id, campaign_id, source_doc_id, name, description, location_type, \
+             dm_notes, created_at, updated_at \
+             FROM story_locations WHERE campaign_id = ? ORDER BY name ASC",
+        )
+        .bind(campaign_id.to_string())
+        .fetch_all(self.pool)
+        .await?;
+
+        rows.into_iter().map(row_to_location).collect()
+    }
+
+    // ─── Story Factions ────────────────────────────────────────────────────────
+
+    pub async fn insert_faction(
+        &self,
+        campaign_id: Uuid,
+        source_doc_id: Uuid,
+        input: StoryFactionInput,
+    ) -> Result<StoryFaction> {
+        let id = Uuid::new_v4();
+        let now = Utc::now().to_rfc3339();
+        sqlx::query(
+            "INSERT INTO story_factions \
+             (id, campaign_id, source_doc_id, name, description, alignment_hint, \
+              dm_notes, created_at, updated_at) \
+             VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)",
+        )
+        .bind(id.to_string())
+        .bind(campaign_id.to_string())
+        .bind(source_doc_id.to_string())
+        .bind(&input.name)
+        .bind(&input.description)
+        .bind(input.alignment_hint.as_deref())
+        .bind(&now)
+        .bind(&now)
+        .execute(self.pool)
+        .await?;
+
+        self.get_faction(id).await
+    }
+
+    async fn get_faction(&self, faction_id: Uuid) -> Result<StoryFaction> {
+        let row = sqlx::query(
+            "SELECT id, campaign_id, source_doc_id, name, description, alignment_hint, \
+             dm_notes, created_at, updated_at \
+             FROM story_factions WHERE id = ?",
+        )
+        .bind(faction_id.to_string())
+        .fetch_optional(self.pool)
+        .await?
+        .ok_or_else(|| GuideError::NotFound(format!("StoryFaction {faction_id}")))?;
+
+        row_to_faction(row)
+    }
+
+    pub async fn list_factions(&self, campaign_id: Uuid) -> Result<Vec<StoryFaction>> {
+        let rows = sqlx::query(
+            "SELECT id, campaign_id, source_doc_id, name, description, alignment_hint, \
+             dm_notes, created_at, updated_at \
+             FROM story_factions WHERE campaign_id = ? ORDER BY name ASC",
+        )
+        .bind(campaign_id.to_string())
+        .fetch_all(self.pool)
+        .await?;
+
+        rows.into_iter().map(row_to_faction).collect()
     }
 }
 
@@ -553,10 +749,20 @@ fn row_to_event(row: sqlx::sqlite::SqliteRow) -> Result<StoryEvent> {
         "revelation" => StoryEventType::Revelation,
         "travel" => StoryEventType::Travel,
         "rest" => StoryEventType::Rest,
+        "discovery" => StoryEventType::Discovery,
+        "puzzle" => StoryEventType::Puzzle,
+        "trap" => StoryEventType::Trap,
+        "boss" => StoryEventType::Boss,
+        "quest_given" => StoryEventType::QuestGiven,
+        "npc_interaction" => StoryEventType::NpcInteraction,
         _ => StoryEventType::Combat,
     };
     let significance = match significance_str.as_str() {
         "major" => StorySignificance::Major,
+        "trivial" => StorySignificance::Trivial,
+        "moderate" => StorySignificance::Moderate,
+        "pivotal" => StorySignificance::Pivotal,
+        "climax" => StorySignificance::Climax,
         _ => StorySignificance::Minor,
     };
     let involved_characters: Vec<String> =
@@ -680,6 +886,75 @@ fn row_to_prepopulated_encounter(row: sqlx::sqlite::SqliteRow) -> Result<Prepopu
         location: row.try_get("location").ok().flatten(),
         difficulty_hint: row.try_get("difficulty_hint").ok().flatten(),
         monsters,
+        dm_notes: row.try_get("dm_notes").ok().flatten(),
+        created_at: parse_dt(&created_at_str),
+        updated_at: parse_dt(&updated_at_str),
+    })
+}
+
+fn row_to_npc(row: sqlx::sqlite::SqliteRow) -> Result<StoryNpc> {
+    let id_str: String = row.try_get("id")?;
+    let campaign_id_str: String = row.try_get("campaign_id")?;
+    let source_doc_id_str: String = row.try_get("source_doc_id")?;
+    let is_dm_only_int: i32 = row.try_get("is_dm_only").unwrap_or(0);
+    let created_at_str: String = row.try_get("created_at")?;
+    let updated_at_str: String = row.try_get("updated_at")?;
+
+    Ok(StoryNpc {
+        id: Uuid::parse_str(&id_str).map_err(|e| GuideError::Internal(e.to_string()))?,
+        campaign_id: Uuid::parse_str(&campaign_id_str)
+            .map_err(|e| GuideError::Internal(e.to_string()))?,
+        source_doc_id: Uuid::parse_str(&source_doc_id_str)
+            .map_err(|e| GuideError::Internal(e.to_string()))?,
+        name: row.try_get("name")?,
+        role: row.try_get("role").unwrap_or_else(|_| "neutral".to_string()),
+        description: row.try_get("description").unwrap_or_default(),
+        location: row.try_get("location").ok().flatten(),
+        is_dm_only: is_dm_only_int != 0,
+        dm_notes: row.try_get("dm_notes").ok().flatten(),
+        created_at: parse_dt(&created_at_str),
+        updated_at: parse_dt(&updated_at_str),
+    })
+}
+
+fn row_to_location(row: sqlx::sqlite::SqliteRow) -> Result<StoryLocation> {
+    let id_str: String = row.try_get("id")?;
+    let campaign_id_str: String = row.try_get("campaign_id")?;
+    let source_doc_id_str: String = row.try_get("source_doc_id")?;
+    let created_at_str: String = row.try_get("created_at")?;
+    let updated_at_str: String = row.try_get("updated_at")?;
+
+    Ok(StoryLocation {
+        id: Uuid::parse_str(&id_str).map_err(|e| GuideError::Internal(e.to_string()))?,
+        campaign_id: Uuid::parse_str(&campaign_id_str)
+            .map_err(|e| GuideError::Internal(e.to_string()))?,
+        source_doc_id: Uuid::parse_str(&source_doc_id_str)
+            .map_err(|e| GuideError::Internal(e.to_string()))?,
+        name: row.try_get("name")?,
+        description: row.try_get("description").unwrap_or_default(),
+        location_type: row.try_get("location_type").unwrap_or_else(|_| "dungeon".to_string()),
+        dm_notes: row.try_get("dm_notes").ok().flatten(),
+        created_at: parse_dt(&created_at_str),
+        updated_at: parse_dt(&updated_at_str),
+    })
+}
+
+fn row_to_faction(row: sqlx::sqlite::SqliteRow) -> Result<StoryFaction> {
+    let id_str: String = row.try_get("id")?;
+    let campaign_id_str: String = row.try_get("campaign_id")?;
+    let source_doc_id_str: String = row.try_get("source_doc_id")?;
+    let created_at_str: String = row.try_get("created_at")?;
+    let updated_at_str: String = row.try_get("updated_at")?;
+
+    Ok(StoryFaction {
+        id: Uuid::parse_str(&id_str).map_err(|e| GuideError::Internal(e.to_string()))?,
+        campaign_id: Uuid::parse_str(&campaign_id_str)
+            .map_err(|e| GuideError::Internal(e.to_string()))?,
+        source_doc_id: Uuid::parse_str(&source_doc_id_str)
+            .map_err(|e| GuideError::Internal(e.to_string()))?,
+        name: row.try_get("name")?,
+        description: row.try_get("description").unwrap_or_default(),
+        alignment_hint: row.try_get("alignment_hint").ok().flatten(),
         dm_notes: row.try_get("dm_notes").ok().flatten(),
         created_at: parse_dt(&created_at_str),
         updated_at: parse_dt(&updated_at_str),

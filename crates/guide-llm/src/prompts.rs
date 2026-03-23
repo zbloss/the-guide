@@ -6,6 +6,66 @@ pub fn ocr_simple_prompt() -> &'static str {
       Do not fabricate content that does not exist in the image."
 }
 
+/// Campaign-aware OCR prompt for D&D document pages.
+/// `column_hint` should be one of: "single-column", "two-column", "three-column", "unknown layout".
+pub fn ocr_campaign_prompt(column_hint: &str) -> String {
+    format!(
+        "This is a page from a D&D tabletop RPG campaign document.\n\
+         Page layout: {column_hint}.\n\n\
+         READING ORDER RULES:\n\
+         - For TWO-COLUMN layout: read the LEFT column entirely top-to-bottom FIRST, \
+           then the RIGHT column top-to-bottom. Do NOT interleave columns.\n\
+         - For THREE-COLUMN layout: read LEFT → CENTER → RIGHT, each column top-to-bottom.\n\
+         - For SINGLE-COLUMN layout: read top-to-bottom normally.\n\n\
+         FORMATTING RULES:\n\
+         - Chapter titles → # (H1), section headers → ## (H2), subsections → ### (H3)\n\
+         - Stat blocks (monster/NPC stats): wrap entirely in [STAT_BLOCK]...[/STAT_BLOCK]\n\
+         - Boxed read-aloud / narrative text: wrap in [BOXED]...[/BOXED]\n\
+         - Sidebars and callout boxes: wrap in [SIDEBAR]...[/SIDEBAR]\n\
+         - DM-only content (labeled 'DM Note', 'Dungeon Master Note', or behind-the-screen info): \
+           wrap in [DM_ONLY]...[/DM_ONLY]\n\
+         - Tables: use Markdown pipe-table syntax\n\
+         - Preserve spell names, creature names, place names, and NPC names exactly as written\n\
+         - Do NOT fabricate or add any text not visible in the image\n\
+         - Output Markdown text only — no JSON wrappers, no explanations"
+    )
+}
+
+/// Strip a <think>...</think> reasoning block from an LLM response before JSON parsing.
+/// Returns a slice starting after the closing </think> tag, or the original string if not found.
+pub fn strip_think_block(response: &str) -> &str {
+    if let Some(end) = response.find("</think>") {
+        let after = &response[end + "</think>".len()..];
+        after.trim()
+    } else {
+        response.trim()
+    }
+}
+
+/// Quick document pre-analysis to extract campaign context before story extraction.
+pub fn document_preanalysis_system() -> &'static str {
+    "You are a D&D campaign analyst. Analyze this document excerpt and return ONLY valid JSON \
+     (no markdown, no explanation, no code fences):\n\
+     {\n\
+       \"campaign_setting\": \"<world or setting name, or 'Unknown'>\",\n\
+       \"campaign_title\": \"<adventure/campaign name>\",\n\
+       \"themes\": [\"<theme>\", ...],\n\
+       \"chapter_names\": [\"<chapter or act title>\", ...],\n\
+       \"major_npcs\": [\"<NPC name>\", ...],\n\
+       \"major_locations\": [\"<location name>\", ...],\n\
+       \"tone\": \"<horror|adventure|mystery|political|dungeon-crawl|sandbox>\"\n\
+     }\n\
+     Extract 2-5 items per list field. Be specific — use actual names from the text."
+}
+
+pub fn document_preanalysis_user(excerpt: &str, doc_title: &str) -> String {
+    format!(
+        "Document: {doc_title}\n\n\
+         First ~5000 characters:\n{excerpt}\n\n\
+         Extract the campaign context as specified."
+    )
+}
+
 pub fn story_extraction_system() -> &'static str {
     "You are a D&D campaign story analyst. Extract the narrative structure from the campaign document.\n\
      Return ONLY valid JSON (no markdown, no explanation) matching this schema:\n\n\
@@ -53,6 +113,123 @@ pub fn story_extraction_system() -> &'static str {
      - Mark DM-only events with is_dm_only: true\n\
      - Use arc_title to link events/subplots to their arc\n\
      - Be specific: use actual names from the document"
+}
+
+/// Enhanced story extraction system prompt (v2) with chain-of-thought, expanded schema,
+/// and campaign context injection.
+/// Parameters are plain strings derived from `DocumentContext` in the pipeline.
+pub fn story_extraction_system_v2(
+    campaign_setting: &str,
+    themes: &str,
+    tone: &str,
+) -> String {
+    format!(
+        "You are an expert D&D campaign story analyst.\n\
+         Campaign context: setting={campaign_setting}, tone={tone}, themes={themes}.\n\n\
+         STEP 1 — REASONING (inside <think>...</think>):\n\
+         Before generating JSON, briefly reason through:\n\
+         1. What are the 2-5 major story arcs in this content?\n\
+         2. Which events are climactic/pivotal vs. minor/trivial?\n\
+         3. Who are the key NPCs and what do they want?\n\
+         4. What locations and factions are introduced?\n\n\
+         STEP 2 — OUTPUT: After </think>, return ONLY valid JSON matching this schema \
+         (no markdown fences, no extra text):\n\
+         {{\n\
+           \"arcs\": [\n\
+             {{ \"title\": \"<arc name>\", \"description\": \"<2-3 sentences>\", \"arc_order\": <int> }}\n\
+           ],\n\
+           \"events\": [\n\
+             {{\n\
+               \"title\": \"<event name>\",\n\
+               \"description\": \"<2-3 sentences>\",\n\
+               \"event_type\": \"combat|social|revelation|travel|rest|discovery|puzzle|trap|boss|quest_given|npc_interaction\",\n\
+               \"significance\": \"trivial|minor|moderate|major|pivotal|climax\",\n\
+               \"location\": \"<location or null>\",\n\
+               \"involved_characters\": [\"<name>\", ...],\n\
+               \"event_order\": <int>,\n\
+               \"arc_title\": \"<arc title or null>\",\n\
+               \"is_dm_only\": false\n\
+             }}\n\
+           ],\n\
+           \"subplots\": [\n\
+             {{ \"title\": \"<title>\", \"description\": \"<description>\", \"arc_title\": \"<arc or null>\" }}\n\
+           ],\n\
+           \"character_arcs\": [\n\
+             {{\n\
+               \"character_name\": \"<name>\",\n\
+               \"description\": \"<arc description>\",\n\
+               \"arc_points\": [{{ \"description\": \"<point>\", \"order\": <int> }}]\n\
+             }}\n\
+           ],\n\
+           \"encounters\": [\n\
+             {{\n\
+               \"name\": \"<encounter name>\",\n\
+               \"description\": \"<description>\",\n\
+               \"location\": \"<location or null>\",\n\
+               \"difficulty_hint\": \"easy|medium|hard|deadly or null\",\n\
+               \"monsters\": [{{ \"name\": \"<name>\", \"count\": <int or null>, \"cr\": \"<cr string or null>\" }}],\n\
+               \"story_event_title\": \"<linked event title or null>\"\n\
+             }}\n\
+           ],\n\
+           \"npcs\": [\n\
+             {{\n\
+               \"name\": \"<name>\",\n\
+               \"role\": \"villain|ally|neutral|questgiver|boss\",\n\
+               \"description\": \"<1-2 sentences: appearance, motivation>\",\n\
+               \"location\": \"<home location or null>\",\n\
+               \"is_dm_only\": false\n\
+             }}\n\
+           ],\n\
+           \"locations\": [\n\
+             {{\n\
+               \"name\": \"<name>\",\n\
+               \"description\": \"<1-2 sentences>\",\n\
+               \"location_type\": \"dungeon|town|wilderness|stronghold|planar\"\n\
+             }}\n\
+           ],\n\
+           \"factions\": [\n\
+             {{\n\
+               \"name\": \"<name>\",\n\
+               \"description\": \"<1-2 sentences: goals, methods>\",\n\
+               \"alignment_hint\": \"<e.g. lawful evil, or null>\"\n\
+             }}\n\
+           ]\n\
+         }}\n\n\
+         GUIDELINES:\n\
+         - Extract 2-5 story arcs; mark the final confrontation arc clearly\n\
+         - significance='climax' for the campaign's final showdown; 'pivotal' for turning points; \
+           'moderate' for notable scenes; 'trivial' for minor filler events\n\
+         - Extract ALL named NPCs with speaking roles or plot significance\n\
+         - Extract ALL named locations the party can visit or that appear in descriptions\n\
+         - Only extract factions if explicitly named groups appear\n\
+         - Mark anything the players are not supposed to know as is_dm_only: true\n\
+         - Use arc_title to link events, subplots, and NPCs to their primary arc\n\
+         - Use actual names from the document — do NOT invent content"
+    )
+}
+
+pub fn story_extraction_user_chapter_v2(
+    chapter_text: &str,
+    doc_title: &str,
+    chapter_name: &str,
+    prev_chapter_summary: Option<&str>,
+) -> String {
+    let context_block = if let Some(summary) = prev_chapter_summary {
+        format!("\n## Story So Far (previous chapters)\n{summary}\n")
+    } else {
+        String::new()
+    };
+
+    format!(
+        "Document: {doc_title}\nChapter: {chapter_name}\n\
+         {context_block}\n\
+         # {chapter_name}\n\n{chapter_text}\n\n\
+         Extract the complete story structure for this chapter. \
+         Use arc_title and story_event_title to link items. \
+         Extract all events in chronological order as they appear. \
+         If previous chapter context is provided, ensure arc titles are consistent \
+         with arcs already established."
+    )
 }
 
 pub fn story_extraction_user(full_text: &str, doc_title: &str) -> String {

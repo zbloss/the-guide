@@ -2,7 +2,10 @@ use std::path::Path;
 use std::sync::Arc;
 
 use guide_core::{
-    models::{CampaignDocument, DocSummary, DocumentKind, GlobalDocument, MetaIndex, StoryExtractionResult},
+    models::{
+        CampaignDocument, DocSummary, DocumentKind, GlobalDocument, MetaIndex,
+        StoryExtractionResult, StoryFactionInput, StoryLocationInput, StoryNpcInput,
+    },
     AppConfig, GuideError, Result,
 };
 use guide_db::{
@@ -20,6 +23,135 @@ use uuid::Uuid;
 use crate::{chunker, extractor};
 
 const META_INDEX_DIR: &str = "data/indexes";
+
+// ── Document pre-analysis context ─────────────────────────────────────────────
+
+/// Lightweight campaign context extracted before story extraction.
+/// All fields default to empty strings/vecs so failures are non-fatal.
+#[derive(Debug, Clone, serde::Deserialize, Default)]
+pub struct DocumentContext {
+    #[serde(default)]
+    pub campaign_setting: String,
+    #[serde(default)]
+    pub campaign_title: String,
+    #[serde(default)]
+    pub themes: Vec<String>,
+    #[serde(default)]
+    pub chapter_names: Vec<String>,
+    #[serde(default)]
+    pub major_npcs: Vec<String>,
+    #[serde(default)]
+    pub major_locations: Vec<String>,
+    #[serde(default)]
+    pub tone: String,
+}
+
+impl DocumentContext {
+    pub fn themes_str(&self) -> String {
+        if self.themes.is_empty() {
+            "unknown".to_string()
+        } else {
+            self.themes.join(", ")
+        }
+    }
+
+    pub fn setting_str(&self) -> &str {
+        if self.campaign_setting.is_empty() { "Unknown" } else { &self.campaign_setting }
+    }
+
+    pub fn tone_str(&self) -> &str {
+        if self.tone.is_empty() { "adventure" } else { &self.tone }
+    }
+
+    /// Compact summary of this chapter's story result for passing to the next chapter.
+    pub fn chapter_summary_from(result: &StoryExtractionResult, chapter_name: &str) -> String {
+        let arcs: Vec<&str> = result.arcs.iter().map(|a| a.title.as_str()).collect();
+        let major_events: Vec<&str> = result
+            .events
+            .iter()
+            .filter(|e| {
+                matches!(
+                    e.significance,
+                    guide_core::models::StorySignificance::Major
+                        | guide_core::models::StorySignificance::Pivotal
+                        | guide_core::models::StorySignificance::Climax
+                )
+            })
+            .map(|e| e.title.as_str())
+            .collect();
+        let npcs: Vec<&str> = result.npcs.iter().map(|n| n.name.as_str()).collect();
+
+        let mut summary = format!("Chapter '{chapter_name}':");
+        if !arcs.is_empty() {
+            summary.push_str(&format!(" arcs=[{}]", arcs.join(", ")));
+        }
+        if !major_events.is_empty() {
+            summary.push_str(&format!("; major events=[{}]", major_events.join(", ")));
+        }
+        if !npcs.is_empty() {
+            summary.push_str(&format!("; NPCs=[{}]", npcs.join(", ")));
+        }
+        // Cap at 800 chars to avoid excessive context bloat.
+        summary.chars().take(800).collect()
+    }
+}
+
+/// Make a quick LLM call on the first ~5K chars of document text to extract
+/// campaign context (setting, themes, chapter names, major NPCs).
+/// Returns `DocumentContext::default()` on any error — this is best-effort only.
+async fn analyze_document_structure(
+    chunks: &[crate::chunker::DocumentChunk],
+    doc_title: &str,
+    llm: &dyn LlmClient,
+) -> DocumentContext {
+    use guide_llm::{CompletionRequest, LlmTask, Message, MessageRole};
+
+    let excerpt: String = chunks
+        .iter()
+        .take(4)
+        .map(|c| c.content.as_str())
+        .collect::<Vec<_>>()
+        .join("\n\n")
+        .chars()
+        .take(5_000)
+        .collect();
+
+    if excerpt.trim().is_empty() {
+        return DocumentContext::default();
+    }
+
+    let req = CompletionRequest {
+        task: LlmTask::General,
+        messages: vec![
+            Message {
+                role: MessageRole::System,
+                content: guide_llm::prompts::document_preanalysis_system().to_string(),
+            },
+            Message {
+                role: MessageRole::User,
+                content: guide_llm::prompts::document_preanalysis_user(&excerpt, doc_title),
+            },
+        ],
+        model_override: None,
+        temperature: Some(0.2),
+        max_tokens: Some(1024),
+        json_mode: true,
+    };
+
+    match llm.complete(req).await {
+        Ok(resp) => {
+            let cleaned = guide_llm::prompts::strip_think_block(&resp.content);
+            serde_json::from_str::<DocumentContext>(cleaned).unwrap_or_else(|e| {
+                tracing::debug!("Pre-analysis parse failed: {e}");
+                DocumentContext::default()
+            })
+        }
+        Err(e) => {
+            tracing::debug!("Pre-analysis LLM call failed: {e}");
+            DocumentContext::default()
+        }
+    }
+}
 
 pub async fn ingest_campaign_document(
     pdf_path: &Path,
@@ -396,21 +528,29 @@ async fn extract_story_for_chapter(
     text: &str,
     doc_title: &str,
     chapter_name: &str,
+    doc_ctx: &DocumentContext,
+    prev_chapter_summary: Option<&str>,
     llm: &dyn LlmClient,
 ) -> Result<StoryExtractionResult> {
     use guide_llm::{CompletionRequest, LlmTask, Message, MessageRole};
 
+    let system = guide_llm::prompts::story_extraction_system_v2(
+        doc_ctx.setting_str(),
+        &doc_ctx.themes_str(),
+        doc_ctx.tone_str(),
+    );
+    let user = guide_llm::prompts::story_extraction_user_chapter_v2(
+        text,
+        doc_title,
+        chapter_name,
+        prev_chapter_summary,
+    );
+
     let req = CompletionRequest {
         task: LlmTask::StoryExtraction,
         messages: vec![
-            Message {
-                role: MessageRole::System,
-                content: guide_llm::prompts::story_extraction_system().to_string(),
-            },
-            Message {
-                role: MessageRole::User,
-                content: guide_llm::prompts::story_extraction_user_chapter(text, doc_title, chapter_name),
-            },
+            Message { role: MessageRole::System, content: system },
+            Message { role: MessageRole::User, content: user },
         ],
         model_override: None,
         temperature: Some(0.3),
@@ -419,16 +559,16 @@ async fn extract_story_for_chapter(
     };
 
     let resp = llm.complete(req).await?;
-    let trimmed = resp.content.trim();
-    if let Err(ref e) = serde_json::from_str::<StoryExtractionResult>(trimmed) {
+    let cleaned = guide_llm::prompts::strip_think_block(&resp.content);
+    if let Err(ref e) = serde_json::from_str::<StoryExtractionResult>(cleaned) {
         tracing::warn!(
             chapter = chapter_name,
             error = %e,
-            response_preview = &trimmed[..trimmed.floor_char_boundary(500)],
+            response_preview = &cleaned[..cleaned.floor_char_boundary(500)],
             "Story extraction JSON parse failed"
         );
     }
-    serde_json::from_str(trimmed)
+    serde_json::from_str(cleaned)
         .map_err(|e| GuideError::Internal(format!("Story extraction parse failed for chapter '{chapter_name}': {e}")))
 }
 
@@ -443,6 +583,14 @@ fn merge_story_extractions(chapter_results: Vec<(usize, StoryExtractionResult)>)
     let mut events = Vec::new();
     let mut subplots = Vec::new();
     let mut encounters = Vec::new();
+
+    // Deduplicate NPCs, locations, and factions by lowercase name.
+    let mut npc_seen: Vec<String> = Vec::new();
+    let mut npcs: Vec<StoryNpcInput> = Vec::new();
+    let mut location_seen: Vec<String> = Vec::new();
+    let mut locations: Vec<StoryLocationInput> = Vec::new();
+    let mut faction_seen: Vec<String> = Vec::new();
+    let mut factions: Vec<StoryFactionInput> = Vec::new();
 
     let mut char_arc_order: HashMap<String, Vec<(String, Vec<ArcPoint>)>> = HashMap::new();
     let mut char_arc_desc: HashMap<String, String> = HashMap::new();
@@ -470,6 +618,30 @@ fn merge_story_extractions(chapter_results: Vec<(usize, StoryExtractionResult)>)
 
         for enc in result.encounters {
             encounters.push(enc);
+        }
+
+        for npc in result.npcs {
+            let key = npc.name.trim().to_lowercase();
+            if !npc_seen.contains(&key) {
+                npc_seen.push(key);
+                npcs.push(npc);
+            }
+        }
+
+        for location in result.locations {
+            let key = location.name.trim().to_lowercase();
+            if !location_seen.contains(&key) {
+                location_seen.push(key);
+                locations.push(location);
+            }
+        }
+
+        for faction in result.factions {
+            let key = faction.name.trim().to_lowercase();
+            if !faction_seen.contains(&key) {
+                faction_seen.push(key);
+                factions.push(faction);
+            }
         }
 
         for char_arc in result.character_arcs {
@@ -501,7 +673,7 @@ fn merge_story_extractions(chapter_results: Vec<(usize, StoryExtractionResult)>)
         })
         .collect();
 
-    StoryExtractionResult { arcs, events, subplots, character_arcs, encounters }
+    StoryExtractionResult { arcs, events, subplots, character_arcs, encounters, npcs, locations, factions }
 }
 
 pub async fn extract_story(
@@ -518,17 +690,32 @@ pub async fn extract_story(
         .update_story_extraction_status(doc.id, "processing", None)
         .await?;
 
+    // Phase 1: Quick document pre-analysis for campaign context.
+    let doc_ctx = analyze_document_structure(chunks, &doc.filename, llm.as_ref()).await;
+    tracing::info!(
+        doc_id = %doc.id,
+        setting = doc_ctx.setting_str(),
+        tone = doc_ctx.tone_str(),
+        themes = %doc_ctx.themes_str(),
+        "Document pre-analysis complete"
+    );
+
     let chapter_groups = group_chunks_by_chapter(chunks);
 
     let extraction: StoryExtractionResult = if chapter_groups.len() < 2 {
-        // Fallback: original single-call path
+        // Fallback: single-call path with v2 prompt and context.
         let full_text = join_and_truncate(&chunks.iter().collect::<Vec<_>>(), 40_000);
+        let system = guide_llm::prompts::story_extraction_system_v2(
+            doc_ctx.setting_str(),
+            &doc_ctx.themes_str(),
+            doc_ctx.tone_str(),
+        );
         let req = CompletionRequest {
             task: LlmTask::StoryExtraction,
             messages: vec![
                 Message {
                     role: MessageRole::System,
-                    content: guide_llm::prompts::story_extraction_system().to_string(),
+                    content: system,
                 },
                 Message {
                     role: MessageRole::User,
@@ -541,22 +728,22 @@ pub async fn extract_story(
             json_mode: true,
         };
         let resp = llm.complete(req).await?;
-        let trimmed = resp.content.trim();
-        if let Err(ref e) = serde_json::from_str::<StoryExtractionResult>(trimmed) {
+        let cleaned = guide_llm::prompts::strip_think_block(&resp.content);
+        if let Err(ref e) = serde_json::from_str::<StoryExtractionResult>(cleaned) {
             tracing::warn!(
                 error = %e,
-                response_preview = &trimmed[..trimmed.floor_char_boundary(500)],
+                response_preview = &cleaned[..cleaned.floor_char_boundary(500)],
                 "Story extraction JSON parse failed"
             );
         }
-        serde_json::from_str(trimmed)
+        serde_json::from_str(cleaned)
             .map_err(|e| GuideError::Internal(format!("Story extraction parse failed: {e}")))?
     } else {
-        // Chapter path: one LLM call per window within each chapter.
-        // A flat call_idx drives event ordering so windows of the same chapter
-        // stay in order relative to windows of other chapters.
+        // Chapter path: one LLM call per window, with cross-chapter continuity.
         let mut results: Vec<(usize, StoryExtractionResult)> = Vec::new();
         let mut call_idx = 0usize;
+        let mut prev_chapter_summary: Option<String> = None;
+
         for (chapter_name, chapter_chunks) in &chapter_groups {
             let windows = windows_for_chapter(chapter_chunks, 20_000);
             let window_count = windows.len();
@@ -567,8 +754,33 @@ pub async fn extract_story(
                 } else {
                     chapter_name.clone()
                 };
-                match extract_story_for_chapter(&text, &doc.filename, chapter_name, llm.as_ref()).await {
-                    Ok(r) => results.push((call_idx, r)),
+                match extract_story_for_chapter(
+                    &text,
+                    &doc.filename,
+                    chapter_name,
+                    &doc_ctx,
+                    prev_chapter_summary.as_deref(),
+                    llm.as_ref(),
+                )
+                .await
+                {
+                    Ok(r) => {
+                        // Build summary for next chapter only on the last window of each chapter.
+                        if w_idx + 1 == window_count {
+                            let summary = DocumentContext::chapter_summary_from(&r, chapter_name);
+                            prev_chapter_summary = Some(match prev_chapter_summary {
+                                Some(existing) => format!("{existing}\n{summary}"),
+                                None => summary,
+                            });
+                            // Cap total summary at ~2000 chars.
+                            if let Some(ref mut s) = prev_chapter_summary {
+                                if s.len() > 2000 {
+                                    *s = s.chars().take(2000).collect();
+                                }
+                            }
+                        }
+                        results.push((call_idx, r));
+                    }
                     Err(e) => tracing::warn!("Window '{label}' extraction failed: {e}; skipping"),
                 }
                 call_idx += 1;
@@ -639,6 +851,24 @@ pub async fn extract_story(
         story_repo
             .insert_prepopulated_encounter(doc.campaign_id, doc.id, story_event_id, enc_input)
             .await?;
+    }
+
+    for npc_input in extraction.npcs {
+        if let Err(e) = story_repo.insert_npc(doc.campaign_id, doc.id, npc_input).await {
+            tracing::warn!("NPC insert failed: {e}");
+        }
+    }
+
+    for location_input in extraction.locations {
+        if let Err(e) = story_repo.insert_location(doc.campaign_id, doc.id, location_input).await {
+            tracing::warn!("Location insert failed: {e}");
+        }
+    }
+
+    for faction_input in extraction.factions {
+        if let Err(e) = story_repo.insert_faction(doc.campaign_id, doc.id, faction_input).await {
+            tracing::warn!("Faction insert failed: {e}");
+        }
     }
 
     doc_repo
