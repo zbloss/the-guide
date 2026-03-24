@@ -1,12 +1,16 @@
-Background: The Guide is a tool for Dungeon Masters to help them run their games more efficiently. It's designed to reduce the hours and hours of prep time required to run a DnD campaign. Many of it's features are static, mostly rules of the game and mechanics. However, many others are powered by Large Language Models. I need the guide to be able to run locally on consumers hardware so that I'm not pricing out people that want to play dungeons and dragons. Currently we have a few different LLM features in the product which need to be improved upon such as our OCR feature and our story extraction. The OCR service needs help, including parsing PDFs which may be a single column, or may be two columns. We will need to determine when they are two-column layouts and adjust the text accordingly before ingesting. The story extraction is the newest feature and it needs help improving it's output. I'll need you to analyze our current prompts, models and other processing logic and determine how we can improve the performance of the product. Use the huggingface MCP tools to research models and techniques that can help us. Use this PDF to test all final functionality: "C:\Users\altoz\Documents\dnd\Land of Vampires\Land of Vampires Full Campaign.pdf" but know it is extremely large. If you'd like, you can also use this smaller PDF for preliminary testing: "C:\Users\altoz\Downloads\Chalice_of_the_Mountain_God.pdf"
+Background: The Guide is a tool for Dungeon Masters to help them run their games more efficiently. Currently we allow users to access models for OCR, embedding, or general LLMs through Ollama (or another local running LLM) or through the cloud. I want to allow users to continue using both ollama and cloud models for embeddings if they want to, but by default I want to run this embedding generation locally on the users machine. By default, I want to use the google/embeddinggemma-300m model in this rust project to generate all embeddings and store and retrieve them to and from DuckDB. We'll need to review the available environment variables we have in place to configure models now and may need to clean them up.
+
+Use this PDF to test all final functionality: "C:\Users\altoz\Documents\dnd\Land of Vampires\Land of Vampires Full Campaign.pdf" but know it is extremely large. If you'd like, you can also use this smaller PDF for preliminary testing: "C:\Users\altoz\Downloads\Chalice_of_the_Mountain_God.pdf"
 
 Tasks:
-1. Review our current OCR process and identify areas of improvement.
-    1. Using a more structured approach like Docling (https://www.docling.ai/) may be helpful, but our project is currently in Rust for the most part. 
-    2. Docling is great, especially for structured documents like DnD campaigns, but we need to be able to package it into The Guide. If you can figure that out, feel free to try using Docling.
-2. Design a plan of how to handle DnD Campaign Documents that are in different formats. For example, some documents will be a single column PDF, others may be a two or even three column PDF where you start reading left to right of the first column, then when you finish it you go back up to the top of the page and begin reading the next column.
-3.  Review our current story extraction functionality.
-4. Design a plan to improve the story extraction functionality, it may be helpful to decompose this into multiple steps or into a multi-agent process.
-5. Use any tools necessary from the huggingface MCP server to research models and techniques that would help in the tasks above.
+1. Review the existing environment variables we have to power model configurations.
+    1. We will need to modify them to make it easier for users to configure whether they want to use a local service like ollama or a cloud model.
+    2. Remember, we should use the new embedding process by default, which will run natively in this rest codebase.
+2. Design a new feature for the guide that will run an embedding model in Rust to generate embeddings. 
+    1. You will need to do some research to determine what is the most reliable package used to run models like this in Rust.
+    2. Use accelerators like GPU and MPS when available, but always be able to fall back to CPU.
+    3. Use google/embeddinggemma-300m by default.
+3. Review the google/embeddinggemma-300m blog post to gain an understanding of how to use it https://huggingface.co/blog/embeddinggemma.
+    1. Pay special attention to which prompts should be used for different tasks according to this article.
 
-Goal: Improve the prompts in our LLM use cases to drastically improve the performance of the product.
+Goal: Create new feature that will enable local embedding generation via rust by default.

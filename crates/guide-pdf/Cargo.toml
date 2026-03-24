@@ -16,7 +16,6 @@ uuid = { workspace = true }
 chrono = { workspace = true }
 futures = { workspace = true }
 
-qdrant-client = { workspace = true }
 image = { version = "0.25", default-features = false, features = ["jpeg"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

@@ -45,7 +45,18 @@
       "Bash(ls guide-frontend/src/components/layout/ && cat guide-frontend/src/components/layout/*.tsx | head -50)",
       "Bash(grep -n \"campaign_token\\\\|public_token\\\\|share\" crates/guide-db/migrations/*.sql 2>/dev/null | head -5)",
       "Bash(grep -rn \"from '../../api/\" guide-frontend/src/components/campaigns/*.tsx | grep -oP \"'\\\\./.*?'\" | sort -u | xargs -I{} sh -c 'echo {}' 2>/dev/null | head -20)",
-      "Bash(grep -rn \"^import\" guide-frontend/src/components/campaigns/*.tsx guide-frontend/src/pages/CampaignDetailPage.tsx 2>/dev/null | grep \"api/\" | sort -u)"
+      "Bash(grep -rn \"^import\" guide-frontend/src/components/campaigns/*.tsx guide-frontend/src/pages/CampaignDetailPage.tsx 2>/dev/null | grep \"api/\" | sort -u)",
+      "WebSearch",
+      "WebFetch(domain:supermemory.ai)",
+      "WebFetch(domain:aimultiple.com)",
+      "WebFetch(domain:app.ailog.fr)",
+      "WebFetch(domain:modal.com)",
+      "WebFetch(domain:cloudurable.com)",
+      "WebFetch(domain:www.bentoml.com)",
+      "WebFetch(domain:arxiv.org)",
+      "WebFetch(domain:www.tigerdata.com)",
+      "WebFetch(domain:www.zenml.io)",
+      "WebFetch(domain:ollama.com)"
     ]
   }
 }

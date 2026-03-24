@@ -232,8 +232,7 @@ async fn generate_story_so_far(
         Some(campaign_id),
         false,
         state.llm.as_ref(),
-        &state.config,
-        state.qdrant.as_deref(),
+        &state.db,
     )
     .await
     .unwrap_or_default();
@@ -344,8 +343,7 @@ async fn generate_story_ahead(
         Some(campaign_id),
         false,
         state.llm.as_ref(),
-        &state.config,
-        state.qdrant.as_deref(),
+        &state.db,
     )
     .await
     .unwrap_or_default();
@@ -518,8 +516,7 @@ async fn generate_character_roadmap(
         Some(campaign_id),
         false,
         state.llm.as_ref(),
-        &state.config,
-        state.qdrant.as_deref(),
+        &state.db,
     )
     .await
     .unwrap_or_default();

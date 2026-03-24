@@ -10,14 +10,11 @@ use guide_core::{
 };
 use guide_db::{
     documents::{DocumentRepository, GlobalDocumentRepository},
-    qdrant::{
-        self, campaign_collection_name, ensure_collection, global_collection_name, LoreChunkInsert,
-    },
     story::StoryRepository,
+    vectors::{self, LoreChunkInsert},
     DuckDbPool,
 };
-use guide_llm::{EmbeddingRequest, LlmClient};
-use qdrant_client::Qdrant;
+use guide_llm::{EmbeddingHint, EmbeddingRequest, LlmClient};
 use uuid::Uuid;
 
 use crate::{chunker, extractor};
@@ -159,7 +156,6 @@ pub async fn ingest_campaign_document(
     doc: &CampaignDocument,
     llm: Arc<dyn LlmClient>,
     config: &AppConfig,
-    qdrant: Option<&Qdrant>,
     db: &DuckDbPool,
 ) -> Result<usize> {
     let doc_repo = DocumentRepository::new(db);
@@ -191,43 +187,37 @@ pub async fn ingest_campaign_document(
 
     let chunk_count = chunks.len();
 
-    if let Some(q) = qdrant {
-        let collection = campaign_collection_name(&doc.campaign_id.to_string());
-        ensure_collection(q, &collection, config.embedding_dims).await?;
+    let mut lore_chunks = Vec::with_capacity(chunks.len());
+    for chunk in &chunks {
+        let embed_text = truncate_for_embed(&chunk.content);
+        let embedding = match llm.embed(EmbeddingRequest { text: embed_text, model_override: None, hint: EmbeddingHint::Document }).await {
+            Ok(v) => v,
+            Err(e) => { tracing::warn!("Embed skipped for chunk in {}: {e}", chunk.section_path); continue; }
+        };
 
-        let mut lore_chunks = Vec::with_capacity(chunks.len());
-        for chunk in &chunks {
-            let embed_text = truncate_for_embed(&chunk.content);
-            let embedding = match llm.embed(EmbeddingRequest { text: embed_text, model_override: None }).await {
-                Ok(v) => v,
-                Err(e) => { tracing::warn!("Embed skipped for chunk in {}: {e}", chunk.section_path); continue; }
-            };
+        // Deterministic UUID v5: namespace = doc_id, name = section_path + content hash
+        let chunk_id = Uuid::new_v5(
+            &doc.id,
+            format!("{}:{}", chunk.section_path, &chunk.content[..chunk.content.floor_char_boundary(64)]).as_bytes(),
+        );
 
-            // Deterministic UUID v5: namespace = doc_id, name = section_path + content hash
-            let chunk_id = Uuid::new_v5(
-                &doc.id,
-                format!("{}:{}", chunk.section_path, &chunk.content[..chunk.content.floor_char_boundary(64)]).as_bytes(),
-            );
-
-            lore_chunks.push(LoreChunkInsert {
-                id: chunk_id,
-                campaign_id: Some(doc.campaign_id),
-                source_document_id: doc.id,
-                document_kind: doc.document_kind.clone(),
-                content: chunk.content.clone(),
-                lore_type: "plot".to_string(),
-                significance: "minor".to_string(),
-                entities: Vec::new(),
-                is_player_visible: chunk.is_player_visible,
-                page_range: chunk.page_range,
-                section_path: chunk.section_path.clone(),
-                doc_title: doc.filename.clone(),
-                vector: embedding,
-            });
-        }
-
-        qdrant::upsert_chunks(q, &collection, lore_chunks).await?;
+        lore_chunks.push(LoreChunkInsert {
+            id: chunk_id,
+            campaign_id: Some(doc.campaign_id),
+            source_document_id: doc.id,
+            document_kind: doc.document_kind.clone(),
+            content: chunk.content.clone(),
+            lore_type: "plot".to_string(),
+            significance: "minor".to_string(),
+            entities: Vec::new(),
+            is_player_visible: chunk.is_player_visible,
+            page_range: chunk.page_range,
+            section_path: chunk.section_path.clone(),
+            doc_title: doc.filename.clone(),
+            vector: embedding,
+        });
     }
+    vectors::upsert_chunks(db, lore_chunks).await?;
 
     doc_repo.update_ingested(doc.id, Some(page_count)).await?;
 
@@ -269,7 +259,6 @@ pub async fn ingest_global_document(
     doc: &GlobalDocument,
     llm: Arc<dyn LlmClient>,
     config: &AppConfig,
-    qdrant: Option<&Qdrant>,
     db: &DuckDbPool,
 ) -> Result<usize> {
     let doc_repo = GlobalDocumentRepository::new(db);
@@ -293,42 +282,36 @@ pub async fn ingest_global_document(
 
     let chunk_count = chunks.len();
 
-    if let Some(q) = qdrant {
-        let collection = global_collection_name();
-        ensure_collection(q, collection, config.embedding_dims).await?;
+    let mut lore_chunks = Vec::with_capacity(chunks.len());
+    for chunk in &chunks {
+        let embed_text = truncate_for_embed(&chunk.content);
+        let embedding = match llm.embed(EmbeddingRequest { text: embed_text, model_override: None, hint: EmbeddingHint::Document }).await {
+            Ok(v) => v,
+            Err(e) => { tracing::warn!("Embed skipped for chunk in {}: {e}", chunk.section_path); continue; }
+        };
 
-        let mut lore_chunks = Vec::with_capacity(chunks.len());
-        for chunk in &chunks {
-            let embed_text = truncate_for_embed(&chunk.content);
-            let embedding = match llm.embed(EmbeddingRequest { text: embed_text, model_override: None }).await {
-                Ok(v) => v,
-                Err(e) => { tracing::warn!("Embed skipped for chunk in {}: {e}", chunk.section_path); continue; }
-            };
+        let chunk_id = Uuid::new_v5(
+            &doc.id,
+            format!("{}:{}", chunk.section_path, &chunk.content[..chunk.content.floor_char_boundary(64)]).as_bytes(),
+        );
 
-            let chunk_id = Uuid::new_v5(
-                &doc.id,
-                format!("{}:{}", chunk.section_path, &chunk.content[..chunk.content.floor_char_boundary(64)]).as_bytes(),
-            );
-
-            lore_chunks.push(LoreChunkInsert {
-                id: chunk_id,
-                campaign_id: None,
-                source_document_id: doc.id,
-                document_kind: DocumentKind::DmGuide,
-                content: chunk.content.clone(),
-                lore_type: "mechanic".to_string(),
-                significance: "minor".to_string(),
-                entities: Vec::new(),
-                is_player_visible: true,
-                page_range: chunk.page_range,
-                section_path: chunk.section_path.clone(),
-                doc_title: doc.title.clone(),
-                vector: embedding,
-            });
-        }
-
-        qdrant::upsert_chunks(q, collection, lore_chunks).await?;
+        lore_chunks.push(LoreChunkInsert {
+            id: chunk_id,
+            campaign_id: None,
+            source_document_id: doc.id,
+            document_kind: DocumentKind::DmGuide,
+            content: chunk.content.clone(),
+            lore_type: "mechanic".to_string(),
+            significance: "minor".to_string(),
+            entities: Vec::new(),
+            is_player_visible: true,
+            page_range: chunk.page_range,
+            section_path: chunk.section_path.clone(),
+            doc_title: doc.title.clone(),
+            vector: embedding,
+        });
     }
+    vectors::upsert_chunks(db, lore_chunks).await?;
 
     doc_repo.update_ingested(doc.id, Some(page_count)).await?;
 
@@ -355,37 +338,25 @@ pub async fn query_indexes(
     campaign_id: Option<Uuid>,
     player_visible_only: bool,
     llm: &dyn LlmClient,
-    _config: &AppConfig,
-    qdrant: Option<&Qdrant>,
+    db: &DuckDbPool,
 ) -> Result<Vec<guide_core::models::RankedChunk>> {
     let embedding = llm
         .embed(EmbeddingRequest {
             text: query.to_string(),
             model_override: None,
+            hint: EmbeddingHint::Query,
         })
         .await?;
-
-    let Some(q) = qdrant else {
-        return Ok(Vec::new());
-    };
 
     let mut results = Vec::new();
 
     if let Some(cid) = campaign_id {
-        let collection = campaign_collection_name(&cid.to_string());
-        let mut campaign_chunks = qdrant::query_chunks(
-            q,
-            &collection,
-            embedding.clone(),
-            5,
-            player_visible_only,
-        )
-        .await?;
+        let mut campaign_chunks =
+            vectors::query_chunks(db, Some(cid), &embedding, 5, player_visible_only).await?;
         results.append(&mut campaign_chunks);
     }
 
-    let mut global_chunks =
-        qdrant::query_chunks(q, global_collection_name(), embedding, 3, false).await?;
+    let mut global_chunks = vectors::query_chunks(db, None, &embedding, 3, false).await?;
     results.append(&mut global_chunks);
 
     results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));

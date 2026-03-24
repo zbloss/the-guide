@@ -1,0 +1,26 @@
+[package]
+name    = "guide-embed"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+guide-core = { workspace = true }
+
+# ONNX Runtime bindings — auto-downloads ORT native library on first build
+ort = "2.0.0-rc.12"
+
+# HuggingFace tokenizers (fast, matches Python tokenization exactly)
+tokenizers = { version = "0.21", default-features = false, features = ["onig"] }
+
+# HuggingFace Hub download client with local cache (~/.cache/huggingface/hub/)
+hf-hub = { version = "0.3", features = ["tokio"] }
+
+tokio   = { workspace = true }
+tracing = { workspace = true }
+serde   = { workspace = true }
+
+[features]
+default  = []
+cuda     = ["ort/cuda"]
+directml = ["ort/directml"]
+coreml   = ["ort/coreml"]

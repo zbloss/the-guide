@@ -6,6 +6,7 @@ members = [
     "crates/guide-pdf",
     "crates/guide-combat",
     "crates/guide-api",
+    "crates/guide-embed",
     "guide-frontend/src-tauri"
 ]
 resolver = "2"
@@ -31,7 +32,6 @@ async-openai = "0.27"
 # Database
 duckdb = { version = "1.1", features = ["bundled", "r2d2"] }
 r2d2 = "0.8"
-qdrant-client = "1"
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
@@ -68,3 +68,4 @@ guide-llm    = { path = "crates/guide-llm" }
 guide-db     = { path = "crates/guide-db" }
 guide-pdf    = { path = "crates/guide-pdf" }
 guide-combat = { path = "crates/guide-combat" }
+guide-embed  = { path = "crates/guide-embed" }

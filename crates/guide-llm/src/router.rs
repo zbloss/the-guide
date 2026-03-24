@@ -3,11 +3,12 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use futures::stream::BoxStream;
 use guide_core::{AppConfig, GuideError, Result};
+use guide_embed::LocalEmbedder;
 
 use crate::{
     client::{
-        AudioRequest, CompletionRequest, CompletionResponse, EmbeddingRequest, LlmClient, LlmTask,
-        VisionRequest,
+        AudioRequest, CompletionRequest, CompletionResponse, EmbeddingHint, EmbeddingRequest,
+        LlmClient, LlmTask, VisionRequest,
     },
     CloudProvider, OllamaProvider,
 };
@@ -24,6 +25,9 @@ pub struct LlmRouter {
     cloud: Option<Arc<dyn LlmClient>>,
     ocr_uses_cloud: bool,
     story_uses_cloud: bool,
+    /// Set when embedding_provider = "local" and initialisation succeeded.
+    local_embedder: Option<Arc<LocalEmbedder>>,
+    embedding_uses_cloud: bool,
 }
 
 impl LlmRouter {
@@ -33,8 +37,18 @@ impl LlmRouter {
         cloud: Option<Arc<dyn LlmClient>>,
         ocr_uses_cloud: bool,
         story_uses_cloud: bool,
+        local_embedder: Option<Arc<LocalEmbedder>>,
+        embedding_uses_cloud: bool,
     ) -> Self {
-        Self { strategy, local, cloud, ocr_uses_cloud, story_uses_cloud }
+        Self {
+            strategy,
+            local,
+            cloud,
+            ocr_uses_cloud,
+            story_uses_cloud,
+            local_embedder,
+            embedding_uses_cloud,
+        }
     }
 
     pub fn always_local(config: &AppConfig) -> Self {
@@ -45,7 +59,15 @@ impl LlmRouter {
             &config.embedding_model,
             &config.whisper_model,
         );
-        Self::new(RoutingStrategy::AlwaysLocal, Arc::new(ollama), None, false, false)
+        Self::new(
+            RoutingStrategy::AlwaysLocal,
+            Arc::new(ollama),
+            None,
+            false,
+            false,
+            None,
+            false,
+        )
     }
 
     /// Build the router from config. Routing for OCR and story extraction is
@@ -53,7 +75,10 @@ impl LlmRouter {
     /// (`"local"` or `"cloud"`). If either is `"cloud"`, `GUIDE__CLOUD_FALLBACK`
     /// and `GUIDE__CLOUD_API_KEY` must both be set — the server will panic at
     /// startup if they are missing rather than silently falling back to local.
-    pub fn from_config(config: &AppConfig) -> Self {
+    ///
+    /// Embeddings default to local inference via `guide-embed` (ORT + EmbeddingGemma).
+    /// Set `GUIDE__EMBEDDING_PROVIDER=ollama` to use Ollama's embedding endpoint instead.
+    pub async fn from_config(config: &AppConfig) -> Self {
         let ocr_uses_cloud = config.ocr_provider == "cloud";
         let story_uses_cloud = config.story_provider == "cloud";
         let needs_cloud = ocr_uses_cloud || story_uses_cloud;
@@ -105,7 +130,39 @@ impl LlmRouter {
             None
         };
 
-        Self::new(RoutingStrategy::AlwaysLocal, Arc::new(ollama), cloud, ocr_uses_cloud, story_uses_cloud)
+        // Initialise local embedder when embedding_provider = "local" (the default).
+        let local_embedder = if config.embedding_provider == "local" {
+            match LocalEmbedder::from_pretrained(&config.local_embedding_model).await {
+                Ok(e) => {
+                    tracing::info!(
+                        model = %config.local_embedding_model,
+                        "Local embedder ready"
+                    );
+                    Some(Arc::new(e))
+                }
+                Err(e) => {
+                    tracing::error!(
+                        "Local embedder init failed ({e}); falling back to Ollama for embeddings"
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        let embedding_uses_cloud =
+            config.embedding_provider == "cloud" && cloud.is_some();
+
+        Self::new(
+            RoutingStrategy::AlwaysLocal,
+            Arc::new(ollama),
+            cloud,
+            ocr_uses_cloud,
+            story_uses_cloud,
+            local_embedder,
+            embedding_uses_cloud,
+        )
     }
 
     fn select_provider(&self, task: &LlmTask) -> Arc<dyn LlmClient> {
@@ -160,6 +217,22 @@ impl LlmClient for LlmRouter {
     }
 
     async fn embed(&self, req: EmbeddingRequest) -> Result<Vec<f32>> {
+        // 1. Local ORT embedder (default)
+        if let Some(embedder) = &self.local_embedder {
+            return match req.hint {
+                EmbeddingHint::Query => embedder.embed_query(&req.text).await,
+                EmbeddingHint::Document => embedder.embed_document(&req.text).await,
+            };
+        }
+
+        // 2. Cloud embedding (if configured)
+        if self.embedding_uses_cloud {
+            if let Some(cloud) = &self.cloud {
+                return cloud.embed(req).await;
+            }
+        }
+
+        // 3. Ollama fallback
         self.local.embed(req).await
     }
 

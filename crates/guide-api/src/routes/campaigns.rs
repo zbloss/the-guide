@@ -116,11 +116,8 @@ async fn delete_campaign(
     let repo = CampaignRepository::new(&state.db);
     repo.delete(id).await?;
 
-    if let Some(q) = state.qdrant.as_deref() {
-        let col = guide_db::qdrant::campaign_collection_name(&id.to_string());
-        if let Err(e) = guide_db::qdrant::delete_collection(q, &col).await {
-            tracing::warn!("Qdrant collection deletion failed for campaign {id}: {e}");
-        }
+    if let Err(e) = guide_db::vectors::delete_campaign_vectors(&state.db, id).await {
+        tracing::warn!("Vector deletion failed for campaign {id}: {e}");
     }
 
     Ok(StatusCode::NO_CONTENT)

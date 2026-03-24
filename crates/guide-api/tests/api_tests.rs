@@ -105,17 +105,15 @@ async fn make_app() -> axum::Router {
         max_upload_bytes: 10 * 1024 * 1024,
         chunk_max_chars: 1600,
         chunk_overlap_chars: 200,
-        qdrant_url: String::new(),
-        qdrant_collection: "guide_chunks".into(),
-        embedding_dims: 768,
         whisper_model: "whisper".into(),
+        embedding_provider: "ollama".into(),
+        local_embedding_model: "".into(),
     });
 
     let state = AppState {
         config,
         llm: Arc::new(MockLlm),
         db: pool,
-        qdrant: None,
     };
 
     all_routes(state)

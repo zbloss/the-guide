@@ -195,9 +195,16 @@ impl DocumentRepository {
             .collect();
 
         with_db(&self.pool, move |conn| {
+            // Delete existing pages for this document before re-inserting (idempotent ingest).
+            conn.execute(
+                "DELETE FROM document_page_ocr WHERE document_id = ?",
+                duckdb::params![doc_id_str],
+            )
+            .map_err(|e| GuideError::Internal(e.to_string()))?;
+
             for (row_id, page_num, raw_text, is_dm_only) in &pages {
                 conn.execute(
-                    "INSERT OR REPLACE INTO document_page_ocr \
+                    "INSERT INTO document_page_ocr \
                      (id, document_id, page_num, raw_text, is_dm_only) \
                      VALUES (?, ?, ?, ?, ?)",
                     duckdb::params![row_id, doc_id_str, page_num, raw_text, is_dm_only],

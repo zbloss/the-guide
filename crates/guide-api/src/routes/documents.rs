@@ -217,7 +217,6 @@ async fn ingest_document(
 
     let llm = state.llm.clone();
     let config = state.config.as_ref().clone();
-    let qdrant = state.qdrant.clone();
     let db = state.db.clone();
 
     tokio::spawn(async move {
@@ -227,7 +226,6 @@ async fn ingest_document(
             &doc,
             llm,
             &config,
-            qdrant.as_deref(),
             &db,
         )
         .await;
@@ -376,7 +374,6 @@ async fn ingest_global(
 
     let llm = state.llm.clone();
     let config = state.config.as_ref().clone();
-    let qdrant = state.qdrant.clone();
     let db = state.db.clone();
 
     tokio::spawn(async move {
@@ -386,7 +383,6 @@ async fn ingest_global(
             &doc,
             llm,
             &config,
-            qdrant.as_deref(),
             &db,
         )
         .await;
@@ -410,11 +406,8 @@ async fn delete_campaign_document(
     let repo = DocumentRepository::new(&state.db);
     let doc = repo.get_by_id(doc_id).await?;
 
-    if let Some(q) = state.qdrant.as_deref() {
-        let col = guide_db::qdrant::campaign_collection_name(&campaign_id.to_string());
-        if let Err(e) = guide_db::qdrant::delete_document_vectors(q, &col, doc_id).await {
-            tracing::warn!("Failed to delete Qdrant vectors for doc {doc_id}: {e}");
-        }
+    if let Err(e) = guide_db::vectors::delete_document_vectors(&state.db, doc_id).await {
+        tracing::warn!("Failed to delete vectors for doc {doc_id}: {e}");
     }
 
     if let Err(e) = tokio::fs::remove_file(format!("data/indexes/{}/{}.json", campaign_id, doc_id)).await {
@@ -438,11 +431,8 @@ async fn delete_global_document(
     let repo = GlobalDocumentRepository::new(&state.db);
     let doc = repo.get_by_id(doc_id).await?;
 
-    if let Some(q) = state.qdrant.as_deref() {
-        let col = guide_db::qdrant::global_collection_name();
-        if let Err(e) = guide_db::qdrant::delete_document_vectors(q, col, doc_id).await {
-            tracing::warn!("Failed to delete Qdrant vectors for global doc {doc_id}: {e}");
-        }
+    if let Err(e) = guide_db::vectors::delete_document_vectors(&state.db, doc_id).await {
+        tracing::warn!("Failed to delete vectors for global doc {doc_id}: {e}");
     }
 
     if let Err(e) = tokio::fs::remove_file(format!("data/indexes/global/{}.json", doc_id)).await {
@@ -557,8 +547,7 @@ async fn search_rules(
         None,
         false,
         state.llm.as_ref(),
-        &state.config,
-        state.qdrant.as_deref(),
+        &state.db,
     )
     .await
     .unwrap_or_default();
@@ -579,8 +568,7 @@ async fn search_campaign_document(
         Some(campaign_id),
         false,
         state.llm.as_ref(),
-        &state.config,
-        state.qdrant.as_deref(),
+        &state.db,
     )
     .await
     .unwrap_or_default();

@@ -74,8 +74,7 @@ async fn chat(
         Some(campaign_id),
         player_visible_only,
         state.llm.as_ref(),
-        &state.config,
-        state.qdrant.as_deref(),
+        &state.db,
     )
     .await
     .unwrap_or_default();

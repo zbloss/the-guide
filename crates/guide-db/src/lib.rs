@@ -10,7 +10,7 @@ pub mod homebrew;
 pub mod loot;
 pub mod plot_hooks;
 pub mod prep;
-pub mod qdrant;
+pub mod vectors;
 pub mod relationships;
 pub mod sessions;
 pub mod story;
@@ -77,10 +77,10 @@ async fn run_migrations(pool: &DuckDbPool) -> Result<()> {
         )
         .map_err(|e| GuideError::Internal(e.to_string()))?;
 
-        let migrations: &[(&str, &str)] = &[(
-            "001_schema",
-            include_str!("../migrations/001_schema.sql"),
-        )];
+        let migrations: &[(&str, &str)] = &[
+            ("001_schema", include_str!("../migrations/001_schema.sql")),
+            ("002_lore_chunks", include_str!("../migrations/002_lore_chunks.sql")),
+        ];
 
         for (name, sql) in migrations {
             let applied: bool = conn

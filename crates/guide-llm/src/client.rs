@@ -56,10 +56,22 @@ pub struct CompletionResponse {
     pub completion_tokens: u32,
 }
 
+/// Signals to the embedding backend whether the text is a search query
+/// or a document being indexed. Bi-encoder models like EmbeddingGemma use
+/// different task prefixes for the two roles.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum EmbeddingHint {
+    Query,
+    #[default]
+    Document,
+}
+
 #[derive(Debug, Clone)]
 pub struct EmbeddingRequest {
     pub text: String,
     pub model_override: Option<String>,
+    /// Whether this text is a search query or a document being indexed.
+    pub hint: EmbeddingHint,
 }
 
 #[derive(Debug, Clone)]

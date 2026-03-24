@@ -22,10 +22,11 @@ pub struct AppConfig {
     pub max_upload_bytes: u64,
     pub chunk_max_chars: usize,
     pub chunk_overlap_chars: usize,
-    pub qdrant_url: String,
-    pub qdrant_collection: String,
-    pub embedding_dims: u64,
     pub whisper_model: String,
+    /// Embedding provider: "local" | "ollama" | "cloud"  (default: "local")
+    pub embedding_provider: String,
+    /// HuggingFace model ID used when embedding_provider = "local"
+    pub local_embedding_model: String,
 }
 
 impl Default for AppConfig {
@@ -47,10 +48,9 @@ impl Default for AppConfig {
             max_upload_bytes: 50 * 1024 * 1024,
             chunk_max_chars: 2048,
             chunk_overlap_chars: 64,
-            qdrant_url: "http://localhost:6333".into(),
-            qdrant_collection: "guide_chunks".into(),
-            embedding_dims: 768,
             whisper_model: "whisper".into(),
+            embedding_provider: "local".into(),
+            local_embedding_model: "onnx-community/embeddinggemma-300m-ONNX".into(),
         }
     }
 }
@@ -102,10 +102,9 @@ impl AppConfig {
             .set_default("max_upload_bytes", defaults.max_upload_bytes as i64)?
             .set_default("chunk_max_chars", defaults.chunk_max_chars as i64)?
             .set_default("chunk_overlap_chars", defaults.chunk_overlap_chars as i64)?
-            .set_default("qdrant_url", defaults.qdrant_url)?
-            .set_default("qdrant_collection", defaults.qdrant_collection)?
-            .set_default("embedding_dims", defaults.embedding_dims as i64)?
             .set_default("whisper_model", defaults.whisper_model)?
+            .set_default("embedding_provider", defaults.embedding_provider)?
+            .set_default("local_embedding_model", defaults.local_embedding_model)?
             .add_source(
                 config::Environment::with_prefix("GUIDE")
                     .separator("__")

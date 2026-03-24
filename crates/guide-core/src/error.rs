@@ -11,9 +11,6 @@ pub enum GuideError {
     #[error("LLM error: {0}")]
     Llm(String),
 
-    #[error("Qdrant error: {0}")]
-    Qdrant(String),
-
     #[error("Database error: {0}")]
     Database(String),
 
