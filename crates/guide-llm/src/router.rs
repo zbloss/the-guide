@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use futures::stream::BoxStream;
-use guide_core::{AppConfig, Result};
+use guide_core::{AppConfig, GuideError, Result};
 
 use crate::{
     client::{
@@ -15,7 +15,6 @@ use crate::{
 #[derive(Debug, Clone)]
 pub enum RoutingStrategy {
     AlwaysLocal,
-    LocalWithFallback { fallback_provider: String },
     AlwaysCloud { provider: String },
 }
 
@@ -49,25 +48,15 @@ impl LlmRouter {
         Self::new(RoutingStrategy::AlwaysLocal, Arc::new(ollama), None, false, false)
     }
 
-    pub fn with_cloud_fallback(config: &AppConfig) -> Option<Self> {
-        let api_key = config.cloud_api_key.as_deref()?;
-        let provider_name = config.cloud_fallback.as_deref()?;
-
-        let (base_url, default_model, label) = match provider_name {
-            "openai" => (None, "gpt-4o-mini".to_string(), "openai".to_string()),
-            "gemini" => (
-                Some("https://generativelanguage.googleapis.com/v1beta/openai".to_string()),
-                "gemini-2.5-flash-lite".to_string(),
-                "gemini".to_string(),
-            ),
-            unknown => {
-                tracing::warn!("Unknown cloud_fallback provider '{unknown}', ignoring");
-                return None;
-            }
-        };
-
-        // Allow explicit cloud_model override from config
-        let model = config.cloud_model.clone().unwrap_or(default_model);
+    /// Build the router from config. Routing for OCR and story extraction is
+    /// controlled exclusively by `GUIDE__OCR_PROVIDER` and `GUIDE__STORY_PROVIDER`
+    /// (`"local"` or `"cloud"`). If either is `"cloud"`, `GUIDE__CLOUD_FALLBACK`
+    /// and `GUIDE__CLOUD_API_KEY` must both be set — the server will panic at
+    /// startup if they are missing rather than silently falling back to local.
+    pub fn from_config(config: &AppConfig) -> Self {
+        let ocr_uses_cloud = config.ocr_provider == "cloud";
+        let story_uses_cloud = config.story_provider == "cloud";
+        let needs_cloud = ocr_uses_cloud || story_uses_cloud;
 
         let ollama = OllamaProvider::new(
             &config.ollama_base_url,
@@ -76,22 +65,47 @@ impl LlmRouter {
             &config.embedding_model,
             &config.whisper_model,
         );
-        let cloud = CloudProvider::new(api_key, model, base_url, label.clone());
 
-        let ocr_uses_cloud = config.ocr_provider == "cloud";
-        let story_uses_cloud = config.story_provider == "cloud";
+        let cloud: Option<Arc<dyn LlmClient>> = if needs_cloud {
+            let api_key = config.cloud_api_key.as_deref().unwrap_or_else(|| {
+                panic!(
+                    "GUIDE__CLOUD_API_KEY is required when OCR_PROVIDER or STORY_PROVIDER is 'cloud'"
+                )
+            });
+            let provider_name = config.cloud_fallback.as_deref().unwrap_or_else(|| {
+                panic!(
+                    "GUIDE__CLOUD_FALLBACK is required when OCR_PROVIDER or STORY_PROVIDER is 'cloud'"
+                )
+            });
 
-        Some(Self::new(
-            RoutingStrategy::LocalWithFallback { fallback_provider: label },
-            Arc::new(ollama),
-            Some(Arc::new(cloud)),
-            ocr_uses_cloud,
-            story_uses_cloud,
-        ))
-    }
+            let (base_url, default_model, label) = match provider_name {
+                "openai" => (None, "gpt-4o-mini".to_string(), "openai".to_string()),
+                "gemini" => (
+                    Some(
+                        "https://generativelanguage.googleapis.com/v1beta/openai".to_string(),
+                    ),
+                    "gemini-2.0-flash-lite".to_string(),
+                    "gemini".to_string(),
+                ),
+                unknown => panic!(
+                    "Unknown GUIDE__CLOUD_FALLBACK provider '{unknown}'; expected 'openai' or 'gemini'"
+                ),
+            };
 
-    pub fn from_config(config: &AppConfig) -> Self {
-        Self::with_cloud_fallback(config).unwrap_or_else(|| Self::always_local(config))
+            let model = config.cloud_model.clone().unwrap_or(default_model);
+            tracing::info!(
+                provider = %label,
+                model = %model,
+                ocr = ocr_uses_cloud,
+                story = story_uses_cloud,
+                "Cloud provider initialised"
+            );
+            Some(Arc::new(CloudProvider::new(api_key, model, base_url, label)))
+        } else {
+            None
+        };
+
+        Self::new(RoutingStrategy::AlwaysLocal, Arc::new(ollama), cloud, ocr_uses_cloud, story_uses_cloud)
     }
 
     fn select_provider(&self, task: &LlmTask) -> Arc<dyn LlmClient> {
@@ -100,16 +114,18 @@ impl LlmRouter {
             LlmTask::EmbeddingGeneration | LlmTask::CharacterSheetOcr => {
                 return Arc::clone(&self.local);
             }
-            // Story extraction routes to cloud if configured
             LlmTask::StoryExtraction if self.story_uses_cloud => {
-                return self.cloud.as_ref().map(Arc::clone).unwrap_or_else(|| Arc::clone(&self.local));
+                return self
+                    .cloud
+                    .as_ref()
+                    .map(Arc::clone)
+                    .expect("Cloud provider required for story extraction but not initialised");
             }
             _ => {}
         }
 
         match &self.strategy {
             RoutingStrategy::AlwaysLocal => Arc::clone(&self.local),
-            RoutingStrategy::LocalWithFallback { .. } => Arc::clone(&self.local),
             RoutingStrategy::AlwaysCloud { .. } => {
                 self.cloud.as_ref().map(Arc::clone).unwrap_or_else(|| Arc::clone(&self.local))
             }
@@ -117,30 +133,15 @@ impl LlmRouter {
     }
 
     pub async fn route_complete(&self, req: CompletionRequest) -> Result<CompletionResponse> {
-        let task = req.task.clone();
-        let provider = self.select_provider(&task);
-        let result = provider.complete(req.clone()).await;
-
-        match result {
-            Ok(resp) => Ok(resp),
-            Err(local_err) => {
-                if matches!(&self.strategy, RoutingStrategy::LocalWithFallback { .. }) {
-                    if let Some(cloud) = &self.cloud {
-                        tracing::warn!("Local LLM failed ({local_err}), falling back to cloud");
-                        return cloud.complete(req).await;
-                    }
-                }
-                Err(local_err)
-            }
-        }
+        let provider = self.select_provider(&req.task);
+        provider.complete(req).await
     }
 
     pub async fn route_stream(
         &self,
         req: CompletionRequest,
     ) -> Result<BoxStream<'static, Result<String>>> {
-        let task = req.task.clone();
-        let provider = self.select_provider(&task);
+        let provider = self.select_provider(&req.task);
         provider.complete_stream(req).await
     }
 }
@@ -164,9 +165,12 @@ impl LlmClient for LlmRouter {
 
     async fn complete_with_vision(&self, req: VisionRequest) -> Result<CompletionResponse> {
         if self.ocr_uses_cloud {
-            if let Some(cloud) = &self.cloud {
-                return cloud.complete_with_vision(req).await;
-            }
+            let cloud = self.cloud.as_ref().ok_or_else(|| {
+                GuideError::Internal(
+                    "Cloud provider required for OCR but not initialised".into(),
+                )
+            })?;
+            return cloud.complete_with_vision(req).await;
         }
         self.local.complete_with_vision(req).await
     }

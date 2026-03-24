@@ -1,5 +1,4 @@
 use chrono::Utc;
-use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 use uuid::Uuid;
 
 use guide_core::{
@@ -7,60 +6,67 @@ use guide_core::{
     GuideError, Result,
 };
 
-pub struct CampaignRepository<'a> {
-    pool: &'a SqlitePool,
+use crate::{query_all, query_one, with_db, DuckDbPool};
+
+pub struct CampaignRepository {
+    pool: DuckDbPool,
 }
 
-impl<'a> CampaignRepository<'a> {
-    pub fn new(pool: &'a SqlitePool) -> Self {
-        Self { pool }
+impl CampaignRepository {
+    pub fn new(pool: &DuckDbPool) -> Self {
+        Self { pool: pool.clone() }
     }
 
     pub async fn create(&self, req: CreateCampaignRequest) -> Result<Campaign> {
         let id = Uuid::new_v4();
-        let now = Utc::now();
-        let game_system_str = game_system_to_str(&req.game_system.unwrap_or_default());
+        let now = Utc::now().to_rfc3339();
+        let game_system_str = game_system_to_str(&req.game_system.unwrap_or_default()).to_string();
+        let id_str = id.to_string();
+        let name = req.name.clone();
+        let desc = req.description.clone();
 
-        sqlx::query(
-            "INSERT INTO campaigns (id, name, description, game_system, created_at, updated_at) \
-             VALUES (?, ?, ?, ?, ?, ?)",
-        )
-        .bind(id.to_string())
-        .bind(&req.name)
-        .bind(&req.description)
-        .bind(game_system_str)
-        .bind(now.to_rfc3339())
-        .bind(now.to_rfc3339())
-        .execute(self.pool)
+        with_db(&self.pool, move |conn| {
+            conn.execute(
+                "INSERT INTO campaigns (id, name, description, game_system, created_at, updated_at) \
+                 VALUES (?, ?, ?, ?, ?, ?)",
+                duckdb::params![id_str, name, desc, game_system_str, now, now],
+            )
+            .map_err(|e| GuideError::Internal(e.to_string()))?;
+            Ok(())
+        })
         .await?;
 
         self.get_by_id(id).await
     }
 
     pub async fn get_by_id(&self, id: Uuid) -> Result<Campaign> {
-        let row = sqlx::query(
-            "SELECT id, name, description, game_system, world_state, \
-             current_chapter, created_at, updated_at \
-             FROM campaigns WHERE id = ?",
-        )
-        .bind(id.to_string())
-        .fetch_optional(self.pool)
-        .await?
-        .ok_or_else(|| GuideError::NotFound(format!("Campaign {id}")))?;
-
-        row_to_campaign(row)
+        let id_str = id.to_string();
+        with_db(&self.pool, move |conn| {
+            query_one(
+                conn,
+                "SELECT id, name, description, game_system, world_state, \
+                 current_chapter, created_at, updated_at \
+                 FROM campaigns WHERE id = ?",
+                [&id_str],
+                row_to_campaign,
+                format!("Campaign {id}"),
+            )
+        })
+        .await
     }
 
     pub async fn list(&self) -> Result<Vec<Campaign>> {
-        let rows = sqlx::query(
-            "SELECT id, name, description, game_system, world_state, \
-             current_chapter, created_at, updated_at \
-             FROM campaigns ORDER BY created_at DESC",
-        )
-        .fetch_all(self.pool)
-        .await?;
-
-        rows.into_iter().map(row_to_campaign).collect()
+        with_db(&self.pool, |conn| {
+            query_all(
+                conn,
+                "SELECT id, name, description, game_system, world_state, \
+                 current_chapter, created_at, updated_at \
+                 FROM campaigns ORDER BY created_at DESC",
+                [],
+                row_to_campaign,
+            )
+        })
+        .await
     }
 
     pub async fn update(&self, id: Uuid, req: UpdateCampaignRequest) -> Result<Campaign> {
@@ -68,142 +74,163 @@ impl<'a> CampaignRepository<'a> {
         let id_str = id.to_string();
 
         if let Some(name) = &req.name {
-            sqlx::query("UPDATE campaigns SET name = ?, updated_at = ? WHERE id = ?")
-                .bind(name)
-                .bind(&now)
-                .bind(&id_str)
-                .execute(self.pool)
-                .await?;
+            let name = name.clone();
+            let now2 = now.clone();
+            let id2 = id_str.clone();
+            with_db(&self.pool, move |conn| {
+                conn.execute(
+                    "UPDATE campaigns SET name = ?, updated_at = ? WHERE id = ?",
+                    duckdb::params![name, now2, id2],
+                )
+                .map_err(|e| GuideError::Internal(e.to_string()))?;
+                Ok(())
+            })
+            .await?;
         }
 
         if let Some(desc) = &req.description {
-            sqlx::query("UPDATE campaigns SET description = ?, updated_at = ? WHERE id = ?")
-                .bind(desc)
-                .bind(&now)
-                .bind(&id_str)
-                .execute(self.pool)
-                .await?;
+            let desc = desc.clone();
+            let now2 = now.clone();
+            let id2 = id_str.clone();
+            with_db(&self.pool, move |conn| {
+                conn.execute(
+                    "UPDATE campaigns SET description = ?, updated_at = ? WHERE id = ?",
+                    duckdb::params![desc, now2, id2],
+                )
+                .map_err(|e| GuideError::Internal(e.to_string()))?;
+                Ok(())
+            })
+            .await?;
         }
 
         if let Some(ws) = &req.world_state {
             let ws_json = serde_json::to_string(ws)?;
-            sqlx::query("UPDATE campaigns SET world_state = ?, updated_at = ? WHERE id = ?")
-                .bind(&ws_json)
-                .bind(&now)
-                .bind(&id_str)
-                .execute(self.pool)
-                .await?;
+            let now2 = now.clone();
+            let id2 = id_str.clone();
+            with_db(&self.pool, move |conn| {
+                conn.execute(
+                    "UPDATE campaigns SET world_state = ?, updated_at = ? WHERE id = ?",
+                    duckdb::params![ws_json, now2, id2],
+                )
+                .map_err(|e| GuideError::Internal(e.to_string()))?;
+                Ok(())
+            })
+            .await?;
         }
 
         if let Some(chapter) = &req.current_chapter {
-            sqlx::query("UPDATE campaigns SET current_chapter = ?, updated_at = ? WHERE id = ?")
-                .bind(chapter)
-                .bind(&now)
-                .bind(&id_str)
-                .execute(self.pool)
-                .await?;
+            let chapter = chapter.clone();
+            let now2 = now.clone();
+            let id2 = id_str.clone();
+            with_db(&self.pool, move |conn| {
+                conn.execute(
+                    "UPDATE campaigns SET current_chapter = ?, updated_at = ? WHERE id = ?",
+                    duckdb::params![chapter, now2, id2],
+                )
+                .map_err(|e| GuideError::Internal(e.to_string()))?;
+                Ok(())
+            })
+            .await?;
         }
 
         self.get_by_id(id).await
     }
 
     pub async fn delete(&self, id: Uuid) -> Result<()> {
-        let affected = sqlx::query("DELETE FROM campaigns WHERE id = ?")
-            .bind(id.to_string())
-            .execute(self.pool)
-            .await?
-            .rows_affected();
-
-        if affected == 0 {
-            return Err(GuideError::NotFound(format!("Campaign {id}")));
-        }
-        Ok(())
+        let id_str = id.to_string();
+        with_db(&self.pool, move |conn| {
+            let n = conn
+                .execute("DELETE FROM campaigns WHERE id = ?", [&id_str])
+                .map_err(|e| GuideError::Internal(e.to_string()))?;
+            if n == 0 {
+                return Err(GuideError::NotFound(format!("Campaign {id}")));
+            }
+            Ok(())
+        })
+        .await
     }
 
     pub async fn analytics(&self, campaign_id: Uuid) -> Result<serde_json::Value> {
         let id_str = campaign_id.to_string();
+        with_db(&self.pool, move |conn| {
+            let sessions_count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sessions WHERE campaign_id = ?",
+                    [&id_str],
+                    |r| r.get(0),
+                )
+                .map_err(|e| GuideError::Internal(e.to_string()))?;
 
-        let sessions_count: i64 =
-            sqlx::query("SELECT COUNT(*) FROM sessions WHERE campaign_id = ?")
-                .bind(&id_str)
-                .fetch_one(self.pool)
-                .await?
-                .get(0);
+            let encounters_count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM encounters WHERE campaign_id = ?",
+                    [&id_str],
+                    |r| r.get(0),
+                )
+                .map_err(|e| GuideError::Internal(e.to_string()))?;
 
-        let encounters_count: i64 =
-            sqlx::query("SELECT COUNT(*) FROM encounters WHERE campaign_id = ?")
-                .bind(&id_str)
-                .fetch_one(self.pool)
-                .await?
-                .get(0);
+            let characters_count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM characters WHERE campaign_id = ?",
+                    [&id_str],
+                    |r| r.get(0),
+                )
+                .map_err(|e| GuideError::Internal(e.to_string()))?;
 
-        let characters_count: i64 =
-            sqlx::query("SELECT COUNT(*) FROM characters WHERE campaign_id = ?")
-                .bind(&id_str)
-                .fetch_one(self.pool)
-                .await?
-                .get(0);
+            let sessions_by_month = query_all(
+                conn,
+                "SELECT strftime('%Y-%m', created_at::TIMESTAMP) AS month, COUNT(*) AS cnt \
+                 FROM sessions WHERE campaign_id = ? GROUP BY month ORDER BY month",
+                [&id_str],
+                |row| {
+                    let month: String = row.get("month")?;
+                    let count: i64 = row.get("cnt")?;
+                    Ok(serde_json::json!({ "month": month, "count": count }))
+                },
+            )?;
 
-        let session_rows = sqlx::query(
-            "SELECT strftime('%Y-%m', created_at) AS month, COUNT(*) AS cnt \
-             FROM sessions WHERE campaign_id = ? GROUP BY month ORDER BY month",
-        )
-        .bind(&id_str)
-        .fetch_all(self.pool)
-        .await?;
-        let sessions_by_month: Vec<serde_json::Value> = session_rows
-            .iter()
-            .map(|r| {
-                let month: String = r.get("month");
-                let count: i64 = r.get("cnt");
-                serde_json::json!({ "month": month, "count": count })
-            })
-            .collect();
+            let encounter_difficulty = query_all(
+                conn,
+                "SELECT CASE WHEN round <= 1 THEN 'easy' WHEN round <= 3 THEN 'medium' \
+                 WHEN round <= 6 THEN 'hard' ELSE 'deadly' END AS difficulty, COUNT(*) AS cnt \
+                 FROM encounters WHERE campaign_id = ? AND status = 'completed' GROUP BY difficulty",
+                [&id_str],
+                |row| {
+                    let diff: String = row.get("difficulty")?;
+                    let count: i64 = row.get("cnt")?;
+                    Ok(serde_json::json!({ "difficulty": diff, "count": count }))
+                },
+            )?;
 
-        let difficulty_rows = sqlx::query(
-            "SELECT CASE WHEN round <= 1 THEN 'easy' WHEN round <= 3 THEN 'medium' \
-             WHEN round <= 6 THEN 'hard' ELSE 'deadly' END AS difficulty, COUNT(*) AS cnt \
-             FROM encounters WHERE campaign_id = ? AND status = 'completed' GROUP BY difficulty",
-        )
-        .bind(&id_str)
-        .fetch_all(self.pool)
-        .await?;
-        let encounter_difficulty: Vec<serde_json::Value> = difficulty_rows
-            .iter()
-            .map(|r| {
-                let diff: String = r.get("difficulty");
-                let count: i64 = r.get("cnt");
-                serde_json::json!({ "difficulty": diff, "count": count })
-            })
-            .collect();
-
-        Ok(serde_json::json!({
-            "sessions_count": sessions_count,
-            "encounters_count": encounters_count,
-            "characters_count": characters_count,
-            "sessions_by_month": sessions_by_month,
-            "encounter_difficulty": encounter_difficulty,
-        }))
+            Ok(serde_json::json!({
+                "sessions_count": sessions_count,
+                "encounters_count": encounters_count,
+                "characters_count": characters_count,
+                "sessions_by_month": sessions_by_month,
+                "encounter_difficulty": encounter_difficulty,
+            }))
+        })
+        .await
     }
 }
 
-fn row_to_campaign(row: SqliteRow) -> Result<Campaign> {
-    let id_str: String = row.try_get("id")?;
-    let game_system_str: String = row.try_get("game_system")?;
-    let world_state_str: Option<String> = row.try_get("world_state")?;
-    let created_at_str: String = row.try_get("created_at")?;
-    let updated_at_str: String = row.try_get("updated_at")?;
-    let current_chapter: Option<String> = row.try_get("current_chapter")?;
+fn row_to_campaign(row: &duckdb::Row) -> duckdb::Result<Campaign> {
+    let id_str: String = row.get("id")?;
+    let game_system_str: String = row.get("game_system")?;
+    let world_state_str: Option<String> = row.get("world_state")?;
+    let created_at_str: String = row.get("created_at")?;
+    let updated_at_str: String = row.get("updated_at")?;
 
     Ok(Campaign {
-        id: Uuid::parse_str(&id_str).map_err(|e| GuideError::Internal(e.to_string()))?,
-        name: row.try_get("name")?,
-        description: row.try_get("description")?,
+        id: Uuid::parse_str(&id_str)
+            .map_err(|e| duckdb::Error::FromSqlConversionFailure(0, duckdb::types::Type::Text, Box::new(e)))?,
+        name: row.get("name")?,
+        description: row.get("description")?,
         game_system: parse_game_system(&game_system_str),
         world_state: world_state_str
             .as_deref()
             .and_then(|s| serde_json::from_str(s).ok()),
-        current_chapter,
+        current_chapter: row.get("current_chapter")?,
         created_at: created_at_str.parse().unwrap_or_else(|_| Utc::now()),
         updated_at: updated_at_str.parse().unwrap_or_else(|_| Utc::now()),
     })

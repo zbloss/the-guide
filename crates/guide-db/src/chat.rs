@@ -1,15 +1,17 @@
 use chrono::Utc;
-use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 use uuid::Uuid;
+
 use guide_core::{models::ChatMessage, GuideError, Result};
 
-pub struct ChatRepository<'a> {
-    pool: &'a SqlitePool,
+use crate::{query_all, with_db, DuckDbPool};
+
+pub struct ChatRepository {
+    pool: DuckDbPool,
 }
 
-impl<'a> ChatRepository<'a> {
-    pub fn new(pool: &'a SqlitePool) -> Self {
-        Self { pool }
+impl ChatRepository {
+    pub fn new(pool: &DuckDbPool) -> Self {
+        Self { pool: pool.clone() }
     }
 
     pub async fn append(
@@ -21,61 +23,67 @@ impl<'a> ChatRepository<'a> {
     ) -> Result<ChatMessage> {
         let id = Uuid::new_v4();
         let now = Utc::now().to_rfc3339();
-        sqlx::query(
-            "INSERT INTO campaign_chat (id, campaign_id, role, content, perspective, created_at) VALUES (?, ?, ?, ?, ?, ?)"
-        )
-        .bind(id.to_string())
-        .bind(campaign_id.to_string())
-        .bind(role)
-        .bind(content)
-        .bind(perspective)
-        .bind(&now)
-        .execute(self.pool)
+        let id_str = id.to_string();
+        let campaign_id_str = campaign_id.to_string();
+        let role = role.to_string();
+        let content = content.to_string();
+        let perspective = perspective.to_string();
+        let role2 = role.clone();
+        let content2 = content.clone();
+        let perspective2 = perspective.clone();
+        let now2 = now.clone();
+
+        with_db(&self.pool, move |conn| {
+            conn.execute(
+                "INSERT INTO campaign_chat (id, campaign_id, role, content, perspective, created_at) \
+                 VALUES (?, ?, ?, ?, ?, ?)",
+                duckdb::params![id_str, campaign_id_str, role, content, perspective, now],
+            )
+            .map_err(|e| GuideError::Internal(e.to_string()))?;
+            Ok(())
+        })
         .await?;
 
         Ok(ChatMessage {
             id,
             campaign_id,
-            role: role.to_string(),
-            content: content.to_string(),
-            perspective: perspective.to_string(),
-            created_at: now.parse().unwrap_or_else(|_| Utc::now()),
+            role: role2,
+            content: content2,
+            perspective: perspective2,
+            created_at: now2.parse().unwrap_or_else(|_| Utc::now()),
         })
     }
 
     pub async fn list(&self, campaign_id: Uuid, limit: i64) -> Result<Vec<ChatMessage>> {
-        let rows = sqlx::query(
-            "SELECT id, campaign_id, role, content, perspective, created_at \
-             FROM campaign_chat \
-             WHERE campaign_id = ? \
-             ORDER BY created_at DESC \
-             LIMIT ?",
-        )
-        .bind(campaign_id.to_string())
-        .bind(limit)
-        .fetch_all(self.pool)
+        let id_str = campaign_id.to_string();
+        let mut msgs: Vec<ChatMessage> = with_db(&self.pool, move |conn| {
+            query_all(
+                conn,
+                "SELECT id, campaign_id, role, content, perspective, created_at \
+                 FROM campaign_chat WHERE campaign_id = ? \
+                 ORDER BY created_at DESC LIMIT ?",
+                duckdb::params![id_str, limit],
+                row_to_msg,
+            )
+        })
         .await?;
-
-        let mut msgs: Vec<ChatMessage> = rows
-            .into_iter()
-            .map(row_to_msg)
-            .collect::<Result<_>>()?;
         msgs.reverse();
         Ok(msgs)
     }
 }
 
-fn row_to_msg(row: SqliteRow) -> Result<ChatMessage> {
-    let id_str: String = row.try_get("id")?;
-    let campaign_id_str: String = row.try_get("campaign_id")?;
-    let created_at_str: String = row.try_get("created_at")?;
+fn row_to_msg(row: &duckdb::Row) -> duckdb::Result<ChatMessage> {
+    let id_str: String = row.get("id")?;
+    let campaign_id_str: String = row.get("campaign_id")?;
+    let created_at_str: String = row.get("created_at")?;
     Ok(ChatMessage {
-        id: Uuid::parse_str(&id_str).map_err(|e| GuideError::Internal(e.to_string()))?,
+        id: Uuid::parse_str(&id_str)
+            .map_err(|e| duckdb::Error::FromSqlConversionFailure(0, duckdb::types::Type::Text, Box::new(e)))?,
         campaign_id: Uuid::parse_str(&campaign_id_str)
-            .map_err(|e| GuideError::Internal(e.to_string()))?,
-        role: row.try_get("role")?,
-        content: row.try_get("content")?,
-        perspective: row.try_get("perspective")?,
+            .map_err(|e| duckdb::Error::FromSqlConversionFailure(1, duckdb::types::Type::Text, Box::new(e)))?,
+        role: row.get("role")?,
+        content: row.get("content")?,
+        perspective: row.get("perspective")?,
         created_at: created_at_str.parse().unwrap_or_else(|_| Utc::now()),
     })
 }

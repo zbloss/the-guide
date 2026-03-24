@@ -14,7 +14,7 @@ use guide_db::{
         self, campaign_collection_name, ensure_collection, global_collection_name, LoreChunkInsert,
     },
     story::StoryRepository,
-    SqlitePool,
+    DuckDbPool,
 };
 use guide_llm::{EmbeddingRequest, LlmClient};
 use qdrant_client::Qdrant;
@@ -160,7 +160,7 @@ pub async fn ingest_campaign_document(
     llm: Arc<dyn LlmClient>,
     config: &AppConfig,
     qdrant: Option<&Qdrant>,
-    db: &SqlitePool,
+    db: &DuckDbPool,
 ) -> Result<usize> {
     let doc_repo = DocumentRepository::new(db);
     doc_repo
@@ -270,7 +270,7 @@ pub async fn ingest_global_document(
     llm: Arc<dyn LlmClient>,
     config: &AppConfig,
     qdrant: Option<&Qdrant>,
-    db: &SqlitePool,
+    db: &DuckDbPool,
 ) -> Result<usize> {
     let doc_repo = GlobalDocumentRepository::new(db);
     doc_repo
@@ -682,7 +682,7 @@ pub async fn extract_story(
     doc: &CampaignDocument,
     chunks: &[crate::chunker::DocumentChunk],
     llm: Arc<dyn LlmClient>,
-    db: &SqlitePool,
+    db: &DuckDbPool,
     config: &AppConfig,
 ) -> Result<()> {
     use guide_llm::{CompletionRequest, LlmTask, Message, MessageRole};

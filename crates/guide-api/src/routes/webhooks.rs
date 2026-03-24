@@ -6,7 +6,7 @@ use axum::{
     Json, Router,
 };
 use guide_core::models::{CampaignWebhook, CreateWebhookRequest};
-use guide_db::{SqlitePool, WebhookRepository};
+use guide_db::{DuckDbPool, WebhookRepository};
 use uuid::Uuid;
 
 use crate::state::AppState;
@@ -84,7 +84,7 @@ pub async fn delete_webhook(
 
 /// Fire webhooks for a campaign event in a background task (non-blocking).
 pub fn fire_webhooks(
-    pool: SqlitePool,
+    pool: DuckDbPool,
     campaign_id: Uuid,
     event: String,
     payload: serde_json::Value,

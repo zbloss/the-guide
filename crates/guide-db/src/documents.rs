@@ -1,6 +1,5 @@
 use chrono::{DateTime, Utc};
 use serde::Serialize;
-use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 use uuid::Uuid;
 
 use guide_core::{
@@ -8,7 +7,8 @@ use guide_core::{
     GuideError, Result,
 };
 
-/// A single page's OCR text stored in `document_page_ocr`.
+use crate::{query_all, query_one, with_db, DuckDbPool};
+
 #[derive(Serialize)]
 pub struct PageOcrRow {
     pub page_num: i64,
@@ -16,71 +16,83 @@ pub struct PageOcrRow {
     pub is_dm_only: bool,
 }
 
-pub struct DocumentRepository<'a> {
-    pool: &'a SqlitePool,
+pub struct DocumentRepository {
+    pool: DuckDbPool,
 }
 
-impl<'a> DocumentRepository<'a> {
-    pub fn new(pool: &'a SqlitePool) -> Self {
-        Self { pool }
+impl DocumentRepository {
+    pub fn new(pool: &DuckDbPool) -> Self {
+        Self { pool: pool.clone() }
     }
 
     pub async fn insert(&self, doc: &CampaignDocument) -> Result<CampaignDocument> {
-        let doc_kind_str = doc_kind_to_str(&doc.document_kind);
-        sqlx::query(
-            "INSERT INTO campaign_documents \
-             (id, campaign_id, filename, file_size_bytes, stored_path, page_count, \
-              document_kind, description, ingestion_status, ingestion_error, \
-              story_extraction_status, story_extraction_error, uploaded_at, ingested_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        )
-        .bind(doc.id.to_string())
-        .bind(doc.campaign_id.to_string())
-        .bind(&doc.filename)
-        .bind(doc.file_size_bytes)
-        .bind(&doc.stored_path)
-        .bind(doc.page_count)
-        .bind(doc_kind_str)
-        .bind(doc.description.as_deref())
-        .bind(ingestion_status_to_str(&doc.ingestion_status))
-        .bind(doc.ingestion_error.as_deref())
-        .bind(&doc.story_extraction_status)
-        .bind(doc.story_extraction_error.as_deref())
-        .bind(doc.uploaded_at.to_rfc3339())
-        .bind(doc.ingested_at.map(|t| t.to_rfc3339()))
-        .execute(self.pool)
+        let doc_kind_str = doc_kind_to_str(&doc.document_kind).to_string();
+        let status_str = ingestion_status_to_str(&doc.ingestion_status).to_string();
+        let id_str = doc.id.to_string();
+        let campaign_id_str = doc.campaign_id.to_string();
+        let filename = doc.filename.clone();
+        let file_size = doc.file_size_bytes;
+        let stored_path = doc.stored_path.clone();
+        let page_count = doc.page_count;
+        let description = doc.description.clone();
+        let ingestion_error = doc.ingestion_error.clone();
+        let story_status = doc.story_extraction_status.clone();
+        let story_error = doc.story_extraction_error.clone();
+        let uploaded_at = doc.uploaded_at.to_rfc3339();
+        let ingested_at = doc.ingested_at.map(|t| t.to_rfc3339());
+
+        with_db(&self.pool, move |conn| {
+            conn.execute(
+                "INSERT INTO campaign_documents \
+                 (id, campaign_id, filename, file_size_bytes, stored_path, page_count, \
+                  document_kind, description, ingestion_status, ingestion_error, \
+                  story_extraction_status, story_extraction_error, uploaded_at, ingested_at) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                duckdb::params![
+                    id_str, campaign_id_str, filename, file_size, stored_path, page_count,
+                    doc_kind_str, description, status_str, ingestion_error,
+                    story_status, story_error, uploaded_at, ingested_at
+                ],
+            )
+            .map_err(|e| GuideError::Internal(e.to_string()))?;
+            Ok(())
+        })
         .await?;
 
         Ok(doc.clone())
     }
 
     pub async fn get_by_id(&self, doc_id: Uuid) -> Result<CampaignDocument> {
-        let row = sqlx::query(
-            "SELECT id, campaign_id, filename, file_size_bytes, stored_path, page_count, \
-             document_kind, description, ingestion_status, ingestion_error, \
-             story_extraction_status, story_extraction_error, uploaded_at, ingested_at \
-             FROM campaign_documents WHERE id = ?",
-        )
-        .bind(doc_id.to_string())
-        .fetch_optional(self.pool)
-        .await?
-        .ok_or_else(|| GuideError::NotFound(format!("Document {doc_id}")))?;
-
-        row_to_doc(row)
+        let id_str = doc_id.to_string();
+        with_db(&self.pool, move |conn| {
+            query_one(
+                conn,
+                "SELECT id, campaign_id, filename, file_size_bytes, stored_path, page_count, \
+                 document_kind, description, ingestion_status, ingestion_error, \
+                 story_extraction_status, story_extraction_error, uploaded_at, ingested_at \
+                 FROM campaign_documents WHERE id = ?",
+                [&id_str],
+                row_to_doc,
+                format!("Document {doc_id}"),
+            )
+        })
+        .await
     }
 
     pub async fn list_by_campaign(&self, campaign_id: Uuid) -> Result<Vec<CampaignDocument>> {
-        let rows = sqlx::query(
-            "SELECT id, campaign_id, filename, file_size_bytes, stored_path, page_count, \
-             document_kind, description, ingestion_status, ingestion_error, \
-             story_extraction_status, story_extraction_error, uploaded_at, ingested_at \
-             FROM campaign_documents WHERE campaign_id = ? ORDER BY uploaded_at DESC",
-        )
-        .bind(campaign_id.to_string())
-        .fetch_all(self.pool)
-        .await?;
-
-        rows.into_iter().map(row_to_doc).collect()
+        let id_str = campaign_id.to_string();
+        with_db(&self.pool, move |conn| {
+            query_all(
+                conn,
+                "SELECT id, campaign_id, filename, file_size_bytes, stored_path, page_count, \
+                 document_kind, description, ingestion_status, ingestion_error, \
+                 story_extraction_status, story_extraction_error, uploaded_at, ingested_at \
+                 FROM campaign_documents WHERE campaign_id = ? ORDER BY uploaded_at DESC",
+                [&id_str],
+                row_to_doc,
+            )
+        })
+        .await
     }
 
     pub async fn update_status(
@@ -89,29 +101,34 @@ impl<'a> DocumentRepository<'a> {
         status: &IngestionStatus,
         error: Option<&str>,
     ) -> Result<()> {
-        sqlx::query(
-            "UPDATE campaign_documents SET ingestion_status = ?, ingestion_error = ? WHERE id = ?",
-        )
-        .bind(ingestion_status_to_str(status))
-        .bind(error)
-        .bind(doc_id.to_string())
-        .execute(self.pool)
-        .await?;
-        Ok(())
+        let status_str = ingestion_status_to_str(status).to_string();
+        let id_str = doc_id.to_string();
+        let error = error.map(|s| s.to_string());
+        with_db(&self.pool, move |conn| {
+            conn.execute(
+                "UPDATE campaign_documents SET ingestion_status = ?, ingestion_error = ? WHERE id = ?",
+                duckdb::params![status_str, error, id_str],
+            )
+            .map_err(|e| GuideError::Internal(e.to_string()))?;
+            Ok(())
+        })
+        .await
     }
 
     pub async fn update_ingested(&self, doc_id: Uuid, page_count: Option<i32>) -> Result<()> {
-        sqlx::query(
-            "UPDATE campaign_documents \
-             SET ingestion_status = 'completed', ingested_at = ?, page_count = ?, ingestion_error = NULL \
-             WHERE id = ?",
-        )
-        .bind(Utc::now().to_rfc3339())
-        .bind(page_count)
-        .bind(doc_id.to_string())
-        .execute(self.pool)
-        .await?;
-        Ok(())
+        let now = Utc::now().to_rfc3339();
+        let id_str = doc_id.to_string();
+        with_db(&self.pool, move |conn| {
+            conn.execute(
+                "UPDATE campaign_documents \
+                 SET ingestion_status = 'completed', ingested_at = ?, page_count = ?, ingestion_error = NULL \
+                 WHERE id = ?",
+                duckdb::params![now, page_count, id_str],
+            )
+            .map_err(|e| GuideError::Internal(e.to_string()))?;
+            Ok(())
+        })
+        .await
     }
 
     pub async fn update_story_extraction_status(
@@ -120,166 +137,185 @@ impl<'a> DocumentRepository<'a> {
         status: &str,
         error: Option<&str>,
     ) -> Result<()> {
-        sqlx::query(
-            "UPDATE campaign_documents \
-             SET story_extraction_status = ?, story_extraction_error = ? WHERE id = ?",
-        )
-        .bind(status)
-        .bind(error)
-        .bind(doc_id.to_string())
-        .execute(self.pool)
-        .await?;
-        Ok(())
+        let status = status.to_string();
+        let error = error.map(|s| s.to_string());
+        let id_str = doc_id.to_string();
+        with_db(&self.pool, move |conn| {
+            conn.execute(
+                "UPDATE campaign_documents \
+                 SET story_extraction_status = ?, story_extraction_error = ? WHERE id = ?",
+                duckdb::params![status, error, id_str],
+            )
+            .map_err(|e| GuideError::Internal(e.to_string()))?;
+            Ok(())
+        })
+        .await
     }
 
     pub async fn reset_stuck_processing(&self) -> Result<()> {
-        sqlx::query(
-            "UPDATE campaign_documents SET ingestion_status = 'failed', \
-             ingestion_error = 'Interrupted by server restart' \
-             WHERE ingestion_status = 'processing'",
-        )
-        .execute(self.pool)
-        .await?;
-        Ok(())
+        with_db(&self.pool, |conn| {
+            conn.execute(
+                "UPDATE campaign_documents SET ingestion_status = 'failed', \
+                 ingestion_error = 'Interrupted by server restart' \
+                 WHERE ingestion_status = 'processing'",
+                [],
+            )
+            .map_err(|e| GuideError::Internal(e.to_string()))?;
+            Ok(())
+        })
+        .await
     }
 
     pub async fn delete(&self, doc_id: Uuid) -> Result<()> {
-        let affected = sqlx::query("DELETE FROM campaign_documents WHERE id = ?")
-            .bind(doc_id.to_string())
-            .execute(self.pool)
-            .await?
-            .rows_affected();
-        if affected == 0 {
-            return Err(GuideError::NotFound(format!("Document {doc_id}")));
-        }
-        Ok(())
+        let id_str = doc_id.to_string();
+        with_db(&self.pool, move |conn| {
+            let n = conn
+                .execute("DELETE FROM campaign_documents WHERE id = ?", [&id_str])
+                .map_err(|e| GuideError::Internal(e.to_string()))?;
+            if n == 0 {
+                return Err(GuideError::NotFound(format!("Document {doc_id}")));
+            }
+            Ok(())
+        })
+        .await
     }
 
-    /// Persist raw OCR text for each page of a campaign document.
-    ///
-    /// Uses INSERT OR REPLACE so re-ingestion overwrites stale rows.
-    /// `pages` is a slice of `(page_num, raw_text, is_dm_only)` tuples.
-    pub async fn save_page_ocr(
-        &self,
-        doc_id: Uuid,
-        pages: &[(u32, String, bool)],
-    ) -> Result<()> {
-        for (page_num, raw_text, is_dm_only) in pages {
-            let row_id = Uuid::new_v4().to_string();
-            sqlx::query(
-                "INSERT OR REPLACE INTO document_page_ocr \
-                 (id, document_id, page_num, raw_text, is_dm_only) \
-                 VALUES (?, ?, ?, ?, ?)",
-            )
-            .bind(&row_id)
-            .bind(doc_id.to_string())
-            .bind(*page_num as i64)
-            .bind(raw_text)
-            .bind(if *is_dm_only { 1i64 } else { 0i64 })
-            .execute(self.pool)
-            .await?;
-        }
-        Ok(())
+    pub async fn save_page_ocr(&self, doc_id: Uuid, pages: &[(u32, String, bool)]) -> Result<()> {
+        let doc_id_str = doc_id.to_string();
+        let pages: Vec<(String, i64, String, i64)> = pages
+            .iter()
+            .map(|(page_num, raw_text, is_dm_only)| {
+                (
+                    Uuid::new_v4().to_string(),
+                    *page_num as i64,
+                    raw_text.clone(),
+                    if *is_dm_only { 1i64 } else { 0i64 },
+                )
+            })
+            .collect();
+
+        with_db(&self.pool, move |conn| {
+            for (row_id, page_num, raw_text, is_dm_only) in &pages {
+                conn.execute(
+                    "INSERT OR REPLACE INTO document_page_ocr \
+                     (id, document_id, page_num, raw_text, is_dm_only) \
+                     VALUES (?, ?, ?, ?, ?)",
+                    duckdb::params![row_id, doc_id_str, page_num, raw_text, is_dm_only],
+                )
+                .map_err(|e| GuideError::Internal(e.to_string()))?;
+            }
+            Ok(())
+        })
+        .await
     }
 
-    /// Return all OCR page rows for a document, ordered by page number.
     pub async fn list_page_ocr(&self, doc_id: Uuid) -> Result<Vec<PageOcrRow>> {
-        let rows = sqlx::query(
-            "SELECT page_num, raw_text, is_dm_only \
-             FROM document_page_ocr \
-             WHERE document_id = ? \
-             ORDER BY page_num ASC",
-        )
-        .bind(doc_id.to_string())
-        .fetch_all(self.pool)
-        .await?;
-
-        let mut result = Vec::with_capacity(rows.len());
-        for row in rows {
-            let page_num: i64 = row.try_get("page_num")?;
-            let raw_text: String = row.try_get("raw_text")?;
-            let is_dm_only_int: i64 = row.try_get("is_dm_only")?;
-            result.push(PageOcrRow {
-                page_num,
-                raw_text,
-                is_dm_only: is_dm_only_int != 0,
-            });
-        }
-        Ok(result)
+        let id_str = doc_id.to_string();
+        with_db(&self.pool, move |conn| {
+            query_all(
+                conn,
+                "SELECT page_num, raw_text, is_dm_only \
+                 FROM document_page_ocr WHERE document_id = ? ORDER BY page_num ASC",
+                [&id_str],
+                |row| {
+                    let page_num: i64 = row.get("page_num")?;
+                    let raw_text: String = row.get("raw_text")?;
+                    let is_dm_only_int: i64 = row.get("is_dm_only")?;
+                    Ok(PageOcrRow {
+                        page_num,
+                        raw_text,
+                        is_dm_only: is_dm_only_int != 0,
+                    })
+                },
+            )
+        })
+        .await
     }
 }
 
-pub struct GlobalDocumentRepository<'a> {
-    pool: &'a SqlitePool,
+pub struct GlobalDocumentRepository {
+    pool: DuckDbPool,
 }
 
-impl<'a> GlobalDocumentRepository<'a> {
-    pub fn new(pool: &'a SqlitePool) -> Self {
-        Self { pool }
+impl GlobalDocumentRepository {
+    pub fn new(pool: &DuckDbPool) -> Self {
+        Self { pool: pool.clone() }
     }
 
     pub async fn insert(&self, doc: &GlobalDocument) -> Result<GlobalDocument> {
-        let doc_kind_str = doc_kind_to_str(&doc.document_kind);
-        sqlx::query(
-            "INSERT INTO global_documents \
-             (id, title, filename, file_size_bytes, stored_path, page_count, \
-              document_kind, ingestion_status, ingestion_error, uploaded_at, ingested_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        )
-        .bind(doc.id.to_string())
-        .bind(&doc.title)
-        .bind(&doc.filename)
-        .bind(doc.file_size_bytes)
-        .bind(&doc.stored_path)
-        .bind(doc.page_count)
-        .bind(doc_kind_str)
-        .bind(ingestion_status_to_str(&doc.ingestion_status))
-        .bind(doc.ingestion_error.as_deref())
-        .bind(doc.uploaded_at.to_rfc3339())
-        .bind(doc.ingested_at.map(|t| t.to_rfc3339()))
-        .execute(self.pool)
+        let doc_kind_str = doc_kind_to_str(&doc.document_kind).to_string();
+        let id_str = doc.id.to_string();
+        let title = doc.title.clone();
+        let filename = doc.filename.clone();
+        let file_size = doc.file_size_bytes;
+        let stored_path = doc.stored_path.clone();
+        let page_count = doc.page_count;
+        let status_str = ingestion_status_to_str(&doc.ingestion_status).to_string();
+        let ingestion_error = doc.ingestion_error.clone();
+        let uploaded_at = doc.uploaded_at.to_rfc3339();
+        let ingested_at = doc.ingested_at.map(|t| t.to_rfc3339());
+
+        with_db(&self.pool, move |conn| {
+            conn.execute(
+                "INSERT INTO global_documents \
+                 (id, title, filename, file_size_bytes, stored_path, page_count, \
+                  document_kind, ingestion_status, ingestion_error, uploaded_at, ingested_at) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                duckdb::params![
+                    id_str, title, filename, file_size, stored_path, page_count,
+                    doc_kind_str, status_str, ingestion_error, uploaded_at, ingested_at
+                ],
+            )
+            .map_err(|e| GuideError::Internal(e.to_string()))?;
+            Ok(())
+        })
         .await?;
         Ok(doc.clone())
     }
 
     pub async fn get_by_id(&self, doc_id: Uuid) -> Result<GlobalDocument> {
-        let row = sqlx::query(
-            "SELECT id, title, filename, file_size_bytes, stored_path, page_count, \
-             document_kind, ingestion_status, ingestion_error, uploaded_at, ingested_at \
-             FROM global_documents WHERE id = ?",
-        )
-        .bind(doc_id.to_string())
-        .fetch_optional(self.pool)
-        .await?
-        .ok_or_else(|| GuideError::NotFound(format!("Global document {doc_id}")))?;
-
-        row_to_global_doc(row)
+        let id_str = doc_id.to_string();
+        with_db(&self.pool, move |conn| {
+            query_one(
+                conn,
+                "SELECT id, title, filename, file_size_bytes, stored_path, page_count, \
+                 document_kind, ingestion_status, ingestion_error, uploaded_at, ingested_at \
+                 FROM global_documents WHERE id = ?",
+                [&id_str],
+                row_to_global_doc,
+                format!("Global document {doc_id}"),
+            )
+        })
+        .await
     }
 
     pub async fn list_all(&self) -> Result<Vec<GlobalDocument>> {
-        let rows = sqlx::query(
-            "SELECT id, title, filename, file_size_bytes, stored_path, page_count, \
-             document_kind, ingestion_status, ingestion_error, uploaded_at, ingested_at \
-             FROM global_documents ORDER BY uploaded_at DESC",
-        )
-        .fetch_all(self.pool)
-        .await?;
-
-        rows.into_iter().map(row_to_global_doc).collect()
+        with_db(&self.pool, |conn| {
+            query_all(
+                conn,
+                "SELECT id, title, filename, file_size_bytes, stored_path, page_count, \
+                 document_kind, ingestion_status, ingestion_error, uploaded_at, ingested_at \
+                 FROM global_documents ORDER BY uploaded_at DESC",
+                [],
+                row_to_global_doc,
+            )
+        })
+        .await
     }
 
     pub async fn list_by_kind(&self, kind: &DocumentKind) -> Result<Vec<GlobalDocument>> {
-        let kind_str = doc_kind_to_str(kind);
-        let rows = sqlx::query(
-            "SELECT id, title, filename, file_size_bytes, stored_path, page_count, \
-             document_kind, ingestion_status, ingestion_error, uploaded_at, ingested_at \
-             FROM global_documents WHERE document_kind = ? ORDER BY uploaded_at DESC",
-        )
-        .bind(kind_str)
-        .fetch_all(self.pool)
-        .await?;
-
-        rows.into_iter().map(row_to_global_doc).collect()
+        let kind_str = doc_kind_to_str(kind).to_string();
+        with_db(&self.pool, move |conn| {
+            query_all(
+                conn,
+                "SELECT id, title, filename, file_size_bytes, stored_path, page_count, \
+                 document_kind, ingestion_status, ingestion_error, uploaded_at, ingested_at \
+                 FROM global_documents WHERE document_kind = ? ORDER BY uploaded_at DESC",
+                [&kind_str],
+                row_to_global_doc,
+            )
+        })
+        .await
     }
 
     pub async fn update_status(
@@ -288,84 +324,90 @@ impl<'a> GlobalDocumentRepository<'a> {
         status: &IngestionStatus,
         error: Option<&str>,
     ) -> Result<()> {
-        sqlx::query(
-            "UPDATE global_documents SET ingestion_status = ?, ingestion_error = ? WHERE id = ?",
-        )
-        .bind(ingestion_status_to_str(status))
-        .bind(error)
-        .bind(doc_id.to_string())
-        .execute(self.pool)
-        .await?;
-        Ok(())
+        let status_str = ingestion_status_to_str(status).to_string();
+        let id_str = doc_id.to_string();
+        let error = error.map(|s| s.to_string());
+        with_db(&self.pool, move |conn| {
+            conn.execute(
+                "UPDATE global_documents SET ingestion_status = ?, ingestion_error = ? WHERE id = ?",
+                duckdb::params![status_str, error, id_str],
+            )
+            .map_err(|e| GuideError::Internal(e.to_string()))?;
+            Ok(())
+        })
+        .await
     }
 
     pub async fn update_ingested(&self, doc_id: Uuid, page_count: Option<i32>) -> Result<()> {
-        sqlx::query(
-            "UPDATE global_documents \
-             SET ingestion_status = 'completed', ingested_at = ?, page_count = ?, ingestion_error = NULL \
-             WHERE id = ?",
-        )
-        .bind(Utc::now().to_rfc3339())
-        .bind(page_count)
-        .bind(doc_id.to_string())
-        .execute(self.pool)
-        .await?;
-        Ok(())
+        let now = Utc::now().to_rfc3339();
+        let id_str = doc_id.to_string();
+        with_db(&self.pool, move |conn| {
+            conn.execute(
+                "UPDATE global_documents \
+                 SET ingestion_status = 'completed', ingested_at = ?, page_count = ?, ingestion_error = NULL \
+                 WHERE id = ?",
+                duckdb::params![now, page_count, id_str],
+            )
+            .map_err(|e| GuideError::Internal(e.to_string()))?;
+            Ok(())
+        })
+        .await
     }
 
     pub async fn reset_stuck_processing(&self) -> Result<()> {
-        sqlx::query(
-            "UPDATE global_documents SET ingestion_status = 'failed', \
-             ingestion_error = 'Interrupted by server restart' \
-             WHERE ingestion_status = 'processing'",
-        )
-        .execute(self.pool)
-        .await?;
-        Ok(())
+        with_db(&self.pool, |conn| {
+            conn.execute(
+                "UPDATE global_documents SET ingestion_status = 'failed', \
+                 ingestion_error = 'Interrupted by server restart' \
+                 WHERE ingestion_status = 'processing'",
+                [],
+            )
+            .map_err(|e| GuideError::Internal(e.to_string()))?;
+            Ok(())
+        })
+        .await
     }
 
     pub async fn delete(&self, doc_id: Uuid) -> Result<()> {
-        let affected = sqlx::query("DELETE FROM global_documents WHERE id = ?")
-            .bind(doc_id.to_string())
-            .execute(self.pool)
-            .await?
-            .rows_affected();
-        if affected == 0 {
-            return Err(GuideError::NotFound(format!("Global document {doc_id}")));
-        }
-        Ok(())
+        let id_str = doc_id.to_string();
+        with_db(&self.pool, move |conn| {
+            let n = conn
+                .execute("DELETE FROM global_documents WHERE id = ?", [&id_str])
+                .map_err(|e| GuideError::Internal(e.to_string()))?;
+            if n == 0 {
+                return Err(GuideError::NotFound(format!("Global document {doc_id}")));
+            }
+            Ok(())
+        })
+        .await
     }
 }
 
-fn row_to_doc(row: SqliteRow) -> Result<CampaignDocument> {
-    let id_str: String = row.try_get("id")?;
-    let campaign_id_str: String = row.try_get("campaign_id")?;
-    let status_str: String = row.try_get("ingestion_status")?;
-    let doc_kind_str: Option<String> = row.try_get("document_kind").ok();
-    let uploaded_at_str: String = row.try_get("uploaded_at")?;
-    let ingested_at_str: Option<String> = row.try_get("ingested_at")?;
+fn row_to_doc(row: &duckdb::Row) -> duckdb::Result<CampaignDocument> {
+    let id_str: String = row.get("id")?;
+    let campaign_id_str: String = row.get("campaign_id")?;
+    let status_str: String = row.get("ingestion_status")?;
+    let doc_kind_str: Option<String> = row.get("document_kind").ok();
+    let uploaded_at_str: String = row.get("uploaded_at")?;
+    let ingested_at_str: Option<String> = row.get("ingested_at")?;
     let story_extraction_status: String = row
-        .try_get("story_extraction_status")
-        .ok()
-        .unwrap_or_else(|| "pending".to_string());
-    let story_extraction_error: Option<String> =
-        row.try_get("story_extraction_error").ok().flatten();
+        .get::<_, String>("story_extraction_status")
+        .unwrap_or_else(|_| "pending".to_string());
+    let story_extraction_error: Option<String> = row.get("story_extraction_error").unwrap_or(None);
 
     Ok(CampaignDocument {
-        id: Uuid::parse_str(&id_str).map_err(|e| GuideError::Internal(e.to_string()))?,
+        id: Uuid::parse_str(&id_str)
+            .map_err(|e| duckdb::Error::FromSqlConversionFailure(0, duckdb::types::Type::Text, Box::new(e)))?,
         campaign_id: Uuid::parse_str(&campaign_id_str)
-            .map_err(|e| GuideError::Internal(e.to_string()))?,
-        filename: row.try_get("filename")?,
-        file_size_bytes: row.try_get("file_size_bytes")?,
-        stored_path: row.try_get("stored_path")?,
-        page_count: row.try_get("page_count")?,
-        document_kind: doc_kind_str
-            .as_deref()
-            .map(parse_doc_kind)
-            .unwrap_or_default(),
-        description: row.try_get("description").ok().flatten(),
+            .map_err(|e| duckdb::Error::FromSqlConversionFailure(1, duckdb::types::Type::Text, Box::new(e)))?,
+        filename: row.get("filename")?,
+        file_size_bytes: row.get("file_size_bytes")?,
+        stored_path: row.get("stored_path")?,
+        page_count: row.get("page_count")?,
+        document_kind: doc_kind_str.as_deref().map(parse_doc_kind).unwrap_or_default(),
+        description: row.get("description").unwrap_or(None),
         ingestion_status: str_to_ingestion_status(&status_str),
-        ingestion_error: row.try_get("ingestion_error")?,
+        ingestion_error: row.get("ingestion_error")?,
         story_extraction_status,
         story_extraction_error,
         uploaded_at: parse_dt(&uploaded_at_str),
@@ -373,26 +415,27 @@ fn row_to_doc(row: SqliteRow) -> Result<CampaignDocument> {
     })
 }
 
-fn row_to_global_doc(row: SqliteRow) -> Result<GlobalDocument> {
-    let id_str: String = row.try_get("id")?;
-    let status_str: String = row.try_get("ingestion_status")?;
-    let uploaded_at_str: String = row.try_get("uploaded_at")?;
-    let ingested_at_str: Option<String> = row.try_get("ingested_at")?;
-    let doc_kind_str: Option<String> = row.try_get("document_kind").ok();
+fn row_to_global_doc(row: &duckdb::Row) -> duckdb::Result<GlobalDocument> {
+    let id_str: String = row.get("id")?;
+    let status_str: String = row.get("ingestion_status")?;
+    let uploaded_at_str: String = row.get("uploaded_at")?;
+    let ingested_at_str: Option<String> = row.get("ingested_at")?;
+    let doc_kind_str: Option<String> = row.get("document_kind").ok();
 
     Ok(GlobalDocument {
-        id: Uuid::parse_str(&id_str).map_err(|e| GuideError::Internal(e.to_string()))?,
-        title: row.try_get("title")?,
-        filename: row.try_get("filename")?,
-        file_size_bytes: row.try_get("file_size_bytes")?,
-        stored_path: row.try_get("stored_path")?,
-        page_count: row.try_get("page_count")?,
+        id: Uuid::parse_str(&id_str)
+            .map_err(|e| duckdb::Error::FromSqlConversionFailure(0, duckdb::types::Type::Text, Box::new(e)))?,
+        title: row.get("title")?,
+        filename: row.get("filename")?,
+        file_size_bytes: row.get("file_size_bytes")?,
+        stored_path: row.get("stored_path")?,
+        page_count: row.get("page_count")?,
         document_kind: doc_kind_str
             .as_deref()
             .map(parse_doc_kind)
             .unwrap_or(DocumentKind::DmGuide),
         ingestion_status: str_to_ingestion_status(&status_str),
-        ingestion_error: row.try_get("ingestion_error")?,
+        ingestion_error: row.get("ingestion_error")?,
         uploaded_at: parse_dt(&uploaded_at_str),
         ingested_at: ingested_at_str.as_deref().map(parse_dt),
     })
@@ -420,7 +463,6 @@ pub fn parse_doc_kind(s: &str) -> DocumentKind {
         "monster_manual" => DocumentKind::MonsterManual,
         "srd" => DocumentKind::Srd,
         "supplemental" => DocumentKind::Supplemental,
-        // Legacy mapping
         "rulebook" => DocumentKind::DmGuide,
         _ => DocumentKind::Campaign,
     }

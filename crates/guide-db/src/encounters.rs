@@ -1,228 +1,262 @@
 use chrono::Utc;
-use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 use uuid::Uuid;
 
 use guide_core::{
-    models::{
-        ActionBudget, CombatParticipant, CreateEncounterRequest, Encounter,
-        EncounterStatus,
-    },
+    models::{ActionBudget, CombatParticipant, CreateEncounterRequest, Encounter, EncounterStatus},
     GuideError, Result,
 };
 
-pub struct EncounterRepository<'a> {
-    pool: &'a SqlitePool,
+use crate::{query_all, query_one, with_db, DuckDbPool};
+
+pub struct EncounterRepository {
+    pool: DuckDbPool,
 }
 
-impl<'a> EncounterRepository<'a> {
-    pub fn new(pool: &'a SqlitePool) -> Self {
-        Self { pool }
+impl EncounterRepository {
+    pub fn new(pool: &DuckDbPool) -> Self {
+        Self { pool: pool.clone() }
     }
 
     pub async fn create(&self, campaign_id: Uuid, req: CreateEncounterRequest) -> Result<Encounter> {
         let id = Uuid::new_v4();
-        let now = Utc::now();
+        let now = Utc::now().to_rfc3339();
+        let id_str = id.to_string();
+        let campaign_id_str = campaign_id.to_string();
+        let session_id_str = req.session_id.map(|s| s.to_string());
+        let name = req.name.clone();
+        let desc = req.description.clone();
 
-        sqlx::query(
-            "INSERT INTO encounters \
-             (id, session_id, campaign_id, name, description, status, round, \
-              current_turn_index, created_at, updated_at) \
-             VALUES (?, ?, ?, ?, ?, 'pending', 0, 0, ?, ?)",
-        )
-        .bind(id.to_string())
-        .bind(req.session_id.map(|sid| sid.to_string()))
-        .bind(campaign_id.to_string())
-        .bind(&req.name)
-        .bind(&req.description)
-        .bind(now.to_rfc3339())
-        .bind(now.to_rfc3339())
-        .execute(self.pool)
+        with_db(&self.pool, move |conn| {
+            conn.execute(
+                "INSERT INTO encounters \
+                 (id, session_id, campaign_id, name, description, status, round, \
+                  current_turn_index, created_at, updated_at) \
+                 VALUES (?, ?, ?, ?, ?, 'pending', 0, 0, ?, ?)",
+                duckdb::params![
+                    id_str, session_id_str, campaign_id_str, name, desc, now, now
+                ],
+            )
+            .map_err(|e| GuideError::Internal(e.to_string()))?;
+            Ok(())
+        })
         .await?;
 
         self.get_by_id(id).await
     }
 
     pub async fn get_by_id(&self, id: Uuid) -> Result<Encounter> {
-        let row = sqlx::query(
-            "SELECT id, session_id, campaign_id, name, description, status, round, \
-             current_turn_index, created_at, updated_at \
-             FROM encounters WHERE id = ?",
-        )
-        .bind(id.to_string())
-        .fetch_optional(self.pool)
-        .await?
-        .ok_or_else(|| GuideError::NotFound(format!("Encounter {id}")))?;
-
-        let mut encounter = row_to_encounter(row)?;
+        let id_str = id.to_string();
+        let mut encounter = with_db(&self.pool, move |conn| {
+            query_one(
+                conn,
+                "SELECT id, session_id, campaign_id, name, description, status, round, \
+                 current_turn_index, created_at, updated_at \
+                 FROM encounters WHERE id = ?",
+                [&id_str],
+                row_to_encounter,
+                format!("Encounter {id}"),
+            )
+        })
+        .await?;
         encounter.participants = self.list_participants(id).await?;
         Ok(encounter)
     }
 
     pub async fn list_by_campaign(&self, campaign_id: Uuid) -> Result<Vec<Encounter>> {
-        let rows = sqlx::query(
-            "SELECT id, session_id, campaign_id, name, description, status, round, \
-             current_turn_index, created_at, updated_at \
-             FROM encounters WHERE campaign_id = ? ORDER BY created_at ASC",
-        )
-        .bind(campaign_id.to_string())
-        .fetch_all(self.pool)
+        let id_str = campaign_id.to_string();
+        let encounters = with_db(&self.pool, move |conn| {
+            query_all(
+                conn,
+                "SELECT id, session_id, campaign_id, name, description, status, round, \
+                 current_turn_index, created_at, updated_at \
+                 FROM encounters WHERE campaign_id = ? ORDER BY created_at ASC",
+                [&id_str],
+                row_to_encounter,
+            )
+        })
         .await?;
 
-        let mut encounters = Vec::new();
-        for row in rows {
-            let mut enc = row_to_encounter(row)?;
+        let mut result = Vec::with_capacity(encounters.len());
+        for mut enc in encounters {
             enc.participants = self.list_participants(enc.id).await?;
-            encounters.push(enc);
+            result.push(enc);
         }
-        Ok(encounters)
+        Ok(result)
     }
 
     pub async fn list_by_session(&self, session_id: Uuid) -> Result<Vec<Encounter>> {
-        let rows = sqlx::query(
-            "SELECT id, session_id, campaign_id, name, description, status, round, \
-             current_turn_index, created_at, updated_at \
-             FROM encounters WHERE session_id = ? ORDER BY created_at ASC",
-        )
-        .bind(session_id.to_string())
-        .fetch_all(self.pool)
+        let id_str = session_id.to_string();
+        let encounters = with_db(&self.pool, move |conn| {
+            query_all(
+                conn,
+                "SELECT id, session_id, campaign_id, name, description, status, round, \
+                 current_turn_index, created_at, updated_at \
+                 FROM encounters WHERE session_id = ? ORDER BY created_at ASC",
+                [&id_str],
+                row_to_encounter,
+            )
+        })
         .await?;
 
-        let mut encounters = Vec::new();
-        for row in rows {
-            let mut enc = row_to_encounter(row)?;
+        let mut result = Vec::with_capacity(encounters.len());
+        for mut enc in encounters {
             enc.participants = self.list_participants(enc.id).await?;
-            encounters.push(enc);
+            result.push(enc);
         }
-        Ok(encounters)
+        Ok(result)
     }
 
-    /// Atomically persist encounter status/round/turn and all participant states.
     pub async fn save_state(&self, encounter: &Encounter) -> Result<()> {
-        let mut tx = self.pool.begin().await?;
+        let status_str = status_to_str(&encounter.status).to_string();
+        let enc_id_str = encounter.id.to_string();
+        let round = encounter.round;
+        let turn_idx = encounter.current_turn_index;
+        let now = Utc::now().to_rfc3339();
 
-        let status_str = status_to_str(&encounter.status);
-        sqlx::query(
-            "UPDATE encounters SET status = ?, round = ?, current_turn_index = ?, \
-             updated_at = ? WHERE id = ?",
-        )
-        .bind(status_str)
-        .bind(encounter.round)
-        .bind(encounter.current_turn_index)
-        .bind(Utc::now().to_rfc3339())
-        .bind(encounter.id.to_string())
-        .execute(&mut *tx)
-        .await?;
-
+        #[allow(clippy::type_complexity)]
+        let mut participant_data: Vec<(String, i32, i32, i32, i32, String, String, i32, i32)> =
+            Vec::with_capacity(encounter.participants.len());
         for p in &encounter.participants {
             let conditions_json = serde_json::to_string(&p.conditions)?;
             let budget_json = serde_json::to_string(&p.action_budget)?;
-
-            sqlx::query(
-                "UPDATE combat_participants SET initiative_roll = ?, initiative_modifier = ?, \
-                 initiative_total = ?, current_hp = ?, conditions = ?, action_budget = ?, \
-                 has_taken_turn = ?, is_defeated = ? WHERE id = ?",
-            )
-            .bind(p.initiative_roll)
-            .bind(p.initiative_modifier)
-            .bind(p.initiative_total)
-            .bind(p.current_hp)
-            .bind(&conditions_json)
-            .bind(&budget_json)
-            .bind(p.has_taken_turn as i32)
-            .bind(p.is_defeated as i32)
-            .bind(p.id.to_string())
-            .execute(&mut *tx)
-            .await?;
+            participant_data.push((
+                p.id.to_string(),
+                p.initiative_roll,
+                p.initiative_modifier,
+                p.initiative_total,
+                p.current_hp,
+                conditions_json,
+                budget_json,
+                p.has_taken_turn as i32,
+                p.is_defeated as i32,
+            ));
         }
 
-        tx.commit().await?;
-        Ok(())
+        let pool = self.pool.clone();
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            let mut conn = pool.get().map_err(|e| GuideError::Internal(e.to_string()))?;
+            let tx = conn.transaction().map_err(|e| GuideError::Internal(e.to_string()))?;
+
+            tx.execute(
+                "UPDATE encounters SET status = ?, round = ?, current_turn_index = ?, \
+                 updated_at = ? WHERE id = ?",
+                duckdb::params![status_str, round, turn_idx, now, enc_id_str],
+            )
+            .map_err(|e| GuideError::Internal(e.to_string()))?;
+
+            for (pid, roll, modi, total, hp, cond_json, budget_json, taken, defeated) in
+                &participant_data
+            {
+                tx.execute(
+                    "UPDATE combat_participants SET initiative_roll = ?, initiative_modifier = ?, \
+                     initiative_total = ?, current_hp = ?, conditions = ?, action_budget = ?, \
+                     has_taken_turn = ?, is_defeated = ? WHERE id = ?",
+                    duckdb::params![roll, modi, total, hp, cond_json, budget_json, taken, defeated, pid],
+                )
+                .map_err(|e| GuideError::Internal(e.to_string()))?;
+            }
+
+            tx.commit().map_err(|e| GuideError::Internal(e.to_string()))
+        })
+        .await
+        .map_err(|e| GuideError::Internal(e.to_string()))?
     }
 
     pub async fn add_participant(&self, participant: &CombatParticipant) -> Result<()> {
         let conditions_json = serde_json::to_string(&participant.conditions)?;
         let budget_json = serde_json::to_string(&participant.action_budget)?;
+        let id_str = participant.id.to_string();
+        let enc_id_str = participant.encounter_id.to_string();
+        let char_id_str = participant.character_id.to_string();
+        let name = participant.name.clone();
+        let roll = participant.initiative_roll;
+        let modi = participant.initiative_modifier;
+        let total = participant.initiative_total;
+        let hp = participant.current_hp;
+        let max_hp = participant.max_hp;
+        let ac = participant.armor_class;
+        let taken = participant.has_taken_turn as i32;
+        let defeated = participant.is_defeated as i32;
 
-        sqlx::query(
-            "INSERT INTO combat_participants \
-             (id, encounter_id, character_id, name, initiative_roll, initiative_modifier, \
-              initiative_total, current_hp, max_hp, armor_class, conditions, action_budget, \
-              has_taken_turn, is_defeated) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        )
-        .bind(participant.id.to_string())
-        .bind(participant.encounter_id.to_string())
-        .bind(participant.character_id.to_string())
-        .bind(&participant.name)
-        .bind(participant.initiative_roll)
-        .bind(participant.initiative_modifier)
-        .bind(participant.initiative_total)
-        .bind(participant.current_hp)
-        .bind(participant.max_hp)
-        .bind(participant.armor_class)
-        .bind(&conditions_json)
-        .bind(&budget_json)
-        .bind(participant.has_taken_turn as i32)
-        .bind(participant.is_defeated as i32)
-        .execute(self.pool)
-        .await?;
-
-        Ok(())
+        with_db(&self.pool, move |conn| {
+            conn.execute(
+                "INSERT INTO combat_participants \
+                 (id, encounter_id, character_id, name, initiative_roll, initiative_modifier, \
+                  initiative_total, current_hp, max_hp, armor_class, conditions, action_budget, \
+                  has_taken_turn, is_defeated) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                duckdb::params![
+                    id_str, enc_id_str, char_id_str, name, roll, modi, total,
+                    hp, max_hp, ac, conditions_json, budget_json, taken, defeated
+                ],
+            )
+            .map_err(|e| GuideError::Internal(e.to_string()))?;
+            Ok(())
+        })
+        .await
     }
 
     pub async fn update_participant_name(&self, participant_id: Uuid, name: &str) -> Result<()> {
-        sqlx::query("UPDATE combat_participants SET name = ? WHERE id = ?")
-            .bind(name)
-            .bind(participant_id.to_string())
-            .execute(self.pool)
-            .await?;
-        Ok(())
+        let id_str = participant_id.to_string();
+        let name = name.to_string();
+        with_db(&self.pool, move |conn| {
+            conn.execute(
+                "UPDATE combat_participants SET name = ? WHERE id = ?",
+                duckdb::params![name, id_str],
+            )
+            .map_err(|e| GuideError::Internal(e.to_string()))?;
+            Ok(())
+        })
+        .await
     }
 
     pub async fn delete(&self, id: Uuid) -> Result<()> {
-        let affected = sqlx::query("DELETE FROM encounters WHERE id = ?")
-            .bind(id.to_string())
-            .execute(self.pool)
-            .await?
-            .rows_affected();
-
-        if affected == 0 {
-            return Err(GuideError::NotFound(format!("Encounter {id}")));
-        }
-        Ok(())
+        let id_str = id.to_string();
+        with_db(&self.pool, move |conn| {
+            let n = conn
+                .execute("DELETE FROM encounters WHERE id = ?", [&id_str])
+                .map_err(|e| GuideError::Internal(e.to_string()))?;
+            if n == 0 {
+                return Err(GuideError::NotFound(format!("Encounter {id}")));
+            }
+            Ok(())
+        })
+        .await
     }
 
     pub async fn record_turn_snapshot(&self, encounter: &Encounter, turn_number: i32) -> Result<()> {
-        let id = Uuid::new_v4();
+        let id = Uuid::new_v4().to_string();
         let snapshot_json = serde_json::to_string(encounter)?;
+        let enc_id_str = encounter.id.to_string();
+        let round = encounter.round;
+        let now = Utc::now().to_rfc3339();
 
-        sqlx::query(
-            "INSERT INTO encounter_turns \
-             (id, encounter_id, turn_number, round_number, snapshot_json, recorded_at) \
-             VALUES (?, ?, ?, ?, ?, ?) \
-             ON CONFLICT(encounter_id, turn_number) DO UPDATE SET \
-             snapshot_json = excluded.snapshot_json, recorded_at = excluded.recorded_at",
-        )
-        .bind(id.to_string())
-        .bind(encounter.id.to_string())
-        .bind(turn_number)
-        .bind(encounter.round)
-        .bind(&snapshot_json)
-        .bind(Utc::now().to_rfc3339())
-        .execute(self.pool)
-        .await?;
-
-        Ok(())
+        with_db(&self.pool, move |conn| {
+            conn.execute(
+                "INSERT INTO encounter_turns \
+                 (id, encounter_id, turn_number, round_number, snapshot_json, recorded_at) \
+                 VALUES (?, ?, ?, ?, ?, ?) \
+                 ON CONFLICT(encounter_id, turn_number) DO UPDATE SET \
+                 snapshot_json = excluded.snapshot_json, recorded_at = excluded.recorded_at",
+                duckdb::params![id, enc_id_str, turn_number, round, snapshot_json, now],
+            )
+            .map_err(|e| GuideError::Internal(e.to_string()))?;
+            Ok(())
+        })
+        .await
     }
 
     pub async fn count_turn_snapshots(&self, encounter_id: Uuid) -> Result<i64> {
-        let row = sqlx::query(
-            "SELECT COUNT(*) as cnt FROM encounter_turns WHERE encounter_id = ?",
-        )
-        .bind(encounter_id.to_string())
-        .fetch_one(self.pool)
-        .await?;
-        Ok(row.try_get::<i64, _>("cnt")?)
+        let id_str = encounter_id.to_string();
+        with_db(&self.pool, move |conn| {
+            conn.query_row(
+                "SELECT COUNT(*) AS cnt FROM encounter_turns WHERE encounter_id = ?",
+                [&id_str],
+                |r| r.get("cnt"),
+            )
+            .map_err(|e| GuideError::Internal(e.to_string()))
+        })
+        .await
     }
 
     pub async fn list_turn_snapshots(
@@ -230,104 +264,111 @@ impl<'a> EncounterRepository<'a> {
         encounter_id: Uuid,
     ) -> Result<Vec<guide_core::models::EncounterTurnSnapshot>> {
         use guide_core::models::EncounterTurnSnapshot;
-
-        let rows = sqlx::query(
-            "SELECT id, encounter_id, turn_number, round_number, snapshot_json, recorded_at \
-             FROM encounter_turns WHERE encounter_id = ? ORDER BY turn_number ASC",
-        )
-        .bind(encounter_id.to_string())
-        .fetch_all(self.pool)
-        .await?;
-
-        rows.into_iter()
-            .map(|row| {
-                let id_str: String = row.try_get("id")?;
-                let enc_id_str: String = row.try_get("encounter_id")?;
-                let snapshot_json: String = row.try_get("snapshot_json")?;
-                let recorded_at_str: String = row.try_get("recorded_at")?;
-                let snapshot: Encounter = serde_json::from_str(&snapshot_json)
-                    .map_err(|e| GuideError::Internal(e.to_string()))?;
-                Ok(EncounterTurnSnapshot {
-                    id: Uuid::parse_str(&id_str)
-                        .map_err(|e| GuideError::Internal(e.to_string()))?,
-                    encounter_id: Uuid::parse_str(&enc_id_str)
-                        .map_err(|e| GuideError::Internal(e.to_string()))?,
-                    turn_number: row.try_get("turn_number")?,
-                    round_number: row.try_get("round_number")?,
-                    snapshot,
-                    recorded_at: recorded_at_str.parse().unwrap_or_else(|_| Utc::now()),
-                })
-            })
-            .collect()
+        let id_str = encounter_id.to_string();
+        with_db(&self.pool, move |conn| {
+            query_all(
+                conn,
+                "SELECT id, encounter_id, turn_number, round_number, snapshot_json, recorded_at \
+                 FROM encounter_turns WHERE encounter_id = ? ORDER BY turn_number ASC",
+                [&id_str],
+                |row| {
+                    let id_str: String = row.get("id")?;
+                    let enc_id_str: String = row.get("encounter_id")?;
+                    let snapshot_json: String = row.get("snapshot_json")?;
+                    let recorded_at_str: String = row.get("recorded_at")?;
+                    let snapshot: Encounter = serde_json::from_str(&snapshot_json)
+                        .map_err(|e| duckdb::Error::FromSqlConversionFailure(0, duckdb::types::Type::Text, Box::new(e)))?;
+                    Ok(EncounterTurnSnapshot {
+                        id: Uuid::parse_str(&id_str)
+                            .map_err(|e| duckdb::Error::FromSqlConversionFailure(0, duckdb::types::Type::Text, Box::new(e)))?,
+                        encounter_id: Uuid::parse_str(&enc_id_str)
+                            .map_err(|e| duckdb::Error::FromSqlConversionFailure(1, duckdb::types::Type::Text, Box::new(e)))?,
+                        turn_number: row.get("turn_number")?,
+                        round_number: row.get("round_number")?,
+                        snapshot,
+                        recorded_at: recorded_at_str.parse().unwrap_or_else(|_| Utc::now()),
+                    })
+                },
+            )
+        })
+        .await
     }
 
     async fn list_participants(&self, encounter_id: Uuid) -> Result<Vec<CombatParticipant>> {
-        let rows = sqlx::query(
-            "SELECT id, encounter_id, character_id, name, initiative_roll, initiative_modifier, \
-             initiative_total, current_hp, max_hp, armor_class, conditions, action_budget, \
-             has_taken_turn, is_defeated \
-             FROM combat_participants WHERE encounter_id = ? \
-             ORDER BY initiative_total DESC, initiative_modifier DESC",
-        )
-        .bind(encounter_id.to_string())
-        .fetch_all(self.pool)
-        .await?;
-
-        rows.into_iter().map(row_to_participant).collect()
+        let id_str = encounter_id.to_string();
+        with_db(&self.pool, move |conn| {
+            query_all(
+                conn,
+                "SELECT id, encounter_id, character_id, name, initiative_roll, initiative_modifier, \
+                 initiative_total, current_hp, max_hp, armor_class, conditions, action_budget, \
+                 has_taken_turn, is_defeated \
+                 FROM combat_participants WHERE encounter_id = ? \
+                 ORDER BY initiative_total DESC, initiative_modifier DESC",
+                [&id_str],
+                row_to_participant,
+            )
+        })
+        .await
     }
 }
 
-fn row_to_encounter(row: SqliteRow) -> Result<Encounter> {
-    let id_str: String = row.try_get("id")?;
-    let session_id_str: Option<String> = row.try_get("session_id")?;
-    let campaign_id_str: String = row.try_get("campaign_id")?;
-    let status_str: String = row.try_get("status")?;
-    let created_at_str: String = row.try_get("created_at")?;
-    let updated_at_str: String = row.try_get("updated_at")?;
+fn row_to_encounter(row: &duckdb::Row) -> duckdb::Result<Encounter> {
+    let id_str: String = row.get("id")?;
+    let session_id_str: Option<String> = row.get("session_id")?;
+    let campaign_id_str: String = row.get("campaign_id")?;
+    let status_str: String = row.get("status")?;
+    let created_at_str: String = row.get("created_at")?;
+    let updated_at_str: String = row.get("updated_at")?;
 
     let session_id = session_id_str
         .as_deref()
-        .map(|s| Uuid::parse_str(s).map_err(|e| GuideError::Internal(e.to_string())))
+        .map(|s| {
+            Uuid::parse_str(s).map_err(|e| {
+                duckdb::Error::FromSqlConversionFailure(1, duckdb::types::Type::Text, Box::new(e))
+            })
+        })
         .transpose()?;
 
     Ok(Encounter {
-        id: Uuid::parse_str(&id_str).map_err(|e| GuideError::Internal(e.to_string()))?,
+        id: Uuid::parse_str(&id_str)
+            .map_err(|e| duckdb::Error::FromSqlConversionFailure(0, duckdb::types::Type::Text, Box::new(e)))?,
         session_id,
         campaign_id: Uuid::parse_str(&campaign_id_str)
-            .map_err(|e| GuideError::Internal(e.to_string()))?,
-        name: row.try_get("name")?,
-        description: row.try_get("description")?,
+            .map_err(|e| duckdb::Error::FromSqlConversionFailure(2, duckdb::types::Type::Text, Box::new(e)))?,
+        name: row.get("name")?,
+        description: row.get("description")?,
         status: parse_status(&status_str),
-        round: row.try_get("round")?,
-        current_turn_index: row.try_get("current_turn_index")?,
+        round: row.get("round")?,
+        current_turn_index: row.get("current_turn_index")?,
         participants: Vec::new(),
         created_at: created_at_str.parse().unwrap_or_else(|_| Utc::now()),
         updated_at: updated_at_str.parse().unwrap_or_else(|_| Utc::now()),
     })
 }
 
-fn row_to_participant(row: SqliteRow) -> Result<CombatParticipant> {
-    let id_str: String = row.try_get("id")?;
-    let enc_id_str: String = row.try_get("encounter_id")?;
-    let char_id_str: String = row.try_get("character_id")?;
-    let conditions_json: String = row.try_get("conditions")?;
-    let budget_json: String = row.try_get("action_budget")?;
-    let has_taken_turn_int: i32 = row.try_get("has_taken_turn")?;
-    let is_defeated_int: i32 = row.try_get("is_defeated")?;
+fn row_to_participant(row: &duckdb::Row) -> duckdb::Result<CombatParticipant> {
+    let id_str: String = row.get("id")?;
+    let enc_id_str: String = row.get("encounter_id")?;
+    let char_id_str: String = row.get("character_id")?;
+    let conditions_json: String = row.get("conditions")?;
+    let budget_json: String = row.get("action_budget")?;
+    let has_taken_turn_int: i32 = row.get("has_taken_turn")?;
+    let is_defeated_int: i32 = row.get("is_defeated")?;
 
     Ok(CombatParticipant {
-        id: Uuid::parse_str(&id_str).map_err(|e| GuideError::Internal(e.to_string()))?,
+        id: Uuid::parse_str(&id_str)
+            .map_err(|e| duckdb::Error::FromSqlConversionFailure(0, duckdb::types::Type::Text, Box::new(e)))?,
         encounter_id: Uuid::parse_str(&enc_id_str)
-            .map_err(|e| GuideError::Internal(e.to_string()))?,
+            .map_err(|e| duckdb::Error::FromSqlConversionFailure(1, duckdb::types::Type::Text, Box::new(e)))?,
         character_id: Uuid::parse_str(&char_id_str)
-            .map_err(|e| GuideError::Internal(e.to_string()))?,
-        name: row.try_get("name")?,
-        initiative_roll: row.try_get("initiative_roll")?,
-        initiative_modifier: row.try_get("initiative_modifier")?,
-        initiative_total: row.try_get("initiative_total")?,
-        current_hp: row.try_get("current_hp")?,
-        max_hp: row.try_get("max_hp")?,
-        armor_class: row.try_get("armor_class")?,
+            .map_err(|e| duckdb::Error::FromSqlConversionFailure(2, duckdb::types::Type::Text, Box::new(e)))?,
+        name: row.get("name")?,
+        initiative_roll: row.get("initiative_roll")?,
+        initiative_modifier: row.get("initiative_modifier")?,
+        initiative_total: row.get("initiative_total")?,
+        current_hp: row.get("current_hp")?,
+        max_hp: row.get("max_hp")?,
+        armor_class: row.get("armor_class")?,
         conditions: serde_json::from_str(&conditions_json).unwrap_or_default(),
         action_budget: serde_json::from_str(&budget_json)
             .unwrap_or_else(|_| ActionBudget::new(30)),

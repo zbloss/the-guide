@@ -87,7 +87,7 @@ impl LlmClient for MockLlm {
 // ── Test helpers ─────────────────────────────────────────────────────────────
 
 async fn make_app() -> axum::Router {
-    let pool = guide_db::init_sqlite(":memory:").await.unwrap();
+    let pool = guide_db::init_duckdb(":memory:").await.unwrap();
     let config = Arc::new(AppConfig {
         host: "127.0.0.1".into(),
         port: 8000,

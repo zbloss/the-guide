@@ -15,7 +15,7 @@ pub enum GuideError {
     Qdrant(String),
 
     #[error("Database error: {0}")]
-    Database(#[from] sqlx::Error),
+    Database(String),
 
     #[error("PDF processing error: {0}")]
     PdfProcessing(String),

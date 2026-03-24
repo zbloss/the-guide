@@ -6,14 +6,19 @@ use guide_db::{
     campaigns::CampaignRepository,
     characters::CharacterRepository,
     sessions::{SessionEventRepository, SessionRepository},
+    DuckDbPool,
 };
 use guide_core::models::CreateCampaignRequest;
-use sqlx::SqlitePool;
+
+async fn test_pool() -> DuckDbPool {
+    guide_db::init_duckdb(":memory:").await.expect("init_duckdb failed")
+}
 
 // ── Campaign tests ──────────────────────────────────────────────────────────
 
-#[sqlx::test(migrations = "./migrations")]
-async fn test_campaign_create_and_get(pool: SqlitePool) -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_campaign_create_and_get() -> Result<(), Box<dyn std::error::Error>> {
+    let pool = test_pool().await;
     let repo = CampaignRepository::new(&pool);
     let campaign = repo
         .create(CreateCampaignRequest {
@@ -34,8 +39,9 @@ async fn test_campaign_create_and_get(pool: SqlitePool) -> Result<(), Box<dyn st
     Ok(())
 }
 
-#[sqlx::test(migrations = "./migrations")]
-async fn test_campaign_list(pool: SqlitePool) -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_campaign_list() -> Result<(), Box<dyn std::error::Error>> {
+    let pool = test_pool().await;
     let repo = CampaignRepository::new(&pool);
     repo.create(CreateCampaignRequest { name: "Campaign A".into(), description: None, game_system: None }).await?;
     repo.create(CreateCampaignRequest { name: "Campaign B".into(), description: None, game_system: None }).await?;
@@ -45,10 +51,11 @@ async fn test_campaign_list(pool: SqlitePool) -> Result<(), Box<dyn std::error::
     Ok(())
 }
 
-#[sqlx::test(migrations = "./migrations")]
-async fn test_campaign_update(pool: SqlitePool) -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_campaign_update() -> Result<(), Box<dyn std::error::Error>> {
     use guide_core::models::UpdateCampaignRequest;
 
+    let pool = test_pool().await;
     let repo = CampaignRepository::new(&pool);
     let campaign = repo
         .create(CreateCampaignRequest { name: "Original".into(), description: None, game_system: None })
@@ -71,8 +78,9 @@ async fn test_campaign_update(pool: SqlitePool) -> Result<(), Box<dyn std::error
     Ok(())
 }
 
-#[sqlx::test(migrations = "./migrations")]
-async fn test_campaign_delete(pool: SqlitePool) -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_campaign_delete() -> Result<(), Box<dyn std::error::Error>> {
+    let pool = test_pool().await;
     let repo = CampaignRepository::new(&pool);
     let campaign = repo
         .create(CreateCampaignRequest { name: "To Delete".into(), description: None, game_system: None })
@@ -85,8 +93,9 @@ async fn test_campaign_delete(pool: SqlitePool) -> Result<(), Box<dyn std::error
     Ok(())
 }
 
-#[sqlx::test(migrations = "./migrations")]
-async fn test_campaign_delete_not_found(pool: SqlitePool) -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_campaign_delete_not_found() -> Result<(), Box<dyn std::error::Error>> {
+    let pool = test_pool().await;
     let repo = CampaignRepository::new(&pool);
     let result = repo.delete(uuid::Uuid::new_v4()).await;
     assert!(result.is_err());
@@ -95,7 +104,7 @@ async fn test_campaign_delete_not_found(pool: SqlitePool) -> Result<(), Box<dyn 
 
 // ── Character tests ─────────────────────────────────────────────────────────
 
-async fn create_test_campaign(pool: &SqlitePool) -> uuid::Uuid {
+async fn create_test_campaign(pool: &DuckDbPool) -> uuid::Uuid {
     CampaignRepository::new(pool)
         .create(CreateCampaignRequest { name: "Test Campaign".into(), description: None, game_system: None })
         .await
@@ -103,8 +112,9 @@ async fn create_test_campaign(pool: &SqlitePool) -> uuid::Uuid {
         .id
 }
 
-#[sqlx::test(migrations = "./migrations")]
-async fn test_character_create_and_get(pool: SqlitePool) -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_character_create_and_get() -> Result<(), Box<dyn std::error::Error>> {
+    let pool = test_pool().await;
     let campaign_id = create_test_campaign(&pool).await;
     let repo = CharacterRepository::new(&pool);
 
@@ -138,8 +148,9 @@ async fn test_character_create_and_get(pool: SqlitePool) -> Result<(), Box<dyn s
     Ok(())
 }
 
-#[sqlx::test(migrations = "./migrations")]
-async fn test_character_list_by_campaign(pool: SqlitePool) -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_character_list_by_campaign() -> Result<(), Box<dyn std::error::Error>> {
+    let pool = test_pool().await;
     let campaign_id = create_test_campaign(&pool).await;
     let repo = CharacterRepository::new(&pool);
 
@@ -170,10 +181,9 @@ async fn test_character_list_by_campaign(pool: SqlitePool) -> Result<(), Box<dyn
     Ok(())
 }
 
-#[sqlx::test(migrations = "./migrations")]
-async fn test_character_isolation_between_campaigns(
-    pool: SqlitePool,
-) -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_character_isolation_between_campaigns() -> Result<(), Box<dyn std::error::Error>> {
+    let pool = test_pool().await;
     let campaign_a = create_test_campaign(&pool).await;
     let campaign_b = create_test_campaign(&pool).await;
     let repo = CharacterRepository::new(&pool);
@@ -201,8 +211,9 @@ async fn test_character_isolation_between_campaigns(
     Ok(())
 }
 
-#[sqlx::test(migrations = "./migrations")]
-async fn test_character_delete(pool: SqlitePool) -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_character_delete() -> Result<(), Box<dyn std::error::Error>> {
+    let pool = test_pool().await;
     let campaign_id = create_test_campaign(&pool).await;
     let repo = CharacterRepository::new(&pool);
 
@@ -234,10 +245,9 @@ async fn test_character_delete(pool: SqlitePool) -> Result<(), Box<dyn std::erro
 
 // ── Session tests ───────────────────────────────────────────────────────────
 
-#[sqlx::test(migrations = "./migrations")]
-async fn test_session_create_and_numbering(
-    pool: SqlitePool,
-) -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_session_create_and_numbering() -> Result<(), Box<dyn std::error::Error>> {
+    let pool = test_pool().await;
     let campaign_id = create_test_campaign(&pool).await;
     let repo = SessionRepository::new(&pool);
 
@@ -254,8 +264,9 @@ async fn test_session_create_and_numbering(
     Ok(())
 }
 
-#[sqlx::test(migrations = "./migrations")]
-async fn test_session_start_and_end(pool: SqlitePool) -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_session_start_and_end() -> Result<(), Box<dyn std::error::Error>> {
+    let pool = test_pool().await;
     let campaign_id = create_test_campaign(&pool).await;
     let repo = SessionRepository::new(&pool);
 
@@ -274,10 +285,9 @@ async fn test_session_start_and_end(pool: SqlitePool) -> Result<(), Box<dyn std:
     Ok(())
 }
 
-#[sqlx::test(migrations = "./migrations")]
-async fn test_session_event_create_and_list(
-    pool: SqlitePool,
-) -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_session_event_create_and_list() -> Result<(), Box<dyn std::error::Error>> {
+    let pool = test_pool().await;
     let campaign_id = create_test_campaign(&pool).await;
     let session_repo = SessionRepository::new(&pool);
     let session = session_repo

@@ -1,5 +1,4 @@
 use chrono::Utc;
-use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 use std::str::FromStr;
 use uuid::Uuid;
 
@@ -8,17 +7,17 @@ use guide_core::{
     GuideError, Result,
 };
 
-pub struct DmPrepRepository<'a> {
-    pool: &'a SqlitePool,
+use crate::{query_all, query_optional, with_db, DuckDbPool};
+
+pub struct DmPrepRepository {
+    pool: DuckDbPool,
 }
 
-impl<'a> DmPrepRepository<'a> {
-    pub fn new(pool: &'a SqlitePool) -> Self {
-        Self { pool }
+impl DmPrepRepository {
+    pub fn new(pool: &DuckDbPool) -> Self {
+        Self { pool: pool.clone() }
     }
 
-    /// Upsert a prep result, replacing any existing entry with the same
-    /// (campaign_id, prep_type, character_id) key.
     pub async fn upsert(
         &self,
         campaign_id: Uuid,
@@ -27,46 +26,53 @@ impl<'a> DmPrepRepository<'a> {
         character_id: Option<Uuid>,
     ) -> Result<DmPrepResult> {
         let campaign_id_str = campaign_id.to_string();
-        let prep_type_str = prep_type.as_str();
+        let prep_type_str = prep_type.as_str().to_string();
         let character_id_str = character_id.map(|id| id.to_string());
 
-        // Delete existing row with same (campaign_id, prep_type, character_id)
-        if let Some(char_id) = &character_id_str {
-            sqlx::query(
-                "DELETE FROM dm_prep_results \
-                 WHERE campaign_id = ? AND prep_type = ? AND character_id = ?",
-            )
-            .bind(&campaign_id_str)
-            .bind(prep_type_str)
-            .bind(char_id)
-            .execute(self.pool)
-            .await?;
-        } else {
-            sqlx::query(
-                "DELETE FROM dm_prep_results \
-                 WHERE campaign_id = ? AND prep_type = ? AND character_id IS NULL",
-            )
-            .bind(&campaign_id_str)
-            .bind(prep_type_str)
-            .execute(self.pool)
+        // Delete existing
+        {
+            let campaign_id_str2 = campaign_id_str.clone();
+            let prep_type_str2 = prep_type_str.clone();
+            let char_id2 = character_id_str.clone();
+            with_db(&self.pool, move |conn| {
+                if let Some(char_id) = &char_id2 {
+                    conn.execute(
+                        "DELETE FROM dm_prep_results \
+                         WHERE campaign_id = ? AND prep_type = ? AND character_id = ?",
+                        duckdb::params![campaign_id_str2, prep_type_str2, char_id],
+                    )
+                } else {
+                    conn.execute(
+                        "DELETE FROM dm_prep_results \
+                         WHERE campaign_id = ? AND prep_type = ? AND character_id IS NULL",
+                        duckdb::params![campaign_id_str2, prep_type_str2],
+                    )
+                }
+                .map_err(|e| GuideError::Internal(e.to_string()))?;
+                Ok(())
+            })
             .await?;
         }
 
         let id = Uuid::new_v4();
         let now = Utc::now().to_rfc3339();
+        let id_str = id.to_string();
+        let campaign_id_str2 = campaign_id_str.clone();
+        let prep_type_str2 = prep_type_str.clone();
+        let content2 = content.clone();
+        let char_id2 = character_id_str.clone();
+        let now2 = now.clone();
 
-        sqlx::query(
-            "INSERT INTO dm_prep_results \
-             (id, campaign_id, prep_type, content, character_id, generated_at) \
-             VALUES (?, ?, ?, ?, ?, ?)",
-        )
-        .bind(id.to_string())
-        .bind(&campaign_id_str)
-        .bind(prep_type_str)
-        .bind(&content)
-        .bind(&character_id_str)
-        .bind(&now)
-        .execute(self.pool)
+        with_db(&self.pool, move |conn| {
+            conn.execute(
+                "INSERT INTO dm_prep_results \
+                 (id, campaign_id, prep_type, content, character_id, generated_at) \
+                 VALUES (?, ?, ?, ?, ?, ?)",
+                duckdb::params![id_str, campaign_id_str2, prep_type_str2, content2, char_id2, now2],
+            )
+            .map_err(|e| GuideError::Internal(e.to_string()))?;
+            Ok(())
+        })
         .await?;
 
         Ok(DmPrepResult {
@@ -79,7 +85,6 @@ impl<'a> DmPrepRepository<'a> {
         })
     }
 
-    /// Retrieve a cached prep result, or `None` if not yet generated.
     pub async fn get(
         &self,
         campaign_id: Uuid,
@@ -87,69 +92,75 @@ impl<'a> DmPrepRepository<'a> {
         character_id: Option<Uuid>,
     ) -> Result<Option<DmPrepResult>> {
         let campaign_id_str = campaign_id.to_string();
-        let prep_type_str = prep_type.as_str();
+        let prep_type_str = prep_type.as_str().to_string();
         let character_id_str = character_id.map(|id| id.to_string());
 
-        let row = if let Some(char_id) = &character_id_str {
-            sqlx::query(
-                "SELECT id, campaign_id, prep_type, content, character_id, generated_at \
-                 FROM dm_prep_results \
-                 WHERE campaign_id = ? AND prep_type = ? AND character_id = ?",
-            )
-            .bind(&campaign_id_str)
-            .bind(prep_type_str)
-            .bind(char_id)
-            .fetch_optional(self.pool)
-            .await?
-        } else {
-            sqlx::query(
-                "SELECT id, campaign_id, prep_type, content, character_id, generated_at \
-                 FROM dm_prep_results \
-                 WHERE campaign_id = ? AND prep_type = ? AND character_id IS NULL",
-            )
-            .bind(&campaign_id_str)
-            .bind(prep_type_str)
-            .fetch_optional(self.pool)
-            .await?
-        };
-
-        row.map(row_to_prep_result).transpose()
+        with_db(&self.pool, move |conn| {
+            if let Some(char_id) = &character_id_str {
+                query_optional(
+                    conn,
+                    "SELECT id, campaign_id, prep_type, content, character_id, generated_at \
+                     FROM dm_prep_results \
+                     WHERE campaign_id = ? AND prep_type = ? AND character_id = ?",
+                    duckdb::params![campaign_id_str, prep_type_str, char_id],
+                    row_to_prep_result,
+                )
+            } else {
+                query_optional(
+                    conn,
+                    "SELECT id, campaign_id, prep_type, content, character_id, generated_at \
+                     FROM dm_prep_results \
+                     WHERE campaign_id = ? AND prep_type = ? AND character_id IS NULL",
+                    duckdb::params![campaign_id_str, prep_type_str],
+                    row_to_prep_result,
+                )
+            }
+        })
+        .await
     }
 
-    /// List all prep results for a campaign, newest first.
     pub async fn list_by_campaign(&self, campaign_id: Uuid) -> Result<Vec<DmPrepResult>> {
-        let rows = sqlx::query(
-            "SELECT id, campaign_id, prep_type, content, character_id, generated_at \
-             FROM dm_prep_results \
-             WHERE campaign_id = ? \
-             ORDER BY generated_at DESC",
-        )
-        .bind(campaign_id.to_string())
-        .fetch_all(self.pool)
-        .await?;
-
-        rows.into_iter().map(row_to_prep_result).collect()
+        let id_str = campaign_id.to_string();
+        with_db(&self.pool, move |conn| {
+            query_all(
+                conn,
+                "SELECT id, campaign_id, prep_type, content, character_id, generated_at \
+                 FROM dm_prep_results WHERE campaign_id = ? ORDER BY generated_at DESC",
+                [&id_str],
+                row_to_prep_result,
+            )
+        })
+        .await
     }
 }
 
-fn row_to_prep_result(row: SqliteRow) -> Result<DmPrepResult> {
-    let id_str: String = row.try_get("id")?;
-    let campaign_id_str: String = row.try_get("campaign_id")?;
-    let prep_type_str: String = row.try_get("prep_type")?;
-    let character_id_str: Option<String> = row.try_get("character_id")?;
-    let generated_at_str: String = row.try_get("generated_at")?;
+fn row_to_prep_result(row: &duckdb::Row) -> duckdb::Result<DmPrepResult> {
+    let id_str: String = row.get("id")?;
+    let campaign_id_str: String = row.get("campaign_id")?;
+    let prep_type_str: String = row.get("prep_type")?;
+    let character_id_str: Option<String> = row.get("character_id")?;
+    let generated_at_str: String = row.get("generated_at")?;
 
     let character_id = character_id_str
         .as_deref()
-        .map(|s| Uuid::parse_str(s).map_err(|e| GuideError::Internal(e.to_string())))
+        .map(|s| {
+            Uuid::parse_str(s).map_err(|e| {
+                duckdb::Error::FromSqlConversionFailure(0, duckdb::types::Type::Text, Box::new(e))
+            })
+        })
         .transpose()?;
 
+    let prep_type = PrepType::from_str(&prep_type_str).map_err(|e| {
+        duckdb::Error::FromSqlConversionFailure(0, duckdb::types::Type::Text, Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))
+    })?;
+
     Ok(DmPrepResult {
-        id: Uuid::parse_str(&id_str).map_err(|e| GuideError::Internal(e.to_string()))?,
+        id: Uuid::parse_str(&id_str)
+            .map_err(|e| duckdb::Error::FromSqlConversionFailure(0, duckdb::types::Type::Text, Box::new(e)))?,
         campaign_id: Uuid::parse_str(&campaign_id_str)
-            .map_err(|e| GuideError::Internal(e.to_string()))?,
-        prep_type: PrepType::from_str(&prep_type_str).map_err(GuideError::Internal)?,
-        content: row.try_get("content")?,
+            .map_err(|e| duckdb::Error::FromSqlConversionFailure(1, duckdb::types::Type::Text, Box::new(e)))?,
+        prep_type,
+        content: row.get("content")?,
         character_id,
         generated_at: generated_at_str.parse().unwrap_or_else(|_| Utc::now()),
     })

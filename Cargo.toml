@@ -29,7 +29,8 @@ utoipa-swagger-ui = { version = "9", features = ["axum"] }
 async-openai = "0.27"
 
 # Database
-sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio", "uuid", "chrono", "migrate", "macros"] }
+duckdb = { version = "1.1", features = ["bundled", "r2d2"] }
+r2d2 = "0.8"
 qdrant-client = "1"
 
 # Serialization

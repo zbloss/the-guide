@@ -1,5 +1,4 @@
 use chrono::{DateTime, Utc};
-use sqlx::{Row, SqlitePool};
 use uuid::Uuid;
 
 use guide_core::{
@@ -12,13 +11,15 @@ use guide_core::{
     GuideError, Result,
 };
 
-pub struct StoryRepository<'a> {
-    pool: &'a SqlitePool,
+use crate::{query_all, query_one, with_db, DuckDbPool};
+
+pub struct StoryRepository {
+    pool: DuckDbPool,
 }
 
-impl<'a> StoryRepository<'a> {
-    pub fn new(pool: &'a SqlitePool) -> Self {
-        Self { pool }
+impl StoryRepository {
+    pub fn new(pool: &DuckDbPool) -> Self {
+        Self { pool: pool.clone() }
     }
 
     // ─── Story Arcs ────────────────────────────────────────────────────────────
@@ -31,62 +32,73 @@ impl<'a> StoryRepository<'a> {
     ) -> Result<StoryArc> {
         let id = Uuid::new_v4();
         let now = Utc::now().to_rfc3339();
-        sqlx::query(
-            "INSERT INTO story_arcs \
-             (id, campaign_id, source_doc_id, title, description, arc_order, status, dm_notes, created_at, updated_at) \
-             VALUES (?, ?, ?, ?, ?, ?, 'open', NULL, ?, ?)",
-        )
-        .bind(id.to_string())
-        .bind(campaign_id.to_string())
-        .bind(source_doc_id.to_string())
-        .bind(&input.title)
-        .bind(&input.description)
-        .bind(input.arc_order)
-        .bind(&now)
-        .bind(&now)
-        .execute(self.pool)
+        let id_str = id.to_string();
+        let campaign_id_str = campaign_id.to_string();
+        let source_doc_id_str = source_doc_id.to_string();
+        let title = input.title.clone();
+        let description = input.description.clone();
+        let arc_order = input.arc_order;
+
+        with_db(&self.pool, move |conn| {
+            conn.execute(
+                "INSERT INTO story_arcs \
+                 (id, campaign_id, source_doc_id, title, description, arc_order, status, dm_notes, created_at, updated_at) \
+                 VALUES (?, ?, ?, ?, ?, ?, 'open', NULL, ?, ?)",
+                duckdb::params![id_str, campaign_id_str, source_doc_id_str, title, description, arc_order, now, now],
+            )
+            .map_err(|e| GuideError::Internal(e.to_string()))?;
+            Ok(())
+        })
         .await?;
 
         self.get_arc(id).await
     }
 
     pub async fn list_arcs(&self, campaign_id: Uuid) -> Result<Vec<StoryArc>> {
-        let rows = sqlx::query(
-            "SELECT id, campaign_id, source_doc_id, title, description, arc_order, status, \
-             dm_notes, created_at, updated_at \
-             FROM story_arcs WHERE campaign_id = ? ORDER BY arc_order ASC",
-        )
-        .bind(campaign_id.to_string())
-        .fetch_all(self.pool)
-        .await?;
-
-        rows.into_iter().map(row_to_arc).collect()
+        let id_str = campaign_id.to_string();
+        with_db(&self.pool, move |conn| {
+            query_all(
+                conn,
+                "SELECT id, campaign_id, source_doc_id, title, description, arc_order, status, \
+                 dm_notes, created_at, updated_at \
+                 FROM story_arcs WHERE campaign_id = ? ORDER BY arc_order ASC",
+                [&id_str],
+                row_to_arc,
+            )
+        })
+        .await
     }
 
     pub async fn get_arc(&self, arc_id: Uuid) -> Result<StoryArc> {
-        let row = sqlx::query(
-            "SELECT id, campaign_id, source_doc_id, title, description, arc_order, status, \
-             dm_notes, created_at, updated_at \
-             FROM story_arcs WHERE id = ?",
-        )
-        .bind(arc_id.to_string())
-        .fetch_optional(self.pool)
-        .await?
-        .ok_or_else(|| GuideError::NotFound(format!("StoryArc {arc_id}")))?;
-
-        row_to_arc(row)
+        let id_str = arc_id.to_string();
+        with_db(&self.pool, move |conn| {
+            query_one(
+                conn,
+                "SELECT id, campaign_id, source_doc_id, title, description, arc_order, status, \
+                 dm_notes, created_at, updated_at \
+                 FROM story_arcs WHERE id = ?",
+                [&id_str],
+                row_to_arc,
+                format!("StoryArc {arc_id}"),
+            )
+        })
+        .await
     }
 
     pub async fn update_arc_notes(&self, arc_id: Uuid, notes: Option<&str>) -> Result<()> {
-        sqlx::query(
-            "UPDATE story_arcs SET dm_notes = ?, updated_at = ? WHERE id = ?",
-        )
-        .bind(notes)
-        .bind(Utc::now().to_rfc3339())
-        .bind(arc_id.to_string())
-        .execute(self.pool)
-        .await?;
-        Ok(())
+        let now = Utc::now().to_rfc3339();
+        let id_str = arc_id.to_string();
+        let notes_owned = notes.map(|s| s.to_string());
+
+        with_db(&self.pool, move |conn| {
+            conn.execute(
+                "UPDATE story_arcs SET dm_notes = ?, updated_at = ? WHERE id = ?",
+                duckdb::params![notes_owned, now, id_str],
+            )
+            .map_err(|e| GuideError::Internal(e.to_string()))?;
+            Ok(())
+        })
+        .await
     }
 
     pub async fn update_arc_status(&self, arc_id: Uuid, status: ArcStatus) -> Result<()> {
@@ -95,15 +107,18 @@ impl<'a> StoryRepository<'a> {
             ArcStatus::Resolved => "resolved",
             ArcStatus::Abandoned => "abandoned",
         };
-        sqlx::query(
-            "UPDATE story_arcs SET status = ?, updated_at = ? WHERE id = ?",
-        )
-        .bind(status_str)
-        .bind(Utc::now().to_rfc3339())
-        .bind(arc_id.to_string())
-        .execute(self.pool)
-        .await?;
-        Ok(())
+        let now = Utc::now().to_rfc3339();
+        let id_str = arc_id.to_string();
+
+        with_db(&self.pool, move |conn| {
+            conn.execute(
+                "UPDATE story_arcs SET status = ?, updated_at = ? WHERE id = ?",
+                duckdb::params![status_str, now, id_str],
+            )
+            .map_err(|e| GuideError::Internal(e.to_string()))?;
+            Ok(())
+        })
+        .await
     }
 
     // ─── Story Events ──────────────────────────────────────────────────────────
@@ -141,86 +156,100 @@ impl<'a> StoryRepository<'a> {
         let involved_json = serde_json::to_string(&input.involved_characters)
             .map_err(|e| GuideError::Internal(e.to_string()))?;
 
-        sqlx::query(
-            "INSERT INTO story_events \
-             (id, campaign_id, arc_id, source_doc_id, title, description, event_type, \
-              significance, location, involved_characters, event_order, is_dm_only, \
-              dm_notes, created_at, updated_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)",
-        )
-        .bind(id.to_string())
-        .bind(campaign_id.to_string())
-        .bind(arc_id.map(|a| a.to_string()))
-        .bind(source_doc_id.to_string())
-        .bind(&input.title)
-        .bind(&input.description)
-        .bind(event_type_str)
-        .bind(significance_str)
-        .bind(input.location.as_deref())
-        .bind(&involved_json)
-        .bind(input.event_order)
-        .bind(input.is_dm_only as i32)
-        .bind(&now)
-        .bind(&now)
-        .execute(self.pool)
+        let id_str = id.to_string();
+        let campaign_id_str = campaign_id.to_string();
+        let arc_id_str = arc_id.map(|a| a.to_string());
+        let source_doc_id_str = source_doc_id.to_string();
+        let title = input.title.clone();
+        let description = input.description.clone();
+        let location = input.location.clone();
+        let event_order = input.event_order;
+        let is_dm_only = input.is_dm_only as i32;
+
+        with_db(&self.pool, move |conn| {
+            conn.execute(
+                "INSERT INTO story_events \
+                 (id, campaign_id, arc_id, source_doc_id, title, description, event_type, \
+                  significance, location, involved_characters, event_order, is_dm_only, \
+                  dm_notes, created_at, updated_at) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)",
+                duckdb::params![
+                    id_str, campaign_id_str, arc_id_str, source_doc_id_str,
+                    title, description, event_type_str, significance_str,
+                    location, involved_json, event_order, is_dm_only, now, now
+                ],
+            )
+            .map_err(|e| GuideError::Internal(e.to_string()))?;
+            Ok(())
+        })
         .await?;
 
         self.get_event(id).await
     }
 
     pub async fn list_events(&self, campaign_id: Uuid) -> Result<Vec<StoryEvent>> {
-        let rows = sqlx::query(
-            "SELECT id, campaign_id, arc_id, source_doc_id, title, description, event_type, \
-             significance, location, involved_characters, event_order, is_dm_only, \
-             dm_notes, created_at, updated_at \
-             FROM story_events WHERE campaign_id = ? ORDER BY event_order ASC",
-        )
-        .bind(campaign_id.to_string())
-        .fetch_all(self.pool)
-        .await?;
-
-        rows.into_iter().map(row_to_event).collect()
+        let id_str = campaign_id.to_string();
+        with_db(&self.pool, move |conn| {
+            query_all(
+                conn,
+                "SELECT id, campaign_id, arc_id, source_doc_id, title, description, event_type, \
+                 significance, location, involved_characters, event_order, is_dm_only, \
+                 dm_notes, created_at, updated_at \
+                 FROM story_events WHERE campaign_id = ? ORDER BY event_order ASC",
+                [&id_str],
+                row_to_event,
+            )
+        })
+        .await
     }
 
     pub async fn list_events_by_arc(&self, arc_id: Uuid) -> Result<Vec<StoryEvent>> {
-        let rows = sqlx::query(
-            "SELECT id, campaign_id, arc_id, source_doc_id, title, description, event_type, \
-             significance, location, involved_characters, event_order, is_dm_only, \
-             dm_notes, created_at, updated_at \
-             FROM story_events WHERE arc_id = ? ORDER BY event_order ASC",
-        )
-        .bind(arc_id.to_string())
-        .fetch_all(self.pool)
-        .await?;
-
-        rows.into_iter().map(row_to_event).collect()
+        let id_str = arc_id.to_string();
+        with_db(&self.pool, move |conn| {
+            query_all(
+                conn,
+                "SELECT id, campaign_id, arc_id, source_doc_id, title, description, event_type, \
+                 significance, location, involved_characters, event_order, is_dm_only, \
+                 dm_notes, created_at, updated_at \
+                 FROM story_events WHERE arc_id = ? ORDER BY event_order ASC",
+                [&id_str],
+                row_to_event,
+            )
+        })
+        .await
     }
 
     pub async fn get_event(&self, event_id: Uuid) -> Result<StoryEvent> {
-        let row = sqlx::query(
-            "SELECT id, campaign_id, arc_id, source_doc_id, title, description, event_type, \
-             significance, location, involved_characters, event_order, is_dm_only, \
-             dm_notes, created_at, updated_at \
-             FROM story_events WHERE id = ?",
-        )
-        .bind(event_id.to_string())
-        .fetch_optional(self.pool)
-        .await?
-        .ok_or_else(|| GuideError::NotFound(format!("StoryEvent {event_id}")))?;
-
-        row_to_event(row)
+        let id_str = event_id.to_string();
+        with_db(&self.pool, move |conn| {
+            query_one(
+                conn,
+                "SELECT id, campaign_id, arc_id, source_doc_id, title, description, event_type, \
+                 significance, location, involved_characters, event_order, is_dm_only, \
+                 dm_notes, created_at, updated_at \
+                 FROM story_events WHERE id = ?",
+                [&id_str],
+                row_to_event,
+                format!("StoryEvent {event_id}"),
+            )
+        })
+        .await
     }
 
     pub async fn update_event_notes(&self, event_id: Uuid, notes: Option<&str>) -> Result<()> {
-        sqlx::query(
-            "UPDATE story_events SET dm_notes = ?, updated_at = ? WHERE id = ?",
-        )
-        .bind(notes)
-        .bind(Utc::now().to_rfc3339())
-        .bind(event_id.to_string())
-        .execute(self.pool)
-        .await?;
-        Ok(())
+        let now = Utc::now().to_rfc3339();
+        let id_str = event_id.to_string();
+        let notes_owned = notes.map(|s| s.to_string());
+
+        with_db(&self.pool, move |conn| {
+            conn.execute(
+                "UPDATE story_events SET dm_notes = ?, updated_at = ? WHERE id = ?",
+                duckdb::params![notes_owned, now, id_str],
+            )
+            .map_err(|e| GuideError::Internal(e.to_string()))?;
+            Ok(())
+        })
+        .await
     }
 
     // ─── Story Subplots ────────────────────────────────────────────────────────
@@ -234,63 +263,77 @@ impl<'a> StoryRepository<'a> {
     ) -> Result<StorySubplot> {
         let id = Uuid::new_v4();
         let now = Utc::now().to_rfc3339();
-        sqlx::query(
-            "INSERT INTO story_subplots \
-             (id, campaign_id, arc_id, source_doc_id, title, description, status, \
-              dm_notes, created_at, updated_at) \
-             VALUES (?, ?, ?, ?, ?, ?, 'open', NULL, ?, ?)",
-        )
-        .bind(id.to_string())
-        .bind(campaign_id.to_string())
-        .bind(arc_id.map(|a| a.to_string()))
-        .bind(source_doc_id.to_string())
-        .bind(&input.title)
-        .bind(&input.description)
-        .bind(&now)
-        .bind(&now)
-        .execute(self.pool)
+        let id_str = id.to_string();
+        let campaign_id_str = campaign_id.to_string();
+        let arc_id_str = arc_id.map(|a| a.to_string());
+        let source_doc_id_str = source_doc_id.to_string();
+        let title = input.title.clone();
+        let description = input.description.clone();
+
+        with_db(&self.pool, move |conn| {
+            conn.execute(
+                "INSERT INTO story_subplots \
+                 (id, campaign_id, arc_id, source_doc_id, title, description, status, \
+                  dm_notes, created_at, updated_at) \
+                 VALUES (?, ?, ?, ?, ?, ?, 'open', NULL, ?, ?)",
+                duckdb::params![
+                    id_str, campaign_id_str, arc_id_str, source_doc_id_str,
+                    title, description, now, now
+                ],
+            )
+            .map_err(|e| GuideError::Internal(e.to_string()))?;
+            Ok(())
+        })
         .await?;
 
         self.get_subplot(id).await
     }
 
     async fn get_subplot(&self, subplot_id: Uuid) -> Result<StorySubplot> {
-        let row = sqlx::query(
-            "SELECT id, campaign_id, arc_id, source_doc_id, title, description, status, \
-             dm_notes, created_at, updated_at \
-             FROM story_subplots WHERE id = ?",
-        )
-        .bind(subplot_id.to_string())
-        .fetch_optional(self.pool)
-        .await?
-        .ok_or_else(|| GuideError::NotFound(format!("StorySubplot {subplot_id}")))?;
-
-        row_to_subplot(row)
+        let id_str = subplot_id.to_string();
+        with_db(&self.pool, move |conn| {
+            query_one(
+                conn,
+                "SELECT id, campaign_id, arc_id, source_doc_id, title, description, status, \
+                 dm_notes, created_at, updated_at \
+                 FROM story_subplots WHERE id = ?",
+                [&id_str],
+                row_to_subplot,
+                format!("StorySubplot {subplot_id}"),
+            )
+        })
+        .await
     }
 
     pub async fn list_subplots(&self, campaign_id: Uuid) -> Result<Vec<StorySubplot>> {
-        let rows = sqlx::query(
-            "SELECT id, campaign_id, arc_id, source_doc_id, title, description, status, \
-             dm_notes, created_at, updated_at \
-             FROM story_subplots WHERE campaign_id = ? ORDER BY created_at ASC",
-        )
-        .bind(campaign_id.to_string())
-        .fetch_all(self.pool)
-        .await?;
-
-        rows.into_iter().map(row_to_subplot).collect()
+        let id_str = campaign_id.to_string();
+        with_db(&self.pool, move |conn| {
+            query_all(
+                conn,
+                "SELECT id, campaign_id, arc_id, source_doc_id, title, description, status, \
+                 dm_notes, created_at, updated_at \
+                 FROM story_subplots WHERE campaign_id = ? ORDER BY created_at ASC",
+                [&id_str],
+                row_to_subplot,
+            )
+        })
+        .await
     }
 
     pub async fn update_subplot_notes(&self, subplot_id: Uuid, notes: Option<&str>) -> Result<()> {
-        sqlx::query(
-            "UPDATE story_subplots SET dm_notes = ?, updated_at = ? WHERE id = ?",
-        )
-        .bind(notes)
-        .bind(Utc::now().to_rfc3339())
-        .bind(subplot_id.to_string())
-        .execute(self.pool)
-        .await?;
-        Ok(())
+        let now = Utc::now().to_rfc3339();
+        let id_str = subplot_id.to_string();
+        let notes_owned = notes.map(|s| s.to_string());
+
+        with_db(&self.pool, move |conn| {
+            conn.execute(
+                "UPDATE story_subplots SET dm_notes = ?, updated_at = ? WHERE id = ?",
+                duckdb::params![notes_owned, now, id_str],
+            )
+            .map_err(|e| GuideError::Internal(e.to_string()))?;
+            Ok(())
+        })
+        .await
     }
 
     pub async fn update_subplot_status(
@@ -303,15 +346,18 @@ impl<'a> StoryRepository<'a> {
             SubplotStatus::Resolved => "resolved",
             SubplotStatus::Abandoned => "abandoned",
         };
-        sqlx::query(
-            "UPDATE story_subplots SET status = ?, updated_at = ? WHERE id = ?",
-        )
-        .bind(status_str)
-        .bind(Utc::now().to_rfc3339())
-        .bind(subplot_id.to_string())
-        .execute(self.pool)
-        .await?;
-        Ok(())
+        let now = Utc::now().to_rfc3339();
+        let id_str = subplot_id.to_string();
+
+        with_db(&self.pool, move |conn| {
+            conn.execute(
+                "UPDATE story_subplots SET status = ?, updated_at = ? WHERE id = ?",
+                duckdb::params![status_str, now, id_str],
+            )
+            .map_err(|e| GuideError::Internal(e.to_string()))?;
+            Ok(())
+        })
+        .await
     }
 
     // ─── Character Arcs ────────────────────────────────────────────────────────
@@ -326,52 +372,60 @@ impl<'a> StoryRepository<'a> {
         let now = Utc::now().to_rfc3339();
         let arc_points_json = serde_json::to_string(&input.arc_points)
             .map_err(|e| GuideError::Internal(e.to_string()))?;
+        let id_str = id.to_string();
+        let campaign_id_str = campaign_id.to_string();
+        let source_doc_id_str = source_doc_id.to_string();
+        let character_name = input.character_name.clone();
+        let description = input.description.clone();
 
-        sqlx::query(
-            "INSERT INTO character_arcs \
-             (id, campaign_id, character_name, character_id, source_doc_id, description, \
-              arc_points, dm_notes, created_at, updated_at) \
-             VALUES (?, ?, ?, NULL, ?, ?, ?, NULL, ?, ?)",
-        )
-        .bind(id.to_string())
-        .bind(campaign_id.to_string())
-        .bind(&input.character_name)
-        .bind(source_doc_id.to_string())
-        .bind(&input.description)
-        .bind(&arc_points_json)
-        .bind(&now)
-        .bind(&now)
-        .execute(self.pool)
+        with_db(&self.pool, move |conn| {
+            conn.execute(
+                "INSERT INTO character_arcs \
+                 (id, campaign_id, character_name, character_id, source_doc_id, description, \
+                  arc_points, dm_notes, created_at, updated_at) \
+                 VALUES (?, ?, ?, NULL, ?, ?, ?, NULL, ?, ?)",
+                duckdb::params![
+                    id_str, campaign_id_str, character_name, source_doc_id_str,
+                    description, arc_points_json, now, now
+                ],
+            )
+            .map_err(|e| GuideError::Internal(e.to_string()))?;
+            Ok(())
+        })
         .await?;
 
         self.get_character_arc(id).await
     }
 
     async fn get_character_arc(&self, arc_id: Uuid) -> Result<CharacterArc> {
-        let row = sqlx::query(
-            "SELECT id, campaign_id, character_name, character_id, source_doc_id, description, \
-             arc_points, dm_notes, created_at, updated_at \
-             FROM character_arcs WHERE id = ?",
-        )
-        .bind(arc_id.to_string())
-        .fetch_optional(self.pool)
-        .await?
-        .ok_or_else(|| GuideError::NotFound(format!("CharacterArc {arc_id}")))?;
-
-        row_to_character_arc(row)
+        let id_str = arc_id.to_string();
+        with_db(&self.pool, move |conn| {
+            query_one(
+                conn,
+                "SELECT id, campaign_id, character_name, character_id, source_doc_id, description, \
+                 arc_points, dm_notes, created_at, updated_at \
+                 FROM character_arcs WHERE id = ?",
+                [&id_str],
+                row_to_character_arc,
+                format!("CharacterArc {arc_id}"),
+            )
+        })
+        .await
     }
 
     pub async fn list_character_arcs(&self, campaign_id: Uuid) -> Result<Vec<CharacterArc>> {
-        let rows = sqlx::query(
-            "SELECT id, campaign_id, character_name, character_id, source_doc_id, description, \
-             arc_points, dm_notes, created_at, updated_at \
-             FROM character_arcs WHERE campaign_id = ? ORDER BY created_at ASC",
-        )
-        .bind(campaign_id.to_string())
-        .fetch_all(self.pool)
-        .await?;
-
-        rows.into_iter().map(row_to_character_arc).collect()
+        let id_str = campaign_id.to_string();
+        with_db(&self.pool, move |conn| {
+            query_all(
+                conn,
+                "SELECT id, campaign_id, character_name, character_id, source_doc_id, description, \
+                 arc_points, dm_notes, created_at, updated_at \
+                 FROM character_arcs WHERE campaign_id = ? ORDER BY created_at ASC",
+                [&id_str],
+                row_to_character_arc,
+            )
+        })
+        .await
     }
 
     pub async fn update_character_arc_notes(
@@ -379,15 +433,19 @@ impl<'a> StoryRepository<'a> {
         arc_id: Uuid,
         notes: Option<&str>,
     ) -> Result<()> {
-        sqlx::query(
-            "UPDATE character_arcs SET dm_notes = ?, updated_at = ? WHERE id = ?",
-        )
-        .bind(notes)
-        .bind(Utc::now().to_rfc3339())
-        .bind(arc_id.to_string())
-        .execute(self.pool)
-        .await?;
-        Ok(())
+        let now = Utc::now().to_rfc3339();
+        let id_str = arc_id.to_string();
+        let notes_owned = notes.map(|s| s.to_string());
+
+        with_db(&self.pool, move |conn| {
+            conn.execute(
+                "UPDATE character_arcs SET dm_notes = ?, updated_at = ? WHERE id = ?",
+                duckdb::params![notes_owned, now, id_str],
+            )
+            .map_err(|e| GuideError::Internal(e.to_string()))?;
+            Ok(())
+        })
+        .await
     }
 
     // ─── Prepopulated Encounters ───────────────────────────────────────────────
@@ -403,25 +461,29 @@ impl<'a> StoryRepository<'a> {
         let now = Utc::now().to_rfc3339();
         let monsters_json = serde_json::to_string(&input.monsters)
             .map_err(|e| GuideError::Internal(e.to_string()))?;
+        let id_str = id.to_string();
+        let campaign_id_str = campaign_id.to_string();
+        let story_event_id_str = story_event_id.map(|s| s.to_string());
+        let source_doc_id_str = source_doc_id.to_string();
+        let name = input.name.clone();
+        let description = input.description.clone();
+        let location = input.location.clone();
+        let difficulty_hint = input.difficulty_hint.clone();
 
-        sqlx::query(
-            "INSERT INTO prepopulated_encounters \
-             (id, campaign_id, story_event_id, source_doc_id, name, description, location, \
-              difficulty_hint, monsters, dm_notes, created_at, updated_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)",
-        )
-        .bind(id.to_string())
-        .bind(campaign_id.to_string())
-        .bind(story_event_id.map(|s| s.to_string()))
-        .bind(source_doc_id.to_string())
-        .bind(&input.name)
-        .bind(&input.description)
-        .bind(input.location.as_deref())
-        .bind(input.difficulty_hint.as_deref())
-        .bind(&monsters_json)
-        .bind(&now)
-        .bind(&now)
-        .execute(self.pool)
+        with_db(&self.pool, move |conn| {
+            conn.execute(
+                "INSERT INTO prepopulated_encounters \
+                 (id, campaign_id, story_event_id, source_doc_id, name, description, location, \
+                  difficulty_hint, monsters, dm_notes, created_at, updated_at) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)",
+                duckdb::params![
+                    id_str, campaign_id_str, story_event_id_str, source_doc_id_str,
+                    name, description, location, difficulty_hint, monsters_json, now, now
+                ],
+            )
+            .map_err(|e| GuideError::Internal(e.to_string()))?;
+            Ok(())
+        })
         .await?;
 
         self.get_prepopulated_encounter(id).await
@@ -431,33 +493,37 @@ impl<'a> StoryRepository<'a> {
         &self,
         encounter_id: Uuid,
     ) -> Result<PrepopulatedEncounter> {
-        let row = sqlx::query(
-            "SELECT id, campaign_id, story_event_id, source_doc_id, name, description, location, \
-             difficulty_hint, monsters, dm_notes, created_at, updated_at \
-             FROM prepopulated_encounters WHERE id = ?",
-        )
-        .bind(encounter_id.to_string())
-        .fetch_optional(self.pool)
-        .await?
-        .ok_or_else(|| GuideError::NotFound(format!("PrepopulatedEncounter {encounter_id}")))?;
-
-        row_to_prepopulated_encounter(row)
+        let id_str = encounter_id.to_string();
+        with_db(&self.pool, move |conn| {
+            query_one(
+                conn,
+                "SELECT id, campaign_id, story_event_id, source_doc_id, name, description, location, \
+                 difficulty_hint, monsters, dm_notes, created_at, updated_at \
+                 FROM prepopulated_encounters WHERE id = ?",
+                [&id_str],
+                row_to_prepopulated_encounter,
+                format!("PrepopulatedEncounter {encounter_id}"),
+            )
+        })
+        .await
     }
 
     pub async fn list_prepopulated_encounters(
         &self,
         campaign_id: Uuid,
     ) -> Result<Vec<PrepopulatedEncounter>> {
-        let rows = sqlx::query(
-            "SELECT id, campaign_id, story_event_id, source_doc_id, name, description, location, \
-             difficulty_hint, monsters, dm_notes, created_at, updated_at \
-             FROM prepopulated_encounters WHERE campaign_id = ? ORDER BY created_at ASC",
-        )
-        .bind(campaign_id.to_string())
-        .fetch_all(self.pool)
-        .await?;
-
-        rows.into_iter().map(row_to_prepopulated_encounter).collect()
+        let id_str = campaign_id.to_string();
+        with_db(&self.pool, move |conn| {
+            query_all(
+                conn,
+                "SELECT id, campaign_id, story_event_id, source_doc_id, name, description, location, \
+                 difficulty_hint, monsters, dm_notes, created_at, updated_at \
+                 FROM prepopulated_encounters WHERE campaign_id = ? ORDER BY created_at ASC",
+                [&id_str],
+                row_to_prepopulated_encounter,
+            )
+        })
+        .await
     }
 
     pub async fn update_encounter_notes(
@@ -465,53 +531,44 @@ impl<'a> StoryRepository<'a> {
         encounter_id: Uuid,
         notes: Option<&str>,
     ) -> Result<()> {
-        sqlx::query(
-            "UPDATE prepopulated_encounters SET dm_notes = ?, updated_at = ? WHERE id = ?",
-        )
-        .bind(notes)
-        .bind(Utc::now().to_rfc3339())
-        .bind(encounter_id.to_string())
-        .execute(self.pool)
-        .await?;
-        Ok(())
+        let now = Utc::now().to_rfc3339();
+        let id_str = encounter_id.to_string();
+        let notes_owned = notes.map(|s| s.to_string());
+
+        with_db(&self.pool, move |conn| {
+            conn.execute(
+                "UPDATE prepopulated_encounters SET dm_notes = ?, updated_at = ? WHERE id = ?",
+                duckdb::params![notes_owned, now, id_str],
+            )
+            .map_err(|e| GuideError::Internal(e.to_string()))?;
+            Ok(())
+        })
+        .await
     }
 
     /// Delete all story data sourced from a specific document.
     pub async fn delete_all_for_doc(&self, doc_id: Uuid) -> Result<()> {
         let doc_id_str = doc_id.to_string();
-        sqlx::query("DELETE FROM story_npcs WHERE source_doc_id = ?")
-            .bind(&doc_id_str)
-            .execute(self.pool)
-            .await?;
-        sqlx::query("DELETE FROM story_locations WHERE source_doc_id = ?")
-            .bind(&doc_id_str)
-            .execute(self.pool)
-            .await?;
-        sqlx::query("DELETE FROM story_factions WHERE source_doc_id = ?")
-            .bind(&doc_id_str)
-            .execute(self.pool)
-            .await?;
-        sqlx::query("DELETE FROM prepopulated_encounters WHERE source_doc_id = ?")
-            .bind(&doc_id_str)
-            .execute(self.pool)
-            .await?;
-        sqlx::query("DELETE FROM character_arcs WHERE source_doc_id = ?")
-            .bind(&doc_id_str)
-            .execute(self.pool)
-            .await?;
-        sqlx::query("DELETE FROM story_subplots WHERE source_doc_id = ?")
-            .bind(&doc_id_str)
-            .execute(self.pool)
-            .await?;
-        sqlx::query("DELETE FROM story_events WHERE source_doc_id = ?")
-            .bind(&doc_id_str)
-            .execute(self.pool)
-            .await?;
-        sqlx::query("DELETE FROM story_arcs WHERE source_doc_id = ?")
-            .bind(&doc_id_str)
-            .execute(self.pool)
-            .await?;
-        Ok(())
+        with_db(&self.pool, move |conn| {
+            for table in &[
+                "story_npcs",
+                "story_locations",
+                "story_factions",
+                "prepopulated_encounters",
+                "character_arcs",
+                "story_subplots",
+                "story_events",
+                "story_arcs",
+            ] {
+                conn.execute(
+                    &format!("DELETE FROM {table} WHERE source_doc_id = ?"),
+                    [&doc_id_str],
+                )
+                .map_err(|e| GuideError::Internal(e.to_string()))?;
+            }
+            Ok(())
+        })
+        .await
     }
 
     // ─── Story NPCs ────────────────────────────────────────────────────────────
@@ -524,53 +581,63 @@ impl<'a> StoryRepository<'a> {
     ) -> Result<StoryNpc> {
         let id = Uuid::new_v4();
         let now = Utc::now().to_rfc3339();
-        sqlx::query(
-            "INSERT INTO story_npcs \
-             (id, campaign_id, source_doc_id, name, role, description, location, \
-              is_dm_only, dm_notes, created_at, updated_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)",
-        )
-        .bind(id.to_string())
-        .bind(campaign_id.to_string())
-        .bind(source_doc_id.to_string())
-        .bind(&input.name)
-        .bind(&input.role)
-        .bind(&input.description)
-        .bind(input.location.as_deref())
-        .bind(input.is_dm_only as i32)
-        .bind(&now)
-        .bind(&now)
-        .execute(self.pool)
+        let id_str = id.to_string();
+        let campaign_id_str = campaign_id.to_string();
+        let source_doc_id_str = source_doc_id.to_string();
+        let name = input.name.clone();
+        let role = input.role.clone();
+        let description = input.description.clone();
+        let location = input.location.clone();
+        let is_dm_only = input.is_dm_only as i32;
+
+        with_db(&self.pool, move |conn| {
+            conn.execute(
+                "INSERT INTO story_npcs \
+                 (id, campaign_id, source_doc_id, name, role, description, location, \
+                  is_dm_only, dm_notes, created_at, updated_at) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)",
+                duckdb::params![
+                    id_str, campaign_id_str, source_doc_id_str,
+                    name, role, description, location, is_dm_only, now, now
+                ],
+            )
+            .map_err(|e| GuideError::Internal(e.to_string()))?;
+            Ok(())
+        })
         .await?;
 
         self.get_npc(id).await
     }
 
     async fn get_npc(&self, npc_id: Uuid) -> Result<StoryNpc> {
-        let row = sqlx::query(
-            "SELECT id, campaign_id, source_doc_id, name, role, description, location, \
-             is_dm_only, dm_notes, created_at, updated_at \
-             FROM story_npcs WHERE id = ?",
-        )
-        .bind(npc_id.to_string())
-        .fetch_optional(self.pool)
-        .await?
-        .ok_or_else(|| GuideError::NotFound(format!("StoryNpc {npc_id}")))?;
-
-        row_to_npc(row)
+        let id_str = npc_id.to_string();
+        with_db(&self.pool, move |conn| {
+            query_one(
+                conn,
+                "SELECT id, campaign_id, source_doc_id, name, role, description, location, \
+                 is_dm_only, dm_notes, created_at, updated_at \
+                 FROM story_npcs WHERE id = ?",
+                [&id_str],
+                row_to_npc,
+                format!("StoryNpc {npc_id}"),
+            )
+        })
+        .await
     }
 
     pub async fn list_npcs(&self, campaign_id: Uuid) -> Result<Vec<StoryNpc>> {
-        let rows = sqlx::query(
-            "SELECT id, campaign_id, source_doc_id, name, role, description, location, \
-             is_dm_only, dm_notes, created_at, updated_at \
-             FROM story_npcs WHERE campaign_id = ? ORDER BY name ASC",
-        )
-        .bind(campaign_id.to_string())
-        .fetch_all(self.pool)
-        .await?;
-
-        rows.into_iter().map(row_to_npc).collect()
+        let id_str = campaign_id.to_string();
+        with_db(&self.pool, move |conn| {
+            query_all(
+                conn,
+                "SELECT id, campaign_id, source_doc_id, name, role, description, location, \
+                 is_dm_only, dm_notes, created_at, updated_at \
+                 FROM story_npcs WHERE campaign_id = ? ORDER BY name ASC",
+                [&id_str],
+                row_to_npc,
+            )
+        })
+        .await
     }
 
     // ─── Story Locations ───────────────────────────────────────────────────────
@@ -583,51 +650,61 @@ impl<'a> StoryRepository<'a> {
     ) -> Result<StoryLocation> {
         let id = Uuid::new_v4();
         let now = Utc::now().to_rfc3339();
-        sqlx::query(
-            "INSERT INTO story_locations \
-             (id, campaign_id, source_doc_id, name, description, location_type, \
-              dm_notes, created_at, updated_at) \
-             VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)",
-        )
-        .bind(id.to_string())
-        .bind(campaign_id.to_string())
-        .bind(source_doc_id.to_string())
-        .bind(&input.name)
-        .bind(&input.description)
-        .bind(&input.location_type)
-        .bind(&now)
-        .bind(&now)
-        .execute(self.pool)
+        let id_str = id.to_string();
+        let campaign_id_str = campaign_id.to_string();
+        let source_doc_id_str = source_doc_id.to_string();
+        let name = input.name.clone();
+        let description = input.description.clone();
+        let location_type = input.location_type.clone();
+
+        with_db(&self.pool, move |conn| {
+            conn.execute(
+                "INSERT INTO story_locations \
+                 (id, campaign_id, source_doc_id, name, description, location_type, \
+                  dm_notes, created_at, updated_at) \
+                 VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)",
+                duckdb::params![
+                    id_str, campaign_id_str, source_doc_id_str,
+                    name, description, location_type, now, now
+                ],
+            )
+            .map_err(|e| GuideError::Internal(e.to_string()))?;
+            Ok(())
+        })
         .await?;
 
         self.get_location(id).await
     }
 
     async fn get_location(&self, location_id: Uuid) -> Result<StoryLocation> {
-        let row = sqlx::query(
-            "SELECT id, campaign_id, source_doc_id, name, description, location_type, \
-             dm_notes, created_at, updated_at \
-             FROM story_locations WHERE id = ?",
-        )
-        .bind(location_id.to_string())
-        .fetch_optional(self.pool)
-        .await?
-        .ok_or_else(|| GuideError::NotFound(format!("StoryLocation {location_id}")))?;
-
-        row_to_location(row)
+        let id_str = location_id.to_string();
+        with_db(&self.pool, move |conn| {
+            query_one(
+                conn,
+                "SELECT id, campaign_id, source_doc_id, name, description, location_type, \
+                 dm_notes, created_at, updated_at \
+                 FROM story_locations WHERE id = ?",
+                [&id_str],
+                row_to_location,
+                format!("StoryLocation {location_id}"),
+            )
+        })
+        .await
     }
 
     pub async fn list_locations(&self, campaign_id: Uuid) -> Result<Vec<StoryLocation>> {
-        let rows = sqlx::query(
-            "SELECT id, campaign_id, source_doc_id, name, description, location_type, \
-             dm_notes, created_at, updated_at \
-             FROM story_locations WHERE campaign_id = ? ORDER BY name ASC",
-        )
-        .bind(campaign_id.to_string())
-        .fetch_all(self.pool)
-        .await?;
-
-        rows.into_iter().map(row_to_location).collect()
+        let id_str = campaign_id.to_string();
+        with_db(&self.pool, move |conn| {
+            query_all(
+                conn,
+                "SELECT id, campaign_id, source_doc_id, name, description, location_type, \
+                 dm_notes, created_at, updated_at \
+                 FROM story_locations WHERE campaign_id = ? ORDER BY name ASC",
+                [&id_str],
+                row_to_location,
+            )
+        })
+        .await
     }
 
     // ─── Story Factions ────────────────────────────────────────────────────────
@@ -640,51 +717,61 @@ impl<'a> StoryRepository<'a> {
     ) -> Result<StoryFaction> {
         let id = Uuid::new_v4();
         let now = Utc::now().to_rfc3339();
-        sqlx::query(
-            "INSERT INTO story_factions \
-             (id, campaign_id, source_doc_id, name, description, alignment_hint, \
-              dm_notes, created_at, updated_at) \
-             VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)",
-        )
-        .bind(id.to_string())
-        .bind(campaign_id.to_string())
-        .bind(source_doc_id.to_string())
-        .bind(&input.name)
-        .bind(&input.description)
-        .bind(input.alignment_hint.as_deref())
-        .bind(&now)
-        .bind(&now)
-        .execute(self.pool)
+        let id_str = id.to_string();
+        let campaign_id_str = campaign_id.to_string();
+        let source_doc_id_str = source_doc_id.to_string();
+        let name = input.name.clone();
+        let description = input.description.clone();
+        let alignment_hint = input.alignment_hint.clone();
+
+        with_db(&self.pool, move |conn| {
+            conn.execute(
+                "INSERT INTO story_factions \
+                 (id, campaign_id, source_doc_id, name, description, alignment_hint, \
+                  dm_notes, created_at, updated_at) \
+                 VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)",
+                duckdb::params![
+                    id_str, campaign_id_str, source_doc_id_str,
+                    name, description, alignment_hint, now, now
+                ],
+            )
+            .map_err(|e| GuideError::Internal(e.to_string()))?;
+            Ok(())
+        })
         .await?;
 
         self.get_faction(id).await
     }
 
     async fn get_faction(&self, faction_id: Uuid) -> Result<StoryFaction> {
-        let row = sqlx::query(
-            "SELECT id, campaign_id, source_doc_id, name, description, alignment_hint, \
-             dm_notes, created_at, updated_at \
-             FROM story_factions WHERE id = ?",
-        )
-        .bind(faction_id.to_string())
-        .fetch_optional(self.pool)
-        .await?
-        .ok_or_else(|| GuideError::NotFound(format!("StoryFaction {faction_id}")))?;
-
-        row_to_faction(row)
+        let id_str = faction_id.to_string();
+        with_db(&self.pool, move |conn| {
+            query_one(
+                conn,
+                "SELECT id, campaign_id, source_doc_id, name, description, alignment_hint, \
+                 dm_notes, created_at, updated_at \
+                 FROM story_factions WHERE id = ?",
+                [&id_str],
+                row_to_faction,
+                format!("StoryFaction {faction_id}"),
+            )
+        })
+        .await
     }
 
     pub async fn list_factions(&self, campaign_id: Uuid) -> Result<Vec<StoryFaction>> {
-        let rows = sqlx::query(
-            "SELECT id, campaign_id, source_doc_id, name, description, alignment_hint, \
-             dm_notes, created_at, updated_at \
-             FROM story_factions WHERE campaign_id = ? ORDER BY name ASC",
-        )
-        .bind(campaign_id.to_string())
-        .fetch_all(self.pool)
-        .await?;
-
-        rows.into_iter().map(row_to_faction).collect()
+        let id_str = campaign_id.to_string();
+        with_db(&self.pool, move |conn| {
+            query_all(
+                conn,
+                "SELECT id, campaign_id, source_doc_id, name, description, alignment_hint, \
+                 dm_notes, created_at, updated_at \
+                 FROM story_factions WHERE campaign_id = ? ORDER BY name ASC",
+                [&id_str],
+                row_to_faction,
+            )
+        })
+        .await
     }
 }
 
@@ -696,13 +783,18 @@ fn parse_dt(s: &str) -> DateTime<Utc> {
         .unwrap_or_else(|_| Utc::now())
 }
 
-fn row_to_arc(row: sqlx::sqlite::SqliteRow) -> Result<StoryArc> {
-    let id_str: String = row.try_get("id")?;
-    let campaign_id_str: String = row.try_get("campaign_id")?;
-    let source_doc_id_str: String = row.try_get("source_doc_id")?;
-    let status_str: String = row.try_get("status").unwrap_or_else(|_| "open".to_string());
-    let created_at_str: String = row.try_get("created_at")?;
-    let updated_at_str: String = row.try_get("updated_at")?;
+fn parse_uuid(s: &str, idx: usize) -> duckdb::Result<Uuid> {
+    Uuid::parse_str(s)
+        .map_err(|e| duckdb::Error::FromSqlConversionFailure(idx, duckdb::types::Type::Text, Box::new(e)))
+}
+
+fn row_to_arc(row: &duckdb::Row) -> duckdb::Result<StoryArc> {
+    let id_str: String = row.get("id")?;
+    let campaign_id_str: String = row.get("campaign_id")?;
+    let source_doc_id_str: String = row.get("source_doc_id")?;
+    let status_str: String = row.get::<_, Option<String>>("status")?.unwrap_or_else(|| "open".to_string());
+    let created_at_str: String = row.get("created_at")?;
+    let updated_at_str: String = row.get("updated_at")?;
 
     let status = match status_str.as_str() {
         "resolved" => ArcStatus::Resolved,
@@ -711,38 +803,30 @@ fn row_to_arc(row: sqlx::sqlite::SqliteRow) -> Result<StoryArc> {
     };
 
     Ok(StoryArc {
-        id: Uuid::parse_str(&id_str).map_err(|e| GuideError::Internal(e.to_string()))?,
-        campaign_id: Uuid::parse_str(&campaign_id_str)
-            .map_err(|e| GuideError::Internal(e.to_string()))?,
-        source_doc_id: Uuid::parse_str(&source_doc_id_str)
-            .map_err(|e| GuideError::Internal(e.to_string()))?,
-        title: row.try_get("title")?,
-        description: row.try_get("description")?,
-        arc_order: row.try_get("arc_order").unwrap_or(0),
+        id: parse_uuid(&id_str, 0)?,
+        campaign_id: parse_uuid(&campaign_id_str, 1)?,
+        source_doc_id: parse_uuid(&source_doc_id_str, 2)?,
+        title: row.get("title")?,
+        description: row.get("description")?,
+        arc_order: row.get::<_, Option<i32>>("arc_order")?.unwrap_or(0),
         status,
-        dm_notes: row.try_get("dm_notes").ok().flatten(),
+        dm_notes: row.get("dm_notes")?,
         created_at: parse_dt(&created_at_str),
         updated_at: parse_dt(&updated_at_str),
     })
 }
 
-fn row_to_event(row: sqlx::sqlite::SqliteRow) -> Result<StoryEvent> {
-    let id_str: String = row.try_get("id")?;
-    let campaign_id_str: String = row.try_get("campaign_id")?;
-    let arc_id_str: Option<String> = row.try_get("arc_id").ok().flatten();
-    let source_doc_id_str: String = row.try_get("source_doc_id")?;
-    let event_type_str: String = row
-        .try_get("event_type")
-        .unwrap_or_else(|_| "combat".to_string());
-    let significance_str: String = row
-        .try_get("significance")
-        .unwrap_or_else(|_| "minor".to_string());
-    let involved_json: String = row
-        .try_get("involved_characters")
-        .unwrap_or_else(|_| "[]".to_string());
-    let is_dm_only_int: i32 = row.try_get("is_dm_only").unwrap_or(0);
-    let created_at_str: String = row.try_get("created_at")?;
-    let updated_at_str: String = row.try_get("updated_at")?;
+fn row_to_event(row: &duckdb::Row) -> duckdb::Result<StoryEvent> {
+    let id_str: String = row.get("id")?;
+    let campaign_id_str: String = row.get("campaign_id")?;
+    let arc_id_str: Option<String> = row.get("arc_id")?;
+    let source_doc_id_str: String = row.get("source_doc_id")?;
+    let event_type_str: String = row.get::<_, Option<String>>("event_type")?.unwrap_or_else(|| "combat".to_string());
+    let significance_str: String = row.get::<_, Option<String>>("significance")?.unwrap_or_else(|| "minor".to_string());
+    let involved_json: String = row.get::<_, Option<String>>("involved_characters")?.unwrap_or_else(|| "[]".to_string());
+    let is_dm_only_int: i32 = row.get::<_, Option<i32>>("is_dm_only")?.unwrap_or(0);
+    let created_at_str: String = row.get("created_at")?;
+    let updated_at_str: String = row.get("updated_at")?;
 
     let event_type = match event_type_str.as_str() {
         "social" => StoryEventType::Social,
@@ -769,37 +853,35 @@ fn row_to_event(row: sqlx::sqlite::SqliteRow) -> Result<StoryEvent> {
         serde_json::from_str(&involved_json).unwrap_or_default();
 
     Ok(StoryEvent {
-        id: Uuid::parse_str(&id_str).map_err(|e| GuideError::Internal(e.to_string()))?,
-        campaign_id: Uuid::parse_str(&campaign_id_str)
-            .map_err(|e| GuideError::Internal(e.to_string()))?,
+        id: parse_uuid(&id_str, 0)?,
+        campaign_id: parse_uuid(&campaign_id_str, 1)?,
         arc_id: arc_id_str
             .as_deref()
-            .map(|s| Uuid::parse_str(s).map_err(|e| GuideError::Internal(e.to_string())))
+            .map(|s| parse_uuid(s, 2))
             .transpose()?,
-        source_doc_id: Uuid::parse_str(&source_doc_id_str)
-            .map_err(|e| GuideError::Internal(e.to_string()))?,
-        title: row.try_get("title")?,
-        description: row.try_get("description")?,
+        source_doc_id: parse_uuid(&source_doc_id_str, 3)?,
+        title: row.get("title")?,
+        description: row.get("description")?,
         event_type,
         significance,
-        location: row.try_get("location").ok().flatten(),
+        location: row.get("location")?,
         involved_characters,
-        event_order: row.try_get("event_order").unwrap_or(0),
+        event_order: row.get::<_, Option<i32>>("event_order")?.unwrap_or(0),
         is_dm_only: is_dm_only_int != 0,
-        dm_notes: row.try_get("dm_notes").ok().flatten(),
+        dm_notes: row.get("dm_notes")?,
         created_at: parse_dt(&created_at_str),
         updated_at: parse_dt(&updated_at_str),
     })
 }
 
-fn row_to_subplot(row: sqlx::sqlite::SqliteRow) -> Result<StorySubplot> {
-    let id_str: String = row.try_get("id")?;
-    let campaign_id_str: String = row.try_get("campaign_id")?;
-    let arc_id_str: Option<String> = row.try_get("arc_id").ok().flatten();
-    let source_doc_id_str: String = row.try_get("source_doc_id")?;
-    let status_str: String = row.try_get("status").unwrap_or_else(|_| "open".to_string());
-    let created_at_str: String = row.try_get("created_at")?;
-    let updated_at_str: String = row.try_get("updated_at")?;
+fn row_to_subplot(row: &duckdb::Row) -> duckdb::Result<StorySubplot> {
+    let id_str: String = row.get("id")?;
+    let campaign_id_str: String = row.get("campaign_id")?;
+    let arc_id_str: Option<String> = row.get("arc_id")?;
+    let source_doc_id_str: String = row.get("source_doc_id")?;
+    let status_str: String = row.get::<_, Option<String>>("status")?.unwrap_or_else(|| "open".to_string());
+    let created_at_str: String = row.get("created_at")?;
+    let updated_at_str: String = row.get("updated_at")?;
 
     let status = match status_str.as_str() {
         "resolved" => SubplotStatus::Resolved,
@@ -808,154 +890,129 @@ fn row_to_subplot(row: sqlx::sqlite::SqliteRow) -> Result<StorySubplot> {
     };
 
     Ok(StorySubplot {
-        id: Uuid::parse_str(&id_str).map_err(|e| GuideError::Internal(e.to_string()))?,
-        campaign_id: Uuid::parse_str(&campaign_id_str)
-            .map_err(|e| GuideError::Internal(e.to_string()))?,
-        arc_id: arc_id_str
-            .as_deref()
-            .map(|s| Uuid::parse_str(s).map_err(|e| GuideError::Internal(e.to_string())))
-            .transpose()?,
-        source_doc_id: Uuid::parse_str(&source_doc_id_str)
-            .map_err(|e| GuideError::Internal(e.to_string()))?,
-        title: row.try_get("title")?,
-        description: row.try_get("description")?,
+        id: parse_uuid(&id_str, 0)?,
+        campaign_id: parse_uuid(&campaign_id_str, 1)?,
+        arc_id: arc_id_str.as_deref().map(|s| parse_uuid(s, 2)).transpose()?,
+        source_doc_id: parse_uuid(&source_doc_id_str, 3)?,
+        title: row.get("title")?,
+        description: row.get("description")?,
         status,
-        dm_notes: row.try_get("dm_notes").ok().flatten(),
+        dm_notes: row.get("dm_notes")?,
         created_at: parse_dt(&created_at_str),
         updated_at: parse_dt(&updated_at_str),
     })
 }
 
-fn row_to_character_arc(row: sqlx::sqlite::SqliteRow) -> Result<CharacterArc> {
-    let id_str: String = row.try_get("id")?;
-    let campaign_id_str: String = row.try_get("campaign_id")?;
-    let character_id_str: Option<String> = row.try_get("character_id").ok().flatten();
-    let source_doc_id_str: String = row.try_get("source_doc_id")?;
-    let arc_points_json: String = row
-        .try_get("arc_points")
-        .unwrap_or_else(|_| "[]".to_string());
-    let created_at_str: String = row.try_get("created_at")?;
-    let updated_at_str: String = row.try_get("updated_at")?;
+fn row_to_character_arc(row: &duckdb::Row) -> duckdb::Result<CharacterArc> {
+    let id_str: String = row.get("id")?;
+    let campaign_id_str: String = row.get("campaign_id")?;
+    let character_id_str: Option<String> = row.get("character_id")?;
+    let source_doc_id_str: String = row.get("source_doc_id")?;
+    let arc_points_json: String = row.get::<_, Option<String>>("arc_points")?.unwrap_or_else(|| "[]".to_string());
+    let created_at_str: String = row.get("created_at")?;
+    let updated_at_str: String = row.get("updated_at")?;
 
     let arc_points: Vec<ArcPoint> = serde_json::from_str(&arc_points_json).unwrap_or_default();
 
     Ok(CharacterArc {
-        id: Uuid::parse_str(&id_str).map_err(|e| GuideError::Internal(e.to_string()))?,
-        campaign_id: Uuid::parse_str(&campaign_id_str)
-            .map_err(|e| GuideError::Internal(e.to_string()))?,
-        character_name: row.try_get("character_name")?,
-        character_id: character_id_str
-            .as_deref()
-            .map(|s| Uuid::parse_str(s).map_err(|e| GuideError::Internal(e.to_string())))
-            .transpose()?,
-        source_doc_id: Uuid::parse_str(&source_doc_id_str)
-            .map_err(|e| GuideError::Internal(e.to_string()))?,
-        description: row.try_get("description")?,
+        id: parse_uuid(&id_str, 0)?,
+        campaign_id: parse_uuid(&campaign_id_str, 1)?,
+        character_name: row.get("character_name")?,
+        character_id: character_id_str.as_deref().map(|s| parse_uuid(s, 2)).transpose()?,
+        source_doc_id: parse_uuid(&source_doc_id_str, 3)?,
+        description: row.get("description")?,
         arc_points,
-        dm_notes: row.try_get("dm_notes").ok().flatten(),
+        dm_notes: row.get("dm_notes")?,
         created_at: parse_dt(&created_at_str),
         updated_at: parse_dt(&updated_at_str),
     })
 }
 
-fn row_to_prepopulated_encounter(row: sqlx::sqlite::SqliteRow) -> Result<PrepopulatedEncounter> {
-    let id_str: String = row.try_get("id")?;
-    let campaign_id_str: String = row.try_get("campaign_id")?;
-    let story_event_id_str: Option<String> = row.try_get("story_event_id").ok().flatten();
-    let source_doc_id_str: String = row.try_get("source_doc_id")?;
-    let monsters_json: String = row
-        .try_get("monsters")
-        .unwrap_or_else(|_| "[]".to_string());
-    let created_at_str: String = row.try_get("created_at")?;
-    let updated_at_str: String = row.try_get("updated_at")?;
+fn row_to_prepopulated_encounter(row: &duckdb::Row) -> duckdb::Result<PrepopulatedEncounter> {
+    let id_str: String = row.get("id")?;
+    let campaign_id_str: String = row.get("campaign_id")?;
+    let story_event_id_str: Option<String> = row.get("story_event_id")?;
+    let source_doc_id_str: String = row.get("source_doc_id")?;
+    let monsters_json: String = row.get::<_, Option<String>>("monsters")?.unwrap_or_else(|| "[]".to_string());
+    let created_at_str: String = row.get("created_at")?;
+    let updated_at_str: String = row.get("updated_at")?;
 
     let monsters: Vec<MonsterHint> = serde_json::from_str(&monsters_json).unwrap_or_default();
 
     Ok(PrepopulatedEncounter {
-        id: Uuid::parse_str(&id_str).map_err(|e| GuideError::Internal(e.to_string()))?,
-        campaign_id: Uuid::parse_str(&campaign_id_str)
-            .map_err(|e| GuideError::Internal(e.to_string()))?,
-        story_event_id: story_event_id_str
-            .as_deref()
-            .map(|s| Uuid::parse_str(s).map_err(|e| GuideError::Internal(e.to_string())))
-            .transpose()?,
-        source_doc_id: Uuid::parse_str(&source_doc_id_str)
-            .map_err(|e| GuideError::Internal(e.to_string()))?,
-        name: row.try_get("name")?,
-        description: row.try_get("description")?,
-        location: row.try_get("location").ok().flatten(),
-        difficulty_hint: row.try_get("difficulty_hint").ok().flatten(),
+        id: parse_uuid(&id_str, 0)?,
+        campaign_id: parse_uuid(&campaign_id_str, 1)?,
+        story_event_id: story_event_id_str.as_deref().map(|s| parse_uuid(s, 2)).transpose()?,
+        source_doc_id: parse_uuid(&source_doc_id_str, 3)?,
+        name: row.get("name")?,
+        description: row.get("description")?,
+        location: row.get("location")?,
+        difficulty_hint: row.get("difficulty_hint")?,
         monsters,
-        dm_notes: row.try_get("dm_notes").ok().flatten(),
+        dm_notes: row.get("dm_notes")?,
         created_at: parse_dt(&created_at_str),
         updated_at: parse_dt(&updated_at_str),
     })
 }
 
-fn row_to_npc(row: sqlx::sqlite::SqliteRow) -> Result<StoryNpc> {
-    let id_str: String = row.try_get("id")?;
-    let campaign_id_str: String = row.try_get("campaign_id")?;
-    let source_doc_id_str: String = row.try_get("source_doc_id")?;
-    let is_dm_only_int: i32 = row.try_get("is_dm_only").unwrap_or(0);
-    let created_at_str: String = row.try_get("created_at")?;
-    let updated_at_str: String = row.try_get("updated_at")?;
+fn row_to_npc(row: &duckdb::Row) -> duckdb::Result<StoryNpc> {
+    let id_str: String = row.get("id")?;
+    let campaign_id_str: String = row.get("campaign_id")?;
+    let source_doc_id_str: String = row.get("source_doc_id")?;
+    let is_dm_only_int: i32 = row.get::<_, Option<i32>>("is_dm_only")?.unwrap_or(0);
+    let created_at_str: String = row.get("created_at")?;
+    let updated_at_str: String = row.get("updated_at")?;
 
     Ok(StoryNpc {
-        id: Uuid::parse_str(&id_str).map_err(|e| GuideError::Internal(e.to_string()))?,
-        campaign_id: Uuid::parse_str(&campaign_id_str)
-            .map_err(|e| GuideError::Internal(e.to_string()))?,
-        source_doc_id: Uuid::parse_str(&source_doc_id_str)
-            .map_err(|e| GuideError::Internal(e.to_string()))?,
-        name: row.try_get("name")?,
-        role: row.try_get("role").unwrap_or_else(|_| "neutral".to_string()),
-        description: row.try_get("description").unwrap_or_default(),
-        location: row.try_get("location").ok().flatten(),
+        id: parse_uuid(&id_str, 0)?,
+        campaign_id: parse_uuid(&campaign_id_str, 1)?,
+        source_doc_id: parse_uuid(&source_doc_id_str, 2)?,
+        name: row.get("name")?,
+        role: row.get::<_, Option<String>>("role")?.unwrap_or_else(|| "neutral".to_string()),
+        description: row.get::<_, Option<String>>("description")?.unwrap_or_default(),
+        location: row.get("location")?,
         is_dm_only: is_dm_only_int != 0,
-        dm_notes: row.try_get("dm_notes").ok().flatten(),
+        dm_notes: row.get("dm_notes")?,
         created_at: parse_dt(&created_at_str),
         updated_at: parse_dt(&updated_at_str),
     })
 }
 
-fn row_to_location(row: sqlx::sqlite::SqliteRow) -> Result<StoryLocation> {
-    let id_str: String = row.try_get("id")?;
-    let campaign_id_str: String = row.try_get("campaign_id")?;
-    let source_doc_id_str: String = row.try_get("source_doc_id")?;
-    let created_at_str: String = row.try_get("created_at")?;
-    let updated_at_str: String = row.try_get("updated_at")?;
+fn row_to_location(row: &duckdb::Row) -> duckdb::Result<StoryLocation> {
+    let id_str: String = row.get("id")?;
+    let campaign_id_str: String = row.get("campaign_id")?;
+    let source_doc_id_str: String = row.get("source_doc_id")?;
+    let created_at_str: String = row.get("created_at")?;
+    let updated_at_str: String = row.get("updated_at")?;
 
     Ok(StoryLocation {
-        id: Uuid::parse_str(&id_str).map_err(|e| GuideError::Internal(e.to_string()))?,
-        campaign_id: Uuid::parse_str(&campaign_id_str)
-            .map_err(|e| GuideError::Internal(e.to_string()))?,
-        source_doc_id: Uuid::parse_str(&source_doc_id_str)
-            .map_err(|e| GuideError::Internal(e.to_string()))?,
-        name: row.try_get("name")?,
-        description: row.try_get("description").unwrap_or_default(),
-        location_type: row.try_get("location_type").unwrap_or_else(|_| "dungeon".to_string()),
-        dm_notes: row.try_get("dm_notes").ok().flatten(),
+        id: parse_uuid(&id_str, 0)?,
+        campaign_id: parse_uuid(&campaign_id_str, 1)?,
+        source_doc_id: parse_uuid(&source_doc_id_str, 2)?,
+        name: row.get("name")?,
+        description: row.get::<_, Option<String>>("description")?.unwrap_or_default(),
+        location_type: row.get::<_, Option<String>>("location_type")?.unwrap_or_else(|| "dungeon".to_string()),
+        dm_notes: row.get("dm_notes")?,
         created_at: parse_dt(&created_at_str),
         updated_at: parse_dt(&updated_at_str),
     })
 }
 
-fn row_to_faction(row: sqlx::sqlite::SqliteRow) -> Result<StoryFaction> {
-    let id_str: String = row.try_get("id")?;
-    let campaign_id_str: String = row.try_get("campaign_id")?;
-    let source_doc_id_str: String = row.try_get("source_doc_id")?;
-    let created_at_str: String = row.try_get("created_at")?;
-    let updated_at_str: String = row.try_get("updated_at")?;
+fn row_to_faction(row: &duckdb::Row) -> duckdb::Result<StoryFaction> {
+    let id_str: String = row.get("id")?;
+    let campaign_id_str: String = row.get("campaign_id")?;
+    let source_doc_id_str: String = row.get("source_doc_id")?;
+    let created_at_str: String = row.get("created_at")?;
+    let updated_at_str: String = row.get("updated_at")?;
 
     Ok(StoryFaction {
-        id: Uuid::parse_str(&id_str).map_err(|e| GuideError::Internal(e.to_string()))?,
-        campaign_id: Uuid::parse_str(&campaign_id_str)
-            .map_err(|e| GuideError::Internal(e.to_string()))?,
-        source_doc_id: Uuid::parse_str(&source_doc_id_str)
-            .map_err(|e| GuideError::Internal(e.to_string()))?,
-        name: row.try_get("name")?,
-        description: row.try_get("description").unwrap_or_default(),
-        alignment_hint: row.try_get("alignment_hint").ok().flatten(),
-        dm_notes: row.try_get("dm_notes").ok().flatten(),
+        id: parse_uuid(&id_str, 0)?,
+        campaign_id: parse_uuid(&campaign_id_str, 1)?,
+        source_doc_id: parse_uuid(&source_doc_id_str, 2)?,
+        name: row.get("name")?,
+        description: row.get::<_, Option<String>>("description")?.unwrap_or_default(),
+        alignment_hint: row.get("alignment_hint")?,
+        dm_notes: row.get("dm_notes")?,
         created_at: parse_dt(&created_at_str),
         updated_at: parse_dt(&updated_at_str),
     })
