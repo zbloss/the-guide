@@ -33,7 +33,7 @@ impl Default for AppConfig {
         Self {
             host: "0.0.0.0".into(),
             port: 8000,
-            database_url: "sqlite://./data/guide.db".into(),
+            database_url: "./data/guide.db".into(),
             ollama_base_url: "http://localhost:11434/v1".into(),
             default_model: "qwen3.5:9b".into(),
             embedding_model: "nomic-embed-text".into(),

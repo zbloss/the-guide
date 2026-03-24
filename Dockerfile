@@ -1,7 +1,7 @@
 # ── Build stage ───────────────────────────────────────────────────────────────
-FROM rust:1-slim AS builder
+FROM rust:1-slim-bookworm AS builder
 WORKDIR /build
-RUN apt-get update && apt-get install -y pkg-config libssl-dev curl && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y pkg-config libssl-dev curl g++ cmake && rm -rf /var/lib/apt/lists/*
 # Copy workspace manifest and strip the Tauri frontend member (not needed server-side)
 COPY Cargo.toml Cargo.lock ./
 RUN sed -i '/guide-frontend/d' Cargo.toml

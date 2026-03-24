@@ -6,7 +6,7 @@ services:
     volumes:
       - ./data:/app/data
     environment:
-      - GUIDE__DATABASE_URL=sqlite:///app/data/guide.db
+      - GUIDE__DATABASE_URL=/app/data/guide.db
       - GUIDE__OLLAMA_BASE_URL=http://host.docker.internal:11434/v1
       - GUIDE__QDRANT_URL=http://qdrant:6334
       - GUIDE__MAX_UPLOAD_BYTES=524288000
