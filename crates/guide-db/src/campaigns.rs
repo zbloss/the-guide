@@ -8,6 +8,22 @@ use guide_core::{
 
 use crate::{query_all, query_one, with_db, DuckDbPool};
 
+/// Query a single column of TEXT ids from `sql` (one `?` param = `id_str`).
+fn collect_ids(
+    conn: &duckdb::Connection,
+    sql: &str,
+    id_str: &str,
+) -> Result<Vec<String>> {
+    let mut stmt = conn
+        .prepare(sql)
+        .map_err(|e| GuideError::Internal(format!("collect_ids prepare: {e}")))?;
+    let ids: std::result::Result<Vec<String>, _> = stmt
+        .query_map([id_str], |row| row.get::<_, String>(0))
+        .map_err(|e| GuideError::Internal(format!("collect_ids query: {e}")))?
+        .collect();
+    ids.map_err(|e| GuideError::Internal(format!("collect_ids row: {e}")))
+}
+
 pub struct CampaignRepository {
     pool: DuckDbPool,
 }
@@ -145,6 +161,94 @@ impl CampaignRepository {
             if n == 0 {
                 return Err(GuideError::NotFound(format!("Campaign {id}")));
             }
+            Ok(())
+        })
+        .await
+    }
+
+    pub async fn cascade_delete(&self, id: Uuid) -> Result<()> {
+        let id_str = id.to_string();
+        with_db(&self.pool, move |conn| {
+            // Pre-collect child IDs to avoid DuckDB MVCC read-write conflicts
+            // that occur when DELETE subqueries read from tables we later write to.
+            let doc_ids = collect_ids(conn, "SELECT id FROM campaign_documents WHERE campaign_id = ?", &id_str)?;
+            let enc_ids = collect_ids(conn, "SELECT id FROM encounters WHERE campaign_id = ?", &id_str)?;
+            let char_ids = collect_ids(conn, "SELECT id FROM characters WHERE campaign_id = ?", &id_str)?;
+            let faction_ids = collect_ids(conn, "SELECT id FROM factions WHERE campaign_id = ?", &id_str)?;
+
+            // Leaf tables that reference campaign_documents
+            for doc_id in &doc_ids {
+                conn.execute("DELETE FROM document_page_ocr WHERE document_id = ?", [doc_id])
+                    .map_err(|e| GuideError::Internal(format!("cascade delete document_page_ocr: {e}")))?;
+            }
+
+            // Leaf tables that reference encounters
+            for enc_id in &enc_ids {
+                conn.execute("DELETE FROM encounter_turns WHERE encounter_id = ?", [enc_id])
+                    .map_err(|e| GuideError::Internal(format!("cascade delete encounter_turns: {e}")))?;
+                conn.execute("DELETE FROM combat_participants WHERE encounter_id = ?", [enc_id])
+                    .map_err(|e| GuideError::Internal(format!("cascade delete combat_participants: {e}")))?;
+            }
+
+            // Leaf tables that reference characters
+            for char_id in &char_ids {
+                conn.execute("DELETE FROM plot_hooks WHERE character_id = ?", [char_id])
+                    .map_err(|e| GuideError::Internal(format!("cascade delete plot_hooks: {e}")))?;
+            }
+
+            // Leaf tables that reference factions
+            for faction_id in &faction_ids {
+                conn.execute("DELETE FROM faction_reputation WHERE faction_id = ?", [faction_id])
+                    .map_err(|e| GuideError::Internal(format!("cascade delete faction_reputation: {e}")))?;
+            }
+
+            // Direct campaign_id tables, in FK-safe dependency order:
+            // Must delete loot_items before sessions (loot_items.session_id FK)
+            //             and before characters (loot_items.assigned_to_char_id FK)
+            // Must delete dm_prep_results before characters (dm_prep_results.character_id FK)
+            // Must delete character_relationships before characters
+            // Must delete campaign_calendar before sessions
+            // Must delete session_events before sessions
+            // Must delete encounters before sessions
+            // Must delete prepopulated_encounters before story_events
+            // Must delete story_subplots, story_events before story_arcs
+            let ordered: &[&str] = &[
+                "DELETE FROM lore_chunks WHERE campaign_id = ?",
+                "DELETE FROM campaign_global_docs WHERE campaign_id = ?",
+                // Anything referencing sessions or characters must come first
+                "DELETE FROM loot_items WHERE campaign_id = ?",
+                "DELETE FROM dm_prep_results WHERE campaign_id = ?",
+                "DELETE FROM character_relationships WHERE campaign_id = ?",
+                "DELETE FROM campaign_calendar WHERE campaign_id = ?",
+                "DELETE FROM session_events WHERE campaign_id = ?",
+                "DELETE FROM encounters WHERE campaign_id = ?",
+                "DELETE FROM sessions WHERE campaign_id = ?",
+                "DELETE FROM characters WHERE campaign_id = ?",
+                "DELETE FROM campaign_documents WHERE campaign_id = ?",
+                // Story tables: children before parents
+                "DELETE FROM prepopulated_encounters WHERE campaign_id = ?",
+                "DELETE FROM story_subplots WHERE campaign_id = ?",
+                "DELETE FROM story_events WHERE campaign_id = ?",
+                "DELETE FROM story_arcs WHERE campaign_id = ?",
+                "DELETE FROM character_arcs WHERE campaign_id = ?",
+                "DELETE FROM story_npcs WHERE campaign_id = ?",
+                "DELETE FROM story_locations WHERE campaign_id = ?",
+                "DELETE FROM story_factions WHERE campaign_id = ?",
+                // Remaining direct campaign tables
+                "DELETE FROM playstyle_profiles WHERE campaign_id = ?",
+                "DELETE FROM campaign_chat WHERE campaign_id = ?",
+                "DELETE FROM homebrew_rules WHERE campaign_id = ?",
+                "DELETE FROM campaign_webhooks WHERE campaign_id = ?",
+                "DELETE FROM factions WHERE campaign_id = ?",
+                // Campaign itself last
+                "DELETE FROM campaigns WHERE id = ?",
+            ];
+
+            for sql in ordered {
+                conn.execute(sql, [&id_str])
+                    .map_err(|e| GuideError::Internal(format!("cascade delete ({sql}): {e}")))?;
+            }
+
             Ok(())
         })
         .await

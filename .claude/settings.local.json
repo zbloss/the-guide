@@ -56,7 +56,8 @@
       "WebFetch(domain:arxiv.org)",
       "WebFetch(domain:www.tigerdata.com)",
       "WebFetch(domain:www.zenml.io)",
-      "WebFetch(domain:ollama.com)"
+      "WebFetch(domain:ollama.com)",
+      "Bash(tasklist)"
     ]
   }
 }

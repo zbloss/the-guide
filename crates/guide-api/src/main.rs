@@ -1,6 +1,7 @@
 use anyhow::Context;
 use guide_api::{routes, state};
 use guide_core::AppConfig;
+use tower_http::cors::CorsLayer;
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
@@ -23,7 +24,8 @@ async fn main() -> anyhow::Result<()> {
 
     let max_upload = state.config.max_upload_bytes as usize;
     let app = routes::all_routes(state)
-        .layer(axum::extract::DefaultBodyLimit::max(max_upload));
+        .layer(axum::extract::DefaultBodyLimit::max(max_upload))
+        .layer(CorsLayer::permissive());
 
     let listener = tokio::net::TcpListener::bind(&addr)
         .await

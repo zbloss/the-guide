@@ -114,11 +114,7 @@ async fn delete_campaign(
     Path(id): Path<Uuid>,
 ) -> Result<impl IntoResponse, crate::error::AppError> {
     let repo = CampaignRepository::new(&state.db);
-    repo.delete(id).await?;
-
-    if let Err(e) = guide_db::vectors::delete_campaign_vectors(&state.db, id).await {
-        tracing::warn!("Vector deletion failed for campaign {id}: {e}");
-    }
+    repo.cascade_delete(id).await?;
 
     Ok(StatusCode::NO_CONTENT)
 }

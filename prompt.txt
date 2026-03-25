@@ -1,16 +1,18 @@
-Background: The Guide is a tool for Dungeon Masters to help them run their games more efficiently. Currently we allow users to access models for OCR, embedding, or general LLMs through Ollama (or another local running LLM) or through the cloud. I want to allow users to continue using both ollama and cloud models for embeddings if they want to, but by default I want to run this embedding generation locally on the users machine. By default, I want to use the google/embeddinggemma-300m model in this rust project to generate all embeddings and store and retrieve them to and from DuckDB. We'll need to review the available environment variables we have in place to configure models now and may need to clean them up.
-
-Use this PDF to test all final functionality: "C:\Users\altoz\Documents\dnd\Land of Vampires\Land of Vampires Full Campaign.pdf" but know it is extremely large. If you'd like, you can also use this smaller PDF for preliminary testing: "C:\Users\altoz\Downloads\Chalice_of_the_Mountain_God.pdf"
+Background: Now that we have migrated to using local embedding models within our rust code, moved our vectors from qdrant to duckdb, and moved off of sqlite onto duckdb, we now have some lingering legacy code and bugs that need to be fixed. I plan on selling this software so having it run cleanly and without bugs is key. Review the bugs that I have found and look for similar ones that can be cleaned up.
 
 Tasks:
-1. Review the existing environment variables we have to power model configurations.
-    1. We will need to modify them to make it easier for users to configure whether they want to use a local service like ollama or a cloud model.
-    2. Remember, we should use the new embedding process by default, which will run natively in this rest codebase.
-2. Design a new feature for the guide that will run an embedding model in Rust to generate embeddings. 
-    1. You will need to do some research to determine what is the most reliable package used to run models like this in Rust.
-    2. Use accelerators like GPU and MPS when available, but always be able to fall back to CPU.
-    3. Use google/embeddinggemma-300m by default.
-3. Review the google/embeddinggemma-300m blog post to gain an understanding of how to use it https://huggingface.co/blog/embeddinggemma.
-    1. Pay special attention to which prompts should be used for different tasks according to this article.
+1. There is a bug on the frontend which prevents me from being able to delete a the "Trace Test" campaign. 
+    1. Clicking the "delete" button does not do anything on the frontend.
+    2. Clicking "delete" from the admin page prompts with "Delete campaign + Qdrant collection?". This needs to be updated to only say "Delete campaign?".
+2. Uploading a global document yields this error on the frontend "Failed to fetch", and the document is not ingested.
+3. The "Edit" button on a campaign only allows me to edit metadata. 
+    1. This should allow me to upload campaign documents.
+4. The Step 3 Upload Campaign Document tab also yields a "Failed to fetch" error on the frontend without ingesting the document.
+    1. There is also an existing bug on this page where after uploading the first document the frontend skips straight to step 4.
+    2. This prevents the users from being able to upload any supplemental documents.
+5. Step 5 add a character takes the user directly to the campaign page which does contain a character creation tab, but it's all the way at the bottom.
+    1. This is extremely confusing for users. We need to improve this workflow.
+    2. It may be that this world state component is no longer necessary. Review it's uses and remove if applicable.
+    3. Jumping straight to the campaign home page prevents me from continuing on past step 5.
 
-Goal: Create new feature that will enable local embedding generation via rust by default.
+Goal: Clean up the codebase and fix any found bugs.

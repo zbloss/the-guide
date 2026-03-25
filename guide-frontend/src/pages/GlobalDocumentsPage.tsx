@@ -1,8 +1,9 @@
 import { useApi } from '../hooks/useApi';
-import { listGlobalDocs, uploadGlobalDoc, getGlobalDoc, ingestGlobalDoc } from '../api/documents';
+import { listGlobalDocs, uploadGlobalDoc, getGlobalDoc, ingestGlobalDoc, deleteGlobalDoc } from '../api/documents';
 import { DocumentList } from '../components/documents/DocumentList';
 import { UploadForm } from '../components/documents/UploadForm';
 import { IngestButton } from '../components/documents/IngestButton';
+import { ConfirmButton } from '../components/common/ConfirmButton';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { ErrorBanner } from '../components/common/ErrorBanner';
 import type { GlobalDocument } from '../api/types';
@@ -12,6 +13,11 @@ export function GlobalDocumentsPage() {
 
   const handleUpload = async (file: File) => {
     await uploadGlobalDoc(file);
+    refetch();
+  };
+
+  const handleDelete = async (docId: string) => {
+    await deleteGlobalDoc(docId);
     refetch();
   };
 
@@ -33,13 +39,21 @@ export function GlobalDocumentsPage() {
           renderActions={(doc) => {
             const d = doc as GlobalDocument;
             return (
-              <IngestButton
-                docId={d.id}
-                currentStatus={d.ingestion_status}
-                onIngest={() => ingestGlobalDoc(d.id).then(() => {})}
-                onPoll={() => getGlobalDoc(d.id)}
-                onComplete={refetch}
-              />
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <IngestButton
+                  docId={d.id}
+                  currentStatus={d.ingestion_status}
+                  onIngest={() => ingestGlobalDoc(d.id).then(() => {})}
+                  onPoll={() => getGlobalDoc(d.id)}
+                  onComplete={refetch}
+                />
+                <ConfirmButton
+                  label="Delete"
+                  confirmLabel="Delete document?"
+                  variant="danger"
+                  onConfirm={() => handleDelete(d.id)}
+                />
+              </div>
             );
           }}
         />

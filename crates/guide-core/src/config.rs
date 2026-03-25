@@ -45,7 +45,7 @@ impl Default for AppConfig {
             ocr_provider: "local".into(),
             story_provider: "local".into(),
             context_window: 8192,
-            max_upload_bytes: 50 * 1024 * 1024,
+            max_upload_bytes: 500 * 1024 * 1024,
             chunk_max_chars: 2048,
             chunk_overlap_chars: 64,
             whisper_model: "whisper".into(),

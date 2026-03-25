@@ -43,9 +43,13 @@ export function CampaignsPage() {
   }, [tick]);
 
   const handleDelete = async (id: string) => {
-    await deleteCampaign(id);
-    setTick((t) => t + 1);
-    window.dispatchEvent(new CustomEvent('campaigns-changed'));
+    try {
+      await deleteCampaign(id);
+      setTick((t) => t + 1);
+      window.dispatchEvent(new CustomEvent('campaigns-changed'));
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
   };
 
   return (

@@ -50,8 +50,8 @@ export function HealthPage() {
             <tbody>
               <tr><td><strong>Backend URL</strong></td><td>http://localhost:8000</td></tr>
               <tr><td><strong>LLM Provider</strong></td><td>Ollama (local)</td></tr>
-              <tr><td><strong>Database</strong></td><td>SQLite (WAL mode)</td></tr>
-              <tr><td><strong>Vector Store</strong></td><td>Qdrant (optional)</td></tr>
+              <tr><td><strong>Database</strong></td><td>DuckDB (in-process)</td></tr>
+              <tr><td><strong>Vector Store</strong></td><td>DuckDB (embedded vectors)</td></tr>
             </tbody>
           </table>
         </div>

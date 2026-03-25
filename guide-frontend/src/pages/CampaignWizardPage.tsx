@@ -472,7 +472,20 @@ function Step3Upload({ campaign, onNext }: Step3Props) {
             </span>
           </div>
           {status === 'completed' && (
-            <div className="form-actions">
+            <div className="form-actions" style={{ gap: 8 }}>
+              <button
+                className="btn"
+                onClick={() => {
+                  setStatus('idle');
+                  setFile(null);
+                  setStatusMessage('');
+                  setError('');
+                  clearPoll();
+                  if (fileInputRef.current) fileInputRef.current.value = '';
+                }}
+              >
+                Upload Another →
+              </button>
               <button className="btn btn-primary" onClick={onNext}>
                 Next →
               </button>
@@ -492,23 +505,25 @@ interface Step4Props {
 }
 
 function Step4Characters({ campaign, onNext }: Step4Props) {
-  const navigate = useNavigate();
-
   return (
     <div>
       <h2 style={{ marginBottom: '0.5rem' }}>Step 4: Add Characters</h2>
-      <p style={{ color: 'var(--color-text-muted, #a6adc8)', marginBottom: '1.5rem', fontSize: 14 }}>
-        You can add player characters and NPCs now, or come back later from the Characters tab.
+      <p style={{ color: 'var(--color-text-muted, #a6adc8)', marginBottom: '0.75rem', fontSize: 14 }}>
+        You can add player characters and NPCs from the <strong>Characters</strong> tab on your campaign page.
       </p>
-      <div className="form-actions" style={{ gap: 8 }}>
-        <button
-          className="btn btn-primary"
-          onClick={() => navigate(`/campaigns/${campaign.id}/characters`)}
+      <p style={{ marginBottom: '1.5rem', fontSize: 14 }}>
+        <a
+          href={`/campaigns/${campaign.id}/characters`}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{ color: 'var(--color-primary, #89b4fa)' }}
         >
-          Add Characters Now
-        </button>
-        <button className="btn" onClick={onNext}>
-          Skip for now →
+          Open Characters tab in new tab ↗
+        </a>
+      </p>
+      <div className="form-actions">
+        <button className="btn btn-primary" onClick={onNext}>
+          Continue →
         </button>
       </div>
     </div>

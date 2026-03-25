@@ -19,7 +19,7 @@ pub mod templates;
 pub mod webhooks;
 
 use axum::Router;
-use tower_http::{cors::CorsLayer, services::ServeDir};
+use tower_http::services::ServeDir;
 
 use crate::state::AppState;
 use utoipa_swagger_ui::SwaggerUi;
@@ -48,6 +48,5 @@ pub fn all_routes(state: AppState) -> Router {
         .nest_service("/portraits", ServeDir::new("data/portraits"))
         .nest_service("/maps", ServeDir::new("data/maps"))
         .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", openapi::ApiDoc::openapi()))
-        .layer(CorsLayer::permissive())
         .with_state(state)
 }

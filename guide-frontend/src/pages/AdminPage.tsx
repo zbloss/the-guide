@@ -89,7 +89,7 @@ function CampaignRow({
         </td>
         <td>{campaign.game_system ?? '—'}</td>
         <td>
-          <ConfirmButton label="Delete" confirmLabel="Delete campaign + Qdrant collection?" variant="danger" onConfirm={handleDelete} />
+          <ConfirmButton label="Delete" confirmLabel="Delete campaign?" variant="danger" onConfirm={handleDelete} />
         </td>
       </tr>
       {expanded && (

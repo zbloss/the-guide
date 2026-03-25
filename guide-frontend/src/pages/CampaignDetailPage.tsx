@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useParams, NavLink, Outlet } from 'react-router-dom';
+import { useParams, NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useCampaign } from '../hooks/useCampaign';
 import { updateCampaign } from '../api/campaigns';
 import { WorldStateEditor } from '../components/campaigns/WorldStateEditor';
@@ -18,6 +18,7 @@ import { cacheItems } from '../lib/offlineDb';
 export function CampaignDetailPage() {
   const { campaignId } = useParams<{ campaignId: string }>();
   const { campaign, loading, error, refetch } = useCampaign(campaignId);
+  const navigate = useNavigate();
 
   useEffect(() => {
     if (campaign) {
@@ -107,6 +108,7 @@ export function CampaignDetailPage() {
             <h1>{campaign.name}</h1>
             <Badge label={campaign.game_system} variant="info" />
             <button className="btn btn-sm" onClick={handleEditOpen}>Edit</button>
+            <button className="btn btn-sm" onClick={() => navigate('documents')}>Upload Document</button>
             <PlotTwistModal campaignId={campaignId!} />
           </>
         )}
