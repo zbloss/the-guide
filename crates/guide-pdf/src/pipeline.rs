@@ -169,6 +169,9 @@ pub async fn ingest_campaign_document(
     doc_repo
         .update_status(doc.id, &guide_core::models::IngestionStatus::Processing, None)
         .await?;
+    doc_repo
+        .update_story_extraction_status(doc.id, "ocr_processing", None)
+        .await?;
 
     let pages = extractor::extract_pages(
         pdf_path,
@@ -188,6 +191,13 @@ pub async fn ingest_campaign_document(
         .map(|p| (p.page_num, p.raw_text.clone()))
         .collect();
     doc_repo.save_page_ocr(doc.id, &page_tuples).await?;
+
+    doc_repo
+        .update_story_extraction_status(doc.id, "chunking", None)
+        .await?;
+    doc_repo
+        .update_story_extraction_progress(doc.id, &format!("Extracted {page_count} pages"))
+        .await?;
 
     let chunks = chunker::chunk_document(&pages, config.chunk_max_chars, config.chunk_overlap_chars)
         .await?;
@@ -735,6 +745,7 @@ pub async fn extract_story(
 
     let extraction: StoryExtractionResult = if chapter_groups.len() < 2 {
         // Fallback: single-call path with v2 prompt and context.
+        doc_repo.update_story_extraction_progress(doc.id, "Analyzing document (1 section)").await.ok();
         let full_text = join_and_truncate(&chunks.iter().collect::<Vec<_>>(), max_input_chars);
         let system = guide_llm::prompts::story_extraction_system_v2(
             doc_ctx.setting_str(),
@@ -781,8 +792,21 @@ pub async fn extract_story(
         let mut results: Vec<(usize, StoryExtractionResult)> = Vec::new();
         let mut call_idx = 0usize;
         let mut prev_chapter_summary: Option<String> = None;
+        let total_chapters = chapter_groups.len();
+        let mut chapter_idx = 0usize;
+
+        // Emit total upfront so the frontend can show a scaled progress bar
+        // from the very first poll, before any chapter completes.
+        doc_repo
+            .update_story_extraction_progress(
+                doc.id,
+                &format!("Chapter 0 of {total_chapters}"),
+            )
+            .await
+            .ok();
 
         for (chapter_name, chapter_chunks) in &chapter_groups {
+            chapter_idx += 1;
             let windows = windows_for_chapter(chapter_chunks, max_input_chars);
             let window_count = windows.len();
             for (w_idx, window) in windows.into_iter().enumerate() {
@@ -843,6 +867,13 @@ pub async fn extract_story(
                                     *s = s.chars().take(2000).collect();
                                 }
                             }
+                            doc_repo
+                                .update_story_extraction_progress(
+                                    doc.id,
+                                    &format!("Chapter {chapter_idx} of {total_chapters}"),
+                                )
+                                .await
+                                .ok();
                         }
                         results.push((call_idx, r));
                     }

@@ -29,6 +29,7 @@ pub struct CampaignDocument {
     pub ingestion_error: Option<String>,
     pub story_extraction_status: String,
     pub story_extraction_error: Option<String>,
+    pub story_extraction_progress: Option<String>,
     pub ingestion_progress: Option<String>,
     pub uploaded_at: DateTime<Utc>,
     pub ingested_at: Option<DateTime<Utc>>,

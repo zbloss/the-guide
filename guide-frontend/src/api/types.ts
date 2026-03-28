@@ -835,4 +835,6 @@ export interface PrepopulatedEncounter {
 export interface StoryExtractionStatus {
   status: string;
   error: string | null;
+  progress: string | null;
+  ingestion_status: string;
 }

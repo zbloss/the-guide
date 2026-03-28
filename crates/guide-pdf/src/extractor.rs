@@ -258,6 +258,36 @@ pub struct PageExtraction {
     pub headings: Vec<String>,
 }
 
+/// Normalise raw text from the PDF text layer or OCR:
+/// - Windows/old-Mac line endings → `\n`
+/// - Tabs → single space
+/// - Multiple consecutive spaces on a line → single space
+/// - Trailing whitespace trimmed from each line
+pub(crate) fn normalize_page_text(s: &str) -> String {
+    let normalized = s.replace("\r\n", "\n").replace('\r', "\n").replace('\t', " ");
+    normalized
+        .lines()
+        .map(|line| {
+            // Collapse runs of spaces within each line.
+            let mut out = String::with_capacity(line.len());
+            let mut prev_space = false;
+            for ch in line.chars() {
+                if ch == ' ' {
+                    if !prev_space {
+                        out.push(' ');
+                    }
+                    prev_space = true;
+                } else {
+                    out.push(ch);
+                    prev_space = false;
+                }
+            }
+            out.trim_end().to_string()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 #[derive(Deserialize)]
 struct PageOcrResponse {
     raw_text: String,
@@ -672,7 +702,7 @@ async fn ocr_pages_campaign(
     for page_data in pages {
         match page_data {
             PageData::TextLayer { page_num, text, headings } => {
-                extractions.push(PageExtraction { page_num, raw_text: text, headings });
+                extractions.push(PageExtraction { page_num, raw_text: normalize_page_text(&text), headings });
             }
             PageData::NeedsOcr { page_num, jpeg, layout } => {
                 tracing::info!("Vision OCR page {page_num} ({} bytes, layout={layout})", jpeg.len());
@@ -701,7 +731,7 @@ async fn ocr_pages_campaign(
                             });
                         extractions.push(PageExtraction {
                             page_num,
-                            raw_text: page_ocr.raw_text,
+                            raw_text: normalize_page_text(&page_ocr.raw_text),
                             headings: page_ocr.headings,
                         });
                     }
@@ -1496,7 +1526,7 @@ async fn ocr_pages(
                     });
                 extractions.push(PageExtraction {
                     page_num,
-                    raw_text: page_ocr.raw_text,
+                    raw_text: normalize_page_text(&page_ocr.raw_text),
                     headings: page_ocr.headings,
                 });
             }

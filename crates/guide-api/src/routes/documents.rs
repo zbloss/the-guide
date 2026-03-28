@@ -171,6 +171,7 @@ async fn upload_document(
         ingestion_error: None,
         story_extraction_status: "pending".to_string(),
         story_extraction_error: None,
+        story_extraction_progress: None,
         ingestion_progress: None,
         uploaded_at: Utc::now(),
         ingested_at: None,
@@ -240,6 +241,9 @@ async fn ingest_document(
             let repo = DocumentRepository::new(&db);
             let _ = repo
                 .update_status(doc_id, &IngestionStatus::Failed, Some(&e.to_string()))
+                .await;
+            let _ = repo
+                .update_story_extraction_status(doc_id, "failed", Some(&e.to_string()))
                 .await;
         }
     });
@@ -502,6 +506,8 @@ async fn get_document_pages(
 struct StoryExtractionStatusResponse {
     status: String,
     error: Option<String>,
+    progress: Option<String>,
+    ingestion_status: String,
 }
 
 async fn story_extraction_status(
@@ -510,9 +516,12 @@ async fn story_extraction_status(
 ) -> Result<impl IntoResponse, crate::error::AppError> {
     let repo = DocumentRepository::new(&state.db);
     let doc = repo.get_by_id(doc_id).await?;
+    let ingestion_status = format!("{:?}", doc.ingestion_status).to_lowercase();
     Ok(Json(StoryExtractionStatusResponse {
         status: doc.story_extraction_status,
         error: doc.story_extraction_error,
+        progress: doc.story_extraction_progress,
+        ingestion_status,
     }))
 }
 

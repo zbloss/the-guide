@@ -83,6 +83,7 @@ async fn run_migrations(pool: &DuckDbPool) -> Result<()> {
             ("002_lore_chunks", include_str!("../migrations/002_lore_chunks.sql")),
             ("003_ingestion_progress", include_str!("../migrations/003_ingestion_progress.sql")),
             ("004_document_navigation", include_str!("../migrations/004_document_navigation.sql")),
+            ("005_story_extraction_progress", include_str!("../migrations/005_story_extraction_progress.sql")),
         ];
 
         for (name, sql) in migrations {

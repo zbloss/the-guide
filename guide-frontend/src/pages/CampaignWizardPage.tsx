@@ -330,6 +330,21 @@ function Step3Upload({ campaign, onNext }: Step3Props) {
     }
   };
 
+  const [extractionProgress, setExtractionProgress] = useState<string | null>(null);
+  const [chapterCurrent, setChapterCurrent] = useState<number | null>(null);
+  const [chapterTotal, setChapterTotal] = useState<number | null>(null);
+
+  const phaseLabel = (apiStatus: string): string => {
+    switch (apiStatus) {
+      case 'pending':        return 'Waiting to start…';
+      case 'ocr_processing': return 'Extracting PDF text…';
+      case 'chunking':       return 'Building text chunks…';
+      case 'processing':     return 'Extracting story…';
+      case 'completed':      return 'Story extraction complete!';
+      default:               return `Processing… (${apiStatus})`;
+    }
+  };
+
   const pollExtractionStatus = (campaignId: string, docId: string) => {
     clearPoll();
     const check = async () => {
@@ -338,11 +353,23 @@ function Step3Upload({ campaign, onNext }: Step3Props) {
         if (result.status === 'completed') {
           setStatus('completed');
           setStatusMessage('Story extraction complete!');
+          setExtractionProgress(null);
         } else if (result.status === 'failed') {
           setStatus('failed');
           setStatusMessage(result.error ?? 'Story extraction failed.');
+          setExtractionProgress(null);
         } else {
-          setStatusMessage(`Extracting story… (${result.status})`);
+          setStatusMessage(phaseLabel(result.status));
+          setExtractionProgress(result.progress ?? null);
+          // Parse "Chapter N of M" for progress bar
+          const match = result.progress?.match(/Chapter (\d+) of (\d+)/i);
+          if (match) {
+            setChapterCurrent(parseInt(match[1], 10));
+            setChapterTotal(parseInt(match[2], 10));
+          } else {
+            setChapterCurrent(null);
+            setChapterTotal(null);
+          }
           pollRef.current = setTimeout(check, 3000);
         }
       } catch {
@@ -464,13 +491,50 @@ function Step3Upload({ campaign, onNext }: Step3Props) {
         </>
       ) : (
         <div style={{ marginTop: '1rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: '1rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: '0.5rem' }}>
             {status !== 'completed' && <LoadingSpinner />}
             <Badge label={status} variant={statusVariant()} />
             <span style={{ fontSize: 14, color: 'var(--color-text-muted, #a6adc8)' }}>
               {statusMessage}
             </span>
           </div>
+          {status !== 'completed' && status !== 'failed' && (
+            <>
+              {chapterCurrent !== null && chapterTotal !== null && chapterTotal > 0 ? (
+                <div style={{ marginBottom: '0.75rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
+                    <span style={{ fontSize: 13, color: 'var(--color-text-muted, #a6adc8)' }}>
+                      {chapterCurrent === 0
+                        ? `Starting ${chapterTotal} chapter${chapterTotal !== 1 ? 's' : ''}…`
+                        : `${chapterCurrent} of ${chapterTotal} chapter${chapterTotal !== 1 ? 's' : ''} done`}
+                    </span>
+                    <span style={{ fontSize: 12, color: 'var(--color-text-dim, #6c7086)' }}>
+                      {chapterTotal - chapterCurrent > 0
+                        ? `${chapterTotal - chapterCurrent} remaining`
+                        : 'Finishing up…'}
+                    </span>
+                  </div>
+                  <div className="progress-bar-track" style={{ marginBottom: 0 }}>
+                    <div
+                      className="progress-bar-fill"
+                      style={{ width: `${Math.round((chapterCurrent / chapterTotal) * 100)}%` }}
+                    />
+                  </div>
+                </div>
+              ) : (
+                <>
+                  {extractionProgress && (
+                    <div style={{ fontSize: 12, color: 'var(--color-text-muted, #a6adc8)', marginBottom: 4 }}>
+                      {extractionProgress}
+                    </div>
+                  )}
+                  <div className="progress-bar-track" style={{ marginBottom: '0.75rem' }}>
+                    <div className="progress-bar-fill progress-bar-fill--indeterminate" />
+                  </div>
+                </>
+              )}
+            </>
+          )}
           {status === 'completed' && (
             <div className="form-actions" style={{ gap: 8 }}>
               <button

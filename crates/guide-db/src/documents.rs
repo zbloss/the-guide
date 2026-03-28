@@ -130,6 +130,20 @@ impl DocumentRepository {
         .await
     }
 
+    pub async fn update_story_extraction_progress(&self, doc_id: Uuid, progress: &str) -> Result<()> {
+        let progress = progress.to_string();
+        let id_str = doc_id.to_string();
+        with_db(&self.pool, move |conn| {
+            conn.execute(
+                "UPDATE campaign_documents SET story_extraction_progress = ? WHERE id = ?",
+                duckdb::params![progress, id_str],
+            )
+            .map_err(|e| GuideError::Internal(e.to_string()))?;
+            Ok(())
+        })
+        .await
+    }
+
     pub async fn update_story_extraction_status(
         &self,
         doc_id: Uuid,
@@ -413,6 +427,7 @@ fn row_to_doc(row: &duckdb::Row) -> duckdb::Result<CampaignDocument> {
         ingestion_error: row.get("ingestion_error")?,
         story_extraction_status,
         story_extraction_error,
+        story_extraction_progress: row.get("story_extraction_progress").unwrap_or(None),
         ingestion_progress: row.get("ingestion_progress").unwrap_or(None),
         uploaded_at: parse_dt(&uploaded_at_str),
         ingested_at: ingested_at_str.as_deref().map(parse_dt),
