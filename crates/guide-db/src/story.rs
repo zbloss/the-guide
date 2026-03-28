@@ -1,12 +1,15 @@
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
+use std::collections::HashMap;
+
 use guide_core::{
     models::{
         ArcPoint, ArcStatus, CharacterArc, CharacterArcInput, MonsterHint, PrepopulatedEncounter,
         PrepopulatedEncounterInput, StoryArc, StoryArcInput, StoryEvent, StoryEventInput,
-        StoryEventType, StoryFaction, StoryFactionInput, StoryLocation, StoryLocationInput,
-        StoryNpc, StoryNpcInput, StorySignificance, StorySubplot, StorySubplotInput, SubplotStatus,
+        StoryEventType, StoryExtractionResult, StoryFaction, StoryFactionInput, StoryLocation,
+        StoryLocationInput, StoryNpc, StoryNpcInput, StorySignificance, StorySubplot,
+        StorySubplotInput, SubplotStatus,
     },
     GuideError, Result,
 };
@@ -31,7 +34,8 @@ impl StoryRepository {
         input: StoryArcInput,
     ) -> Result<StoryArc> {
         let id = Uuid::new_v4();
-        let now = Utc::now().to_rfc3339();
+        let now_dt = Utc::now();
+        let now = now_dt.to_rfc3339();
         let id_str = id.to_string();
         let campaign_id_str = campaign_id.to_string();
         let source_doc_id_str = source_doc_id.to_string();
@@ -51,7 +55,18 @@ impl StoryRepository {
         })
         .await?;
 
-        self.get_arc(id).await
+        Ok(StoryArc {
+            id,
+            campaign_id,
+            source_doc_id,
+            title: input.title,
+            description: input.description,
+            arc_order: input.arc_order,
+            status: ArcStatus::Open,
+            dm_notes: None,
+            created_at: now_dt,
+            updated_at: now_dt,
+        })
     }
 
     pub async fn list_arcs(&self, campaign_id: Uuid) -> Result<Vec<StoryArc>> {
@@ -131,7 +146,10 @@ impl StoryRepository {
         input: StoryEventInput,
     ) -> Result<StoryEvent> {
         let id = Uuid::new_v4();
-        let now = Utc::now().to_rfc3339();
+        let now_dt = Utc::now();
+        let now = now_dt.to_rfc3339();
+        let event_type = input.event_type.clone();
+        let significance = input.significance.clone();
         let event_type_str = match input.event_type {
             StoryEventType::Combat => "combat",
             StoryEventType::Social => "social",
@@ -153,6 +171,7 @@ impl StoryRepository {
             StorySignificance::Pivotal => "pivotal",
             StorySignificance::Climax => "climax",
         };
+        let involved_characters = input.involved_characters.clone();
         let involved_json = serde_json::to_string(&input.involved_characters)
             .map_err(|e| GuideError::Internal(e.to_string()))?;
 
@@ -164,19 +183,18 @@ impl StoryRepository {
         let description = input.description.clone();
         let location = input.location.clone();
         let event_order = input.event_order;
-        let is_dm_only = input.is_dm_only as i32;
 
         with_db(&self.pool, move |conn| {
             conn.execute(
                 "INSERT INTO story_events \
                  (id, campaign_id, arc_id, source_doc_id, title, description, event_type, \
-                  significance, location, involved_characters, event_order, is_dm_only, \
+                  significance, location, involved_characters, event_order, \
                   dm_notes, created_at, updated_at) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)",
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)",
                 duckdb::params![
                     id_str, campaign_id_str, arc_id_str, source_doc_id_str,
                     title, description, event_type_str, significance_str,
-                    location, involved_json, event_order, is_dm_only, now, now
+                    location, involved_json, event_order, now, now
                 ],
             )
             .map_err(|e| GuideError::Internal(e.to_string()))?;
@@ -184,7 +202,22 @@ impl StoryRepository {
         })
         .await?;
 
-        self.get_event(id).await
+        Ok(StoryEvent {
+            id,
+            campaign_id,
+            arc_id,
+            source_doc_id,
+            title: input.title,
+            description: input.description,
+            event_type,
+            significance,
+            location: input.location,
+            involved_characters,
+            event_order: input.event_order,
+            dm_notes: None,
+            created_at: now_dt,
+            updated_at: now_dt,
+        })
     }
 
     pub async fn list_events(&self, campaign_id: Uuid) -> Result<Vec<StoryEvent>> {
@@ -193,7 +226,7 @@ impl StoryRepository {
             query_all(
                 conn,
                 "SELECT id, campaign_id, arc_id, source_doc_id, title, description, event_type, \
-                 significance, location, involved_characters, event_order, is_dm_only, \
+                 significance, location, involved_characters, event_order, \
                  dm_notes, created_at, updated_at \
                  FROM story_events WHERE campaign_id = ? ORDER BY event_order ASC",
                 [&id_str],
@@ -209,7 +242,7 @@ impl StoryRepository {
             query_all(
                 conn,
                 "SELECT id, campaign_id, arc_id, source_doc_id, title, description, event_type, \
-                 significance, location, involved_characters, event_order, is_dm_only, \
+                 significance, location, involved_characters, event_order, \
                  dm_notes, created_at, updated_at \
                  FROM story_events WHERE arc_id = ? ORDER BY event_order ASC",
                 [&id_str],
@@ -225,7 +258,7 @@ impl StoryRepository {
             query_one(
                 conn,
                 "SELECT id, campaign_id, arc_id, source_doc_id, title, description, event_type, \
-                 significance, location, involved_characters, event_order, is_dm_only, \
+                 significance, location, involved_characters, event_order, \
                  dm_notes, created_at, updated_at \
                  FROM story_events WHERE id = ?",
                 [&id_str],
@@ -262,7 +295,8 @@ impl StoryRepository {
         input: StorySubplotInput,
     ) -> Result<StorySubplot> {
         let id = Uuid::new_v4();
-        let now = Utc::now().to_rfc3339();
+        let now_dt = Utc::now();
+        let now = now_dt.to_rfc3339();
         let id_str = id.to_string();
         let campaign_id_str = campaign_id.to_string();
         let arc_id_str = arc_id.map(|a| a.to_string());
@@ -286,23 +320,18 @@ impl StoryRepository {
         })
         .await?;
 
-        self.get_subplot(id).await
-    }
-
-    async fn get_subplot(&self, subplot_id: Uuid) -> Result<StorySubplot> {
-        let id_str = subplot_id.to_string();
-        with_db(&self.pool, move |conn| {
-            query_one(
-                conn,
-                "SELECT id, campaign_id, arc_id, source_doc_id, title, description, status, \
-                 dm_notes, created_at, updated_at \
-                 FROM story_subplots WHERE id = ?",
-                [&id_str],
-                row_to_subplot,
-                format!("StorySubplot {subplot_id}"),
-            )
+        Ok(StorySubplot {
+            id,
+            campaign_id,
+            arc_id,
+            source_doc_id,
+            title: input.title,
+            description: input.description,
+            status: SubplotStatus::Open,
+            dm_notes: None,
+            created_at: now_dt,
+            updated_at: now_dt,
         })
-        .await
     }
 
     pub async fn list_subplots(&self, campaign_id: Uuid) -> Result<Vec<StorySubplot>> {
@@ -369,7 +398,8 @@ impl StoryRepository {
         input: CharacterArcInput,
     ) -> Result<CharacterArc> {
         let id = Uuid::new_v4();
-        let now = Utc::now().to_rfc3339();
+        let now_dt = Utc::now();
+        let now = now_dt.to_rfc3339();
         let arc_points_json = serde_json::to_string(&input.arc_points)
             .map_err(|e| GuideError::Internal(e.to_string()))?;
         let id_str = id.to_string();
@@ -394,23 +424,18 @@ impl StoryRepository {
         })
         .await?;
 
-        self.get_character_arc(id).await
-    }
-
-    async fn get_character_arc(&self, arc_id: Uuid) -> Result<CharacterArc> {
-        let id_str = arc_id.to_string();
-        with_db(&self.pool, move |conn| {
-            query_one(
-                conn,
-                "SELECT id, campaign_id, character_name, character_id, source_doc_id, description, \
-                 arc_points, dm_notes, created_at, updated_at \
-                 FROM character_arcs WHERE id = ?",
-                [&id_str],
-                row_to_character_arc,
-                format!("CharacterArc {arc_id}"),
-            )
+        Ok(CharacterArc {
+            id,
+            campaign_id,
+            character_name: input.character_name,
+            character_id: None,
+            source_doc_id,
+            description: input.description,
+            arc_points: input.arc_points,
+            dm_notes: None,
+            created_at: now_dt,
+            updated_at: now_dt,
         })
-        .await
     }
 
     pub async fn list_character_arcs(&self, campaign_id: Uuid) -> Result<Vec<CharacterArc>> {
@@ -458,7 +483,8 @@ impl StoryRepository {
         input: PrepopulatedEncounterInput,
     ) -> Result<PrepopulatedEncounter> {
         let id = Uuid::new_v4();
-        let now = Utc::now().to_rfc3339();
+        let now_dt = Utc::now();
+        let now = now_dt.to_rfc3339();
         let monsters_json = serde_json::to_string(&input.monsters)
             .map_err(|e| GuideError::Internal(e.to_string()))?;
         let id_str = id.to_string();
@@ -486,7 +512,20 @@ impl StoryRepository {
         })
         .await?;
 
-        self.get_prepopulated_encounter(id).await
+        Ok(PrepopulatedEncounter {
+            id,
+            campaign_id,
+            story_event_id,
+            source_doc_id,
+            name: input.name,
+            description: input.description,
+            location: input.location,
+            difficulty_hint: input.difficulty_hint,
+            monsters: input.monsters,
+            dm_notes: None,
+            created_at: now_dt,
+            updated_at: now_dt,
+        })
     }
 
     pub async fn get_prepopulated_encounter(
@@ -546,6 +585,260 @@ impl StoryRepository {
         .await
     }
 
+    /// Persist an entire story extraction result in a single connection.
+    ///
+    /// Deletes any existing data for the document, then inserts all arcs, events,
+    /// subplots, character arcs, encounters, NPCs, locations, and factions in one
+    /// database connection to avoid DuckDB connection-pool assertion failures that
+    /// occur when hundreds of individual insert calls each check out a new connection.
+    pub async fn persist_story_batch(
+        &self,
+        campaign_id: Uuid,
+        source_doc_id: Uuid,
+        extraction: StoryExtractionResult,
+    ) -> Result<()> {
+        let campaign_id_str = campaign_id.to_string();
+        let source_doc_id_str = source_doc_id.to_string();
+
+        with_db(&self.pool, move |conn| {
+            // Guard against stack overflows in DuckDB's VARCHAR processing when
+            // LLMs produce very long descriptions.
+            fn trunc(s: &str, max: usize) -> &str {
+                if s.len() <= max { s } else { &s[..max] }
+            }
+
+            // ── delete existing data for this document (auto-committed) ─────────
+            // DuckDB 1.2 FK enforcement does not see in-transaction deletes from
+            // child tables when checking FK constraints for parent table deletes.
+            // Running DELETEs outside a transaction avoids this issue.
+            // FK-safe order: children before parents.
+            for table in &[
+                "prepopulated_encounters", // child of story_events
+                "story_events",            // child of story_arcs
+                "story_subplots",          // child of story_arcs
+                "story_arcs",              // parent
+                "character_arcs",
+                "story_npcs",
+                "story_locations",
+                "story_factions",
+            ] {
+                conn.execute(
+                    &format!("DELETE FROM {table} WHERE source_doc_id = ?"),
+                    [&source_doc_id_str],
+                )
+                .map_err(|e| GuideError::Internal(e.to_string()))?;
+            }
+
+            conn.execute("BEGIN", [])
+                .map_err(|e| GuideError::Internal(e.to_string()))?;
+
+            let result = (|| {
+            // ── arcs ────────────────────────────────────────────────────────────
+            let mut arc_title_to_id: HashMap<String, String> = HashMap::new();
+            for arc in extraction.arcs {
+                let id = Uuid::new_v4().to_string();
+                let now = Utc::now().to_rfc3339();
+                conn.execute(
+                    "INSERT INTO story_arcs \
+                     (id, campaign_id, source_doc_id, title, description, arc_order, status, \
+                      dm_notes, created_at, updated_at) \
+                     VALUES (?, ?, ?, ?, ?, ?, 'open', NULL, ?, ?)",
+                    duckdb::params![
+                        id, campaign_id_str, source_doc_id_str,
+                        trunc(&arc.title, 512), trunc(&arc.description, 8192), arc.arc_order, now, now
+                    ],
+                )
+                .map_err(|e| GuideError::Internal(e.to_string()))?;
+                arc_title_to_id.insert(arc.title.to_lowercase(), id);
+            }
+
+            // ── events ──────────────────────────────────────────────────────────
+            let mut event_title_to_id: HashMap<String, String> = HashMap::new();
+            for ev in extraction.events {
+                let id = Uuid::new_v4().to_string();
+                let now = Utc::now().to_rfc3339();
+                let arc_id_str = ev.arc_title.as_ref()
+                    .and_then(|t| arc_title_to_id.get(&t.to_lowercase()))
+                    .cloned();
+                let event_type_str = match ev.event_type {
+                    StoryEventType::Combat => "combat",
+                    StoryEventType::Social => "social",
+                    StoryEventType::Revelation => "revelation",
+                    StoryEventType::Travel => "travel",
+                    StoryEventType::Rest => "rest",
+                    StoryEventType::Discovery => "discovery",
+                    StoryEventType::Puzzle => "puzzle",
+                    StoryEventType::Trap => "trap",
+                    StoryEventType::Boss => "boss",
+                    StoryEventType::QuestGiven => "quest_given",
+                    StoryEventType::NpcInteraction => "npc_interaction",
+                };
+                let significance_str = match ev.significance {
+                    StorySignificance::Minor => "minor",
+                    StorySignificance::Major => "major",
+                    StorySignificance::Trivial => "trivial",
+                    StorySignificance::Moderate => "moderate",
+                    StorySignificance::Pivotal => "pivotal",
+                    StorySignificance::Climax => "climax",
+                };
+                let involved_json = serde_json::to_string(&ev.involved_characters)
+                    .map_err(|e| GuideError::Internal(e.to_string()))?;
+                conn.execute(
+                    "INSERT INTO story_events \
+                     (id, campaign_id, arc_id, source_doc_id, title, description, event_type, \
+                      significance, location, involved_characters, event_order, \
+                      dm_notes, created_at, updated_at) \
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)",
+                    duckdb::params![
+                        id, campaign_id_str, arc_id_str, source_doc_id_str,
+                        trunc(&ev.title, 512), trunc(&ev.description, 8192), event_type_str, significance_str,
+                        ev.location.as_deref().map(|s| trunc(s, 512)), involved_json, ev.event_order, now, now
+                    ],
+                )
+                .map_err(|e| GuideError::Internal(e.to_string()))?;
+                event_title_to_id.insert(ev.title.to_lowercase(), id);
+            }
+
+            // ── subplots ─────────────────────────────────────────────────────────
+            for sp in extraction.subplots {
+                let id = Uuid::new_v4().to_string();
+                let now = Utc::now().to_rfc3339();
+                let arc_id_str = sp.arc_title.as_ref()
+                    .and_then(|t| arc_title_to_id.get(&t.to_lowercase()))
+                    .cloned();
+                conn.execute(
+                    "INSERT INTO story_subplots \
+                     (id, campaign_id, arc_id, source_doc_id, title, description, status, \
+                      dm_notes, created_at, updated_at) \
+                     VALUES (?, ?, ?, ?, ?, ?, 'open', NULL, ?, ?)",
+                    duckdb::params![
+                        id, campaign_id_str, arc_id_str, source_doc_id_str,
+                        trunc(&sp.title, 512), trunc(&sp.description, 8192), now, now
+                    ],
+                )
+                .map_err(|e| GuideError::Internal(e.to_string()))?;
+            }
+
+            // ── character arcs ───────────────────────────────────────────────────
+            for ca in extraction.character_arcs {
+                let id = Uuid::new_v4().to_string();
+                let now = Utc::now().to_rfc3339();
+                let arc_points_json = serde_json::to_string(&ca.arc_points)
+                    .map_err(|e| GuideError::Internal(e.to_string()))?;
+                conn.execute(
+                    "INSERT INTO character_arcs \
+                     (id, campaign_id, character_name, character_id, source_doc_id, description, \
+                      arc_points, dm_notes, created_at, updated_at) \
+                     VALUES (?, ?, ?, NULL, ?, ?, ?, NULL, ?, ?)",
+                    duckdb::params![
+                        id, campaign_id_str, trunc(&ca.character_name, 512), source_doc_id_str,
+                        trunc(&ca.description, 8192), arc_points_json, now, now
+                    ],
+                )
+                .map_err(|e| GuideError::Internal(e.to_string()))?;
+            }
+
+            // ── prepopulated encounters ───────────────────────────────────────────
+            for enc in extraction.encounters {
+                let id = Uuid::new_v4().to_string();
+                let now = Utc::now().to_rfc3339();
+                let story_event_id_str = enc.story_event_title.as_ref()
+                    .and_then(|t| event_title_to_id.get(&t.to_lowercase()))
+                    .cloned();
+                let monsters_json = serde_json::to_string(&enc.monsters)
+                    .map_err(|e| GuideError::Internal(e.to_string()))?;
+                conn.execute(
+                    "INSERT INTO prepopulated_encounters \
+                     (id, campaign_id, story_event_id, source_doc_id, name, description, location, \
+                      difficulty_hint, monsters, dm_notes, created_at, updated_at) \
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)",
+                    duckdb::params![
+                        id, campaign_id_str, story_event_id_str, source_doc_id_str,
+                        trunc(&enc.name, 512), trunc(&enc.description, 8192),
+                        enc.location.as_deref().map(|s| trunc(s, 512)),
+                        enc.difficulty_hint.as_deref().map(|s| trunc(s, 128)),
+                        monsters_json, now, now
+                    ],
+                )
+                .map_err(|e| GuideError::Internal(e.to_string()))?;
+            }
+
+            // ── NPCs ─────────────────────────────────────────────────────────────
+            for npc in extraction.npcs {
+                let id = Uuid::new_v4().to_string();
+                let now = Utc::now().to_rfc3339();
+                if let Err(e) = conn.execute(
+                    "INSERT INTO story_npcs \
+                     (id, campaign_id, source_doc_id, name, role, description, location, \
+                      dm_notes, created_at, updated_at) \
+                     VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)",
+                    duckdb::params![
+                        id, campaign_id_str, source_doc_id_str,
+                        trunc(&npc.name, 512), trunc(&npc.role, 256),
+                        trunc(&npc.description, 8192),
+                        npc.location.as_deref().map(|s| trunc(s, 512)), now, now
+                    ],
+                ) {
+                    tracing::warn!("NPC insert failed: {e}");
+                }
+            }
+
+            // ── locations ────────────────────────────────────────────────────────
+            for loc in extraction.locations {
+                let id = Uuid::new_v4().to_string();
+                let now = Utc::now().to_rfc3339();
+                if let Err(e) = conn.execute(
+                    "INSERT INTO story_locations \
+                     (id, campaign_id, source_doc_id, name, description, location_type, \
+                      dm_notes, created_at, updated_at) \
+                     VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)",
+                    duckdb::params![
+                        id, campaign_id_str, source_doc_id_str,
+                        trunc(&loc.name, 512), trunc(&loc.description, 8192),
+                        trunc(&loc.location_type, 128), now, now
+                    ],
+                ) {
+                    tracing::warn!("Location insert failed: {e}");
+                }
+            }
+
+            // ── factions ─────────────────────────────────────────────────────────
+            for faction in extraction.factions {
+                let id = Uuid::new_v4().to_string();
+                let now = Utc::now().to_rfc3339();
+                if let Err(e) = conn.execute(
+                    "INSERT INTO story_factions \
+                     (id, campaign_id, source_doc_id, name, description, alignment_hint, \
+                      dm_notes, created_at, updated_at) \
+                     VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)",
+                    duckdb::params![
+                        id, campaign_id_str, source_doc_id_str,
+                        trunc(&faction.name, 512), trunc(&faction.description, 8192),
+                        faction.alignment_hint.as_deref().map(|s| trunc(s, 128)), now, now
+                    ],
+                ) {
+                    tracing::warn!("Faction insert failed: {e}");
+                }
+            }
+
+            Ok(())
+            })();
+
+            match result {
+                Ok(()) => {
+                    conn.execute("COMMIT", [])
+                        .map_err(|e| GuideError::Internal(e.to_string()))?;
+                    Ok(())
+                }
+                Err(e) => {
+                    let _ = conn.execute("ROLLBACK", []);
+                    Err(e)
+                }
+            }
+        })
+        .await
+    }
+
     /// Delete all story data sourced from a specific document.
     pub async fn delete_all_for_doc(&self, doc_id: Uuid) -> Result<()> {
         let doc_id_str = doc_id.to_string();
@@ -580,7 +873,8 @@ impl StoryRepository {
         input: StoryNpcInput,
     ) -> Result<StoryNpc> {
         let id = Uuid::new_v4();
-        let now = Utc::now().to_rfc3339();
+        let now_dt = Utc::now();
+        let now = now_dt.to_rfc3339();
         let id_str = id.to_string();
         let campaign_id_str = campaign_id.to_string();
         let source_doc_id_str = source_doc_id.to_string();
@@ -588,17 +882,16 @@ impl StoryRepository {
         let role = input.role.clone();
         let description = input.description.clone();
         let location = input.location.clone();
-        let is_dm_only = input.is_dm_only as i32;
 
         with_db(&self.pool, move |conn| {
             conn.execute(
                 "INSERT INTO story_npcs \
                  (id, campaign_id, source_doc_id, name, role, description, location, \
-                  is_dm_only, dm_notes, created_at, updated_at) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)",
+                  dm_notes, created_at, updated_at) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)",
                 duckdb::params![
                     id_str, campaign_id_str, source_doc_id_str,
-                    name, role, description, location, is_dm_only, now, now
+                    name, role, description, location, now, now
                 ],
             )
             .map_err(|e| GuideError::Internal(e.to_string()))?;
@@ -606,23 +899,20 @@ impl StoryRepository {
         })
         .await?;
 
-        self.get_npc(id).await
-    }
-
-    async fn get_npc(&self, npc_id: Uuid) -> Result<StoryNpc> {
-        let id_str = npc_id.to_string();
-        with_db(&self.pool, move |conn| {
-            query_one(
-                conn,
-                "SELECT id, campaign_id, source_doc_id, name, role, description, location, \
-                 is_dm_only, dm_notes, created_at, updated_at \
-                 FROM story_npcs WHERE id = ?",
-                [&id_str],
-                row_to_npc,
-                format!("StoryNpc {npc_id}"),
-            )
+        // Construct return value from known insert parameters to avoid a
+        // SELECT round-trip that triggers a DuckDB FlatVector null assertion.
+        Ok(StoryNpc {
+            id,
+            campaign_id,
+            source_doc_id,
+            name: input.name,
+            role: input.role,
+            description: input.description,
+            location: input.location,
+            dm_notes: None,
+            created_at: now_dt,
+            updated_at: now_dt,
         })
-        .await
     }
 
     pub async fn list_npcs(&self, campaign_id: Uuid) -> Result<Vec<StoryNpc>> {
@@ -631,7 +921,7 @@ impl StoryRepository {
             query_all(
                 conn,
                 "SELECT id, campaign_id, source_doc_id, name, role, description, location, \
-                 is_dm_only, dm_notes, created_at, updated_at \
+                 dm_notes, created_at, updated_at \
                  FROM story_npcs WHERE campaign_id = ? ORDER BY name ASC",
                 [&id_str],
                 row_to_npc,
@@ -649,7 +939,8 @@ impl StoryRepository {
         input: StoryLocationInput,
     ) -> Result<StoryLocation> {
         let id = Uuid::new_v4();
-        let now = Utc::now().to_rfc3339();
+        let now_dt = Utc::now();
+        let now = now_dt.to_rfc3339();
         let id_str = id.to_string();
         let campaign_id_str = campaign_id.to_string();
         let source_doc_id_str = source_doc_id.to_string();
@@ -673,23 +964,17 @@ impl StoryRepository {
         })
         .await?;
 
-        self.get_location(id).await
-    }
-
-    async fn get_location(&self, location_id: Uuid) -> Result<StoryLocation> {
-        let id_str = location_id.to_string();
-        with_db(&self.pool, move |conn| {
-            query_one(
-                conn,
-                "SELECT id, campaign_id, source_doc_id, name, description, location_type, \
-                 dm_notes, created_at, updated_at \
-                 FROM story_locations WHERE id = ?",
-                [&id_str],
-                row_to_location,
-                format!("StoryLocation {location_id}"),
-            )
+        Ok(StoryLocation {
+            id,
+            campaign_id,
+            source_doc_id,
+            name: input.name,
+            description: input.description,
+            location_type: input.location_type,
+            dm_notes: None,
+            created_at: now_dt,
+            updated_at: now_dt,
         })
-        .await
     }
 
     pub async fn list_locations(&self, campaign_id: Uuid) -> Result<Vec<StoryLocation>> {
@@ -716,7 +1001,8 @@ impl StoryRepository {
         input: StoryFactionInput,
     ) -> Result<StoryFaction> {
         let id = Uuid::new_v4();
-        let now = Utc::now().to_rfc3339();
+        let now_dt = Utc::now();
+        let now = now_dt.to_rfc3339();
         let id_str = id.to_string();
         let campaign_id_str = campaign_id.to_string();
         let source_doc_id_str = source_doc_id.to_string();
@@ -740,23 +1026,17 @@ impl StoryRepository {
         })
         .await?;
 
-        self.get_faction(id).await
-    }
-
-    async fn get_faction(&self, faction_id: Uuid) -> Result<StoryFaction> {
-        let id_str = faction_id.to_string();
-        with_db(&self.pool, move |conn| {
-            query_one(
-                conn,
-                "SELECT id, campaign_id, source_doc_id, name, description, alignment_hint, \
-                 dm_notes, created_at, updated_at \
-                 FROM story_factions WHERE id = ?",
-                [&id_str],
-                row_to_faction,
-                format!("StoryFaction {faction_id}"),
-            )
+        Ok(StoryFaction {
+            id,
+            campaign_id,
+            source_doc_id,
+            name: input.name,
+            description: input.description,
+            alignment_hint: input.alignment_hint,
+            dm_notes: None,
+            created_at: now_dt,
+            updated_at: now_dt,
         })
-        .await
     }
 
     pub async fn list_factions(&self, campaign_id: Uuid) -> Result<Vec<StoryFaction>> {
@@ -824,7 +1104,6 @@ fn row_to_event(row: &duckdb::Row) -> duckdb::Result<StoryEvent> {
     let event_type_str: String = row.get::<_, Option<String>>("event_type")?.unwrap_or_else(|| "combat".to_string());
     let significance_str: String = row.get::<_, Option<String>>("significance")?.unwrap_or_else(|| "minor".to_string());
     let involved_json: String = row.get::<_, Option<String>>("involved_characters")?.unwrap_or_else(|| "[]".to_string());
-    let is_dm_only_int: i32 = row.get::<_, Option<i32>>("is_dm_only")?.unwrap_or(0);
     let created_at_str: String = row.get("created_at")?;
     let updated_at_str: String = row.get("updated_at")?;
 
@@ -867,7 +1146,6 @@ fn row_to_event(row: &duckdb::Row) -> duckdb::Result<StoryEvent> {
         location: row.get("location")?,
         involved_characters,
         event_order: row.get::<_, Option<i32>>("event_order")?.unwrap_or(0),
-        is_dm_only: is_dm_only_int != 0,
         dm_notes: row.get("dm_notes")?,
         created_at: parse_dt(&created_at_str),
         updated_at: parse_dt(&updated_at_str),
@@ -959,7 +1237,6 @@ fn row_to_npc(row: &duckdb::Row) -> duckdb::Result<StoryNpc> {
     let id_str: String = row.get("id")?;
     let campaign_id_str: String = row.get("campaign_id")?;
     let source_doc_id_str: String = row.get("source_doc_id")?;
-    let is_dm_only_int: i32 = row.get::<_, Option<i32>>("is_dm_only")?.unwrap_or(0);
     let created_at_str: String = row.get("created_at")?;
     let updated_at_str: String = row.get("updated_at")?;
 
@@ -971,7 +1248,6 @@ fn row_to_npc(row: &duckdb::Row) -> duckdb::Result<StoryNpc> {
         role: row.get::<_, Option<String>>("role")?.unwrap_or_else(|| "neutral".to_string()),
         description: row.get::<_, Option<String>>("description")?.unwrap_or_default(),
         location: row.get("location")?,
-        is_dm_only: is_dm_only_int != 0,
         dm_notes: row.get("dm_notes")?,
         created_at: parse_dt(&created_at_str),
         updated_at: parse_dt(&updated_at_str),

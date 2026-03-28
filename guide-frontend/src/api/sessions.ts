@@ -1,5 +1,5 @@
 import { apiGet, apiPost, apiDelete, BASE_URL } from './client';
-import type { Session, SessionEvent, SessionSummary, CreateSessionRequest, CreateSessionEventRequest, Perspective, ImprovPromptResponse, TranscribeResponse } from './types';
+import type { Session, SessionEvent, SessionSummary, CreateSessionRequest, CreateSessionEventRequest, ImprovPromptResponse, TranscribeResponse } from './types';
 
 export async function uploadSessionMap(campaignId: string, sessionId: string, file: File): Promise<Session> {
   const form = new FormData();
@@ -44,8 +44,8 @@ export function createEvent(campaignId: string, sessionId: string, data: CreateS
   return apiPost<SessionEvent>(`/campaigns/${campaignId}/sessions/${sessionId}/events`, data);
 }
 
-export function getSessionSummary(campaignId: string, sessionId: string, perspective: Perspective): Promise<SessionSummary> {
-  return apiGet<SessionSummary>(`/campaigns/${campaignId}/sessions/${sessionId}/summary?perspective=${perspective}`);
+export function getSessionSummary(campaignId: string, sessionId: string): Promise<SessionSummary> {
+  return apiGet<SessionSummary>(`/campaigns/${campaignId}/sessions/${sessionId}/summary`);
 }
 
 export function deleteEvent(campaignId: string, sessionId: string, eventId: string): Promise<void> {
@@ -56,8 +56,8 @@ export function getImprovPrompt(campaignId: string, sessionId: string): Promise<
   return apiPost<ImprovPromptResponse>(`/campaigns/${campaignId}/sessions/${sessionId}/improv-prompt`);
 }
 
-export async function exportSessionSummary(campaignId: string, sessionId: string, perspective: string = 'dm'): Promise<void> {
-  const response = await fetch(`${BASE_URL}/campaigns/${campaignId}/sessions/${sessionId}/summary/export?perspective=${perspective}`, { method: 'GET' });
+export async function exportSessionSummary(campaignId: string, sessionId: string): Promise<void> {
+  const response = await fetch(`${BASE_URL}/campaigns/${campaignId}/sessions/${sessionId}/summary/export`, { method: 'GET' });
   if (!response.ok) throw new Error('Export failed');
   const blob = await response.blob();
   const url = URL.createObjectURL(blob);

@@ -203,7 +203,6 @@ function EventRow({ event, campaignId }: EventRowProps) {
         </span>
         <Badge label={event.event_type} variant="info" />
         <Badge label={event.significance} variant={significanceVariant(event.significance)} />
-        {event.is_dm_only && <Badge label="DM Only" variant="danger" />}
         {event.location && (
           <span style={{ fontSize: 12, color: 'var(--color-text-muted, #a6adc8)' }}>
             @ {event.location}

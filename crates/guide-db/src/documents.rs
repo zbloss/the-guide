@@ -13,7 +13,6 @@ use crate::{query_all, query_one, with_db, DuckDbPool};
 pub struct PageOcrRow {
     pub page_num: i64,
     pub raw_text: String,
-    pub is_dm_only: bool,
 }
 
 pub struct DocumentRepository {
@@ -180,16 +179,15 @@ impl DocumentRepository {
         .await
     }
 
-    pub async fn save_page_ocr(&self, doc_id: Uuid, pages: &[(u32, String, bool)]) -> Result<()> {
+    pub async fn save_page_ocr(&self, doc_id: Uuid, pages: &[(u32, String)]) -> Result<()> {
         let doc_id_str = doc_id.to_string();
-        let pages: Vec<(String, i64, String, i64)> = pages
+        let pages: Vec<(String, i64, String)> = pages
             .iter()
-            .map(|(page_num, raw_text, is_dm_only)| {
+            .map(|(page_num, raw_text)| {
                 (
                     Uuid::new_v4().to_string(),
                     *page_num as i64,
                     raw_text.clone(),
-                    if *is_dm_only { 1i64 } else { 0i64 },
                 )
             })
             .collect();
@@ -202,12 +200,12 @@ impl DocumentRepository {
             )
             .map_err(|e| GuideError::Internal(e.to_string()))?;
 
-            for (row_id, page_num, raw_text, is_dm_only) in &pages {
+            for (row_id, page_num, raw_text) in &pages {
                 conn.execute(
                     "INSERT INTO document_page_ocr \
-                     (id, document_id, page_num, raw_text, is_dm_only) \
-                     VALUES (?, ?, ?, ?, ?)",
-                    duckdb::params![row_id, doc_id_str, page_num, raw_text, is_dm_only],
+                     (id, document_id, page_num, raw_text) \
+                     VALUES (?, ?, ?, ?)",
+                    duckdb::params![row_id, doc_id_str, page_num, raw_text],
                 )
                 .map_err(|e| GuideError::Internal(e.to_string()))?;
             }
@@ -221,17 +219,15 @@ impl DocumentRepository {
         with_db(&self.pool, move |conn| {
             query_all(
                 conn,
-                "SELECT page_num, raw_text, is_dm_only \
+                "SELECT page_num, raw_text \
                  FROM document_page_ocr WHERE document_id = ? ORDER BY page_num ASC",
                 [&id_str],
                 |row| {
                     let page_num: i64 = row.get("page_num")?;
                     let raw_text: String = row.get("raw_text")?;
-                    let is_dm_only_int: i64 = row.get("is_dm_only")?;
                     Ok(PageOcrRow {
                         page_num,
                         raw_text,
-                        is_dm_only: is_dm_only_int != 0,
                     })
                 },
             )
@@ -417,6 +413,7 @@ fn row_to_doc(row: &duckdb::Row) -> duckdb::Result<CampaignDocument> {
         ingestion_error: row.get("ingestion_error")?,
         story_extraction_status,
         story_extraction_error,
+        ingestion_progress: row.get("ingestion_progress").unwrap_or(None),
         uploaded_at: parse_dt(&uploaded_at_str),
         ingested_at: ingested_at_str.as_deref().map(parse_dt),
     })
@@ -443,6 +440,7 @@ fn row_to_global_doc(row: &duckdb::Row) -> duckdb::Result<GlobalDocument> {
             .unwrap_or(DocumentKind::DmGuide),
         ingestion_status: str_to_ingestion_status(&status_str),
         ingestion_error: row.get("ingestion_error")?,
+        ingestion_progress: row.get("ingestion_progress").unwrap_or(None),
         uploaded_at: parse_dt(&uploaded_at_str),
         ingested_at: ingested_at_str.as_deref().map(parse_dt),
     })

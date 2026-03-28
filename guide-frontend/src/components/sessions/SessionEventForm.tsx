@@ -14,7 +14,6 @@ export function SessionEventForm({ characters, onSubmit, onCancel, initialDescri
   const [eventType, setEventType] = useState<EventType>('combat');
   const [description, setDescription] = useState(initialDescription ?? '');
   const [significance, setSignificance] = useState<EventSignificance>('minor');
-  const [playerVisible, setPlayerVisible] = useState(true);
   const [selectedChars, setSelectedChars] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
@@ -33,7 +32,6 @@ export function SessionEventForm({ characters, onSubmit, onCancel, initialDescri
         event_type: eventType,
         description: description.trim(),
         significance,
-        is_player_visible: playerVisible,
         involved_character_ids: selectedChars,
       });
     } catch (err: unknown) {
@@ -63,13 +61,6 @@ export function SessionEventForm({ characters, onSubmit, onCancel, initialDescri
 
       <FormField label="Description" htmlFor="ev-desc">
         <textarea id="ev-desc" className="form-input" value={description} onChange={(e) => setDescription(e.target.value)} rows={3} required />
-      </FormField>
-
-      <FormField label="Player Visible">
-        <label className="checkbox-label">
-          <input type="checkbox" checked={playerVisible} onChange={(e) => setPlayerVisible(e.target.checked)} />
-          <span>Visible to players</span>
-        </label>
       </FormField>
 
       {characters.length > 0 && (

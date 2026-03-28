@@ -5,7 +5,7 @@ pub mod prompts;
 pub mod router;
 
 pub use client::{
-    AudioRequest, CompletionRequest, CompletionResponse, EmbeddingHint, EmbeddingRequest,
+    CompletionRequest, CompletionResponse, EmbeddingHint, EmbeddingRequest,
     LlmClient, LlmTask, Message, MessageRole, VisionRequest,
 };
 pub use cloud::CloudProvider;

@@ -1,4 +1,5 @@
 pub mod calendar;
+pub mod navigation;
 pub mod campaign_global_docs;
 pub mod campaigns;
 pub mod characters;
@@ -80,6 +81,8 @@ async fn run_migrations(pool: &DuckDbPool) -> Result<()> {
         let migrations: &[(&str, &str)] = &[
             ("001_schema", include_str!("../migrations/001_schema.sql")),
             ("002_lore_chunks", include_str!("../migrations/002_lore_chunks.sql")),
+            ("003_ingestion_progress", include_str!("../migrations/003_ingestion_progress.sql")),
+            ("004_document_navigation", include_str!("../migrations/004_document_navigation.sql")),
         ];
 
         for (name, sql) in migrations {

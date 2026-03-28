@@ -45,9 +45,6 @@ export function OcrPreviewModal({ campaignId, docId, filename, onClose }: OcrPre
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
             <span style={{ fontWeight: 600 }}>Page {page.page_num} of {pages.length}</span>
-            {page.is_dm_only && (
-              <span className="badge badge-warning" style={{ fontSize: '0.75rem' }}>DM ONLY</span>
-            )}
           </div>
 
           <pre style={{

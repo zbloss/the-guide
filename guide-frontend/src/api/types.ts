@@ -50,8 +50,6 @@ export type EventSignificance = 'minor' | 'major' | 'milestone';
 
 export type IngestionStatus = 'pending' | 'processing' | 'completed' | 'failed';
 
-export type Perspective = 'dm';
-
 export type DocumentKind = 'dm_guide' | 'monster_manual' | 'srd' | 'campaign' | 'supplemental';
 
 export type GeneratedEncounterType = 'combat' | 'social' | 'exploration' | 'puzzle' | 'mixed';
@@ -227,14 +225,12 @@ export interface SessionEvent {
   event_type: EventType;
   description: string;
   significance: EventSignificance;
-  is_player_visible: boolean;
   involved_character_ids: string[];
   occurred_at: string;
 }
 
 export interface SessionSummary {
   session_id: string;
-  perspective: Perspective;
   content: string;
   generated_at: string;
 }
@@ -255,7 +251,6 @@ export interface CampaignDocument {
 export interface DocumentPageOcr {
   page_num: number;
   raw_text: string;
-  is_dm_only: boolean;
 }
 
 export interface GlobalDocument {
@@ -469,7 +464,6 @@ export interface ChatMessage {
   campaign_id: string;
   role: 'user' | 'assistant';
   content: string;
-  perspective: string;
   created_at: string;
 }
 
@@ -485,7 +479,6 @@ export interface CreateSessionEventRequest {
   event_type: EventType;
   description: string;
   significance: EventSignificance;
-  is_player_visible: boolean;
   involved_character_ids?: string[];
 }
 
@@ -534,7 +527,6 @@ export interface GenerateRequest {
 
 export interface ChatRequest {
   message: string;
-  perspective: Perspective;
 }
 
 // ==================== Homebrew Rules ====================
@@ -794,7 +786,6 @@ export interface StoryEvent {
   location: string | null;
   involved_characters: string[];
   event_order: number;
-  is_dm_only: boolean;
   dm_notes: string | null;
   created_at: string;
   updated_at: string;

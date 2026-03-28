@@ -1,9 +1,11 @@
 use async_openai::{
     config::OpenAIConfig,
     types::{
-        ChatCompletionRequestMessage, ChatCompletionRequestSystemMessageArgs,
-        ChatCompletionRequestUserMessageArgs, CreateChatCompletionRequestArgs,
-        CreateEmbeddingRequestArgs, ResponseFormat,
+        ChatCompletionRequestMessage, ChatCompletionRequestMessageContentPartImage,
+        ChatCompletionRequestMessageContentPartText, ChatCompletionRequestSystemMessageArgs,
+        ChatCompletionRequestUserMessageArgs, ChatCompletionRequestUserMessageContent,
+        ChatCompletionRequestUserMessageContentPart, CreateChatCompletionRequestArgs,
+        CreateEmbeddingRequestArgs, ImageUrl, ResponseFormat,
     },
     Client,
 };
@@ -15,7 +17,7 @@ use tracing::{debug, instrument, warn};
 use guide_core::{GuideError, Result};
 
 use crate::client::{
-    AudioRequest, CompletionRequest, CompletionResponse, EmbeddingRequest, LlmClient, MessageRole,
+    CompletionRequest, CompletionResponse, EmbeddingRequest, LlmClient, MessageRole,
     VisionRequest,
 };
 
@@ -33,7 +35,9 @@ const MAX_DELAY_MS: u64 = 90_000;
 /// - Gemini: "resource_exhausted", "429", "quota"
 /// - OpenAI: "rate_limit_exceeded", "too_many_requests"
 fn is_rate_limited(err: &GuideError) -> bool {
-    let GuideError::Llm(msg) = err else { return false };
+    let GuideError::Llm(msg) = err else {
+        return false;
+    };
     let m = msg.to_lowercase();
     m.contains("429")
         || m.contains("resource_exhausted")
@@ -62,8 +66,7 @@ where
                 let delay_ms = (BASE_DELAY_MS * (1u64 << (attempt - 1))).min(MAX_DELAY_MS);
                 warn!(
                     attempt,
-                    delay_ms,
-                    "Cloud provider rate-limited (429); retrying after backoff"
+                    delay_ms, "Cloud provider rate-limited (429); retrying after backoff"
                 );
                 tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
             }
@@ -130,7 +133,11 @@ impl CloudProvider {
 impl LlmClient for CloudProvider {
     #[instrument(skip(self, req), fields(provider = %self.provider_label))]
     async fn complete(&self, req: CompletionRequest) -> Result<CompletionResponse> {
-        let model = req.model_override.as_deref().unwrap_or(&self.model).to_string();
+        let model = req
+            .model_override
+            .as_deref()
+            .unwrap_or(&self.model)
+            .to_string();
         debug!(?model, "CloudProvider::complete");
 
         // Build messages once — cheap and infallible once built.
@@ -155,7 +162,9 @@ impl LlmClient for CloudProvider {
                 if req.json_mode {
                     builder.response_format(ResponseFormat::JsonObject);
                 }
-                let request = builder.build().map_err(|e| GuideError::Llm(e.to_string()))?;
+                let request = builder
+                    .build()
+                    .map_err(|e| GuideError::Llm(e.to_string()))?;
 
                 let response = client
                     .chat()
@@ -194,7 +203,11 @@ impl LlmClient for CloudProvider {
         use async_openai::types::CreateChatCompletionStreamResponse;
         use futures::StreamExt;
 
-        let model = req.model_override.as_deref().unwrap_or(&self.model).to_string();
+        let model = req
+            .model_override
+            .as_deref()
+            .unwrap_or(&self.model)
+            .to_string();
         let messages = Self::build_chat_messages(&req.messages)?;
 
         // For streaming we retry the stream *creation* (before any data flows).
@@ -210,8 +223,9 @@ impl LlmClient for CloudProvider {
                 if let Some(temp) = temperature {
                     builder.temperature(temp);
                 }
-                let request =
-                    builder.build().map_err(|e| GuideError::Llm(e.to_string()))?;
+                let request = builder
+                    .build()
+                    .map_err(|e| GuideError::Llm(e.to_string()))?;
 
                 client
                     .chat()
@@ -222,21 +236,20 @@ impl LlmClient for CloudProvider {
         })
         .await?;
 
-        let mapped =
-            stream.map(|result: std::result::Result<CreateChatCompletionStreamResponse, _>| {
-                match result {
-                    Ok(resp) => {
-                        let token = resp
-                            .choices
-                            .into_iter()
-                            .next()
-                            .and_then(|c| c.delta.content)
-                            .unwrap_or_default();
-                        Ok(token)
-                    }
-                    Err(e) => Err(GuideError::Llm(e.to_string())),
+        let mapped = stream.map(
+            |result: std::result::Result<CreateChatCompletionStreamResponse, _>| match result {
+                Ok(resp) => {
+                    let token = resp
+                        .choices
+                        .into_iter()
+                        .next()
+                        .and_then(|c| c.delta.content)
+                        .unwrap_or_default();
+                    Ok(token)
                 }
-            });
+                Err(e) => Err(GuideError::Llm(e.to_string())),
+            },
+        );
 
         Ok(Box::pin(mapped))
     }
@@ -273,7 +286,11 @@ impl LlmClient for CloudProvider {
     }
 
     async fn complete_with_vision(&self, req: VisionRequest) -> Result<CompletionResponse> {
-        let model = req.model_override.as_deref().unwrap_or(&self.model).to_string();
+        let model = req
+            .model_override
+            .as_deref()
+            .unwrap_or(&self.model)
+            .to_string();
 
         // Base64-encode the image once before entering the retry loop.
         let encoded = STANDARD.encode(&req.image_bytes);
@@ -288,20 +305,29 @@ impl LlmClient for CloudProvider {
             let prompt = req.prompt.clone();
             let provider_label = provider_label.clone();
             async move {
-                let content_parts = serde_json::json!([
-                    { "type": "image_url", "image_url": { "url": data_url } },
-                    { "type": "text", "text": prompt }
+                let content = ChatCompletionRequestUserMessageContent::Array(vec![
+                    ChatCompletionRequestUserMessageContentPart::ImageUrl(
+                        ChatCompletionRequestMessageContentPartImage {
+                            image_url: ImageUrl {
+                                url: data_url,
+                                detail: None,
+                            },
+                        },
+                    ),
+                    ChatCompletionRequestUserMessageContentPart::Text(
+                        ChatCompletionRequestMessageContentPartText { text: prompt },
+                    ),
                 ]);
 
                 let mut builder = CreateChatCompletionRequestArgs::default();
-                builder.model(model.clone()).messages(vec![
-                    ChatCompletionRequestMessage::User(
+                builder
+                    .model(model.clone())
+                    .messages(vec![ChatCompletionRequestMessage::User(
                         ChatCompletionRequestUserMessageArgs::default()
-                            .content(content_parts.to_string())
+                            .content(content)
                             .build()
                             .map_err(|e| GuideError::Llm(e.to_string()))?,
-                    ),
-                ]);
+                    )]);
                 if let Some(temp) = req.temperature {
                     builder.temperature(temp);
                 }
@@ -311,8 +337,9 @@ impl LlmClient for CloudProvider {
                 if let Some(top_p) = req.top_p {
                     builder.top_p(top_p);
                 }
-                let request =
-                    builder.build().map_err(|e| GuideError::Llm(e.to_string()))?;
+                let request = builder
+                    .build()
+                    .map_err(|e| GuideError::Llm(e.to_string()))?;
 
                 let response = client
                     .chat()
@@ -342,12 +369,6 @@ impl LlmClient for CloudProvider {
             }
         })
         .await
-    }
-
-    async fn transcribe(&self, _req: AudioRequest) -> Result<String> {
-        Err(GuideError::Llm(
-            "audio transcription not supported for cloud provider".to_string(),
-        ))
     }
 
     fn provider_name(&self) -> &str {

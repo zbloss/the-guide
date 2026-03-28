@@ -58,6 +58,9 @@ pub fn router() -> Router<AppState> {
             "/campaigns/{id}/story/encounters/{eid}/activate",
             post(activate_encounter),
         )
+        .route("/campaigns/{id}/story/npcs", get(list_npcs))
+        .route("/campaigns/{id}/story/locations", get(list_locations))
+        .route("/campaigns/{id}/story/factions", get(list_factions))
 }
 
 #[derive(Deserialize)]
@@ -229,4 +232,28 @@ async fn activate_encounter(
     Ok(Json(ActivateResponse {
         encounter_id: encounter.id,
     }))
+}
+
+async fn list_npcs(
+    State(state): State<AppState>,
+    Path(campaign_id): Path<Uuid>,
+) -> Result<impl IntoResponse, crate::error::AppError> {
+    let repo = StoryRepository::new(&state.db);
+    Ok(Json(repo.list_npcs(campaign_id).await?))
+}
+
+async fn list_locations(
+    State(state): State<AppState>,
+    Path(campaign_id): Path<Uuid>,
+) -> Result<impl IntoResponse, crate::error::AppError> {
+    let repo = StoryRepository::new(&state.db);
+    Ok(Json(repo.list_locations(campaign_id).await?))
+}
+
+async fn list_factions(
+    State(state): State<AppState>,
+    Path(campaign_id): Path<Uuid>,
+) -> Result<impl IntoResponse, crate::error::AppError> {
+    let repo = StoryRepository::new(&state.db);
+    Ok(Json(repo.list_factions(campaign_id).await?))
 }

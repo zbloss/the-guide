@@ -24,7 +24,6 @@ export function SessionEventList({ events, onDelete }: SessionEventListProps) {
           <th>Type</th>
           <th>Description</th>
           <th>Significance</th>
-          <th>Visible</th>
           <th>Time</th>
           {onDelete && <th></th>}
         </tr>
@@ -35,7 +34,6 @@ export function SessionEventList({ events, onDelete }: SessionEventListProps) {
             <td><Badge label={ev.event_type} variant="info" /></td>
             <td>{ev.description}</td>
             <td><Badge label={ev.significance} variant={SIG_VARIANT[ev.significance] ?? 'default'} /></td>
-            <td>{ev.is_player_visible ? '✓' : '—'}</td>
             <td>{new Date(ev.occurred_at).toLocaleTimeString(undefined, { timeZoneName: 'short' })}</td>
             {onDelete && (
               <td>

@@ -43,6 +43,7 @@ export function GlobalDocumentsPage() {
                 <IngestButton
                   docId={d.id}
                   currentStatus={d.ingestion_status}
+                  ingestionProgress={d.ingestion_progress}
                   onIngest={() => ingestGlobalDoc(d.id).then(() => {})}
                   onPoll={() => getGlobalDoc(d.id)}
                   onComplete={refetch}

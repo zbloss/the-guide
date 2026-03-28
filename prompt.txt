@@ -1,18 +1,22 @@
-Background: Now that we have migrated to using local embedding models within our rust code, moved our vectors from qdrant to duckdb, and moved off of sqlite onto duckdb, we now have some lingering legacy code and bugs that need to be fixed. I plan on selling this software so having it run cleanly and without bugs is key. Review the bugs that I have found and look for similar ones that can be cleaned up.
+Background: We have now added the ability for an AI Agent to handle the story extraction. Because of this, I'm not sure if we still need a RAG system at all. We need to explore if we need a RAG system by testing how powerful the AI Agent is. Create a feature flag to disable the rag system entirely and then disable the RAG system. Now to do a proper test, we will need to first research what open source LLM's will perform best for this task. We will give the user the option to use cloud based LLMs like Gemini and Claude as well, but for my local testing using an open source model is much more cost effective. Review the goal of the story extraction pipeline and use the Huggingface MCP tools to research what models will perform best. I am using an nvidia rtx 4070 with 12GB of VRAM to test, though my users may be on even cheaper hardware. Once you have gathered a list of candidate models, I need you to test each of them to see which perform the best given the current prompts. Choose the two best performing models and then optimize the prompts to get the best results. Use this PDF for your testing as it is a real-world scenario of what these models will need to handle: "C:\Users\altoz\Documents\dnd\Land of Vampires\Land of Vampires Full Campaign.pdf".
+
+**NOTE**: Know that what I'm asking of you is an extremely large and complicated task. It could take over an hour to test each model plus additional time to then evaluate the prompt and it's outputs. Be sure to document what still needs to be done in your AI_AGENT_RESEARCH_TODO.md file just in case we run into a session limit and need to pick up this work at a later time.
+
+**NOTE**: It is extremely important that you keep a log of how many tokens in and out we are processing for each model in this PDF ingestion. We will use these numbers to extrapolate expected costs from using cloud based models like claude and gemini. Log each call to the LLM with the number of tokens in and out to AI_AGENT_RESEARCH.md
 
 Tasks:
-1. There is a bug on the frontend which prevents me from being able to delete a the "Trace Test" campaign. 
-    1. Clicking the "delete" button does not do anything on the frontend.
-    2. Clicking "delete" from the admin page prompts with "Delete campaign + Qdrant collection?". This needs to be updated to only say "Delete campaign?".
-2. Uploading a global document yields this error on the frontend "Failed to fetch", and the document is not ingested.
-3. The "Edit" button on a campaign only allows me to edit metadata. 
-    1. This should allow me to upload campaign documents.
-4. The Step 3 Upload Campaign Document tab also yields a "Failed to fetch" error on the frontend without ingesting the document.
-    1. There is also an existing bug on this page where after uploading the first document the frontend skips straight to step 4.
-    2. This prevents the users from being able to upload any supplemental documents.
-5. Step 5 add a character takes the user directly to the campaign page which does contain a character creation tab, but it's all the way at the bottom.
-    1. This is extremely confusing for users. We need to improve this workflow.
-    2. It may be that this world state component is no longer necessary. Review it's uses and remove if applicable.
-    3. Jumping straight to the campaign home page prevents me from continuing on past step 5.
+1. Create a feature flag to disable RAG ingestion, which will speed up your testing.
+    1. Once created, disable RAG ingestion.
+2. Review the goal of the story extraction pipeline to gain a deep understanding of what we need the AI Agent to accomplish.
+3. Research which open source models on the huggingface hub will perform best as the brain for our AI Agent. You should store all of your notes within AI_AGENT_RESEARCH.md.
+    1. Consider the hardware constraints of the average user, which may be significantly less powerful than my own RTX 4070 with 12GB of VRAM.
+    2. Gather a list of candidate models to test.
+    3. Test each of them and evaluate the results of those models, summarize their strengths and weaknesses.
+    4. You may need to learn how to pull models so that they can be used by ollama.
+        1. In short, if a model is available natively in ollama you can simply run `ollama pull <model_name>:<specific_tag>`.
+        2. If the model is not available natively in ollama, look for a GGUF variant in the huggingface hub, the organization `ggml-org` and `unsloth` are great resources for GGUF variants. You can then use these models via `ollama pull hf.co/<organization>/<model_name>:<quantization_tag>`
+4. Once you have narrowed in on the top two performing models, optimize the prompts to get the best results from each model.
+5. Compare the results of the two models and choose the best one.
+6. Return a report of your findings, including the best model and the optimized prompts in AI_AGENT_RESEARCH.md.
 
-Goal: Clean up the codebase and fix any found bugs.
+Goal: Evaluate if the RAG system is still needed by testing the AI Agent's ability to handle story extraction without RAG. Evaluate various LLMs to serve as the brain of our AI Agent.

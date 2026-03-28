@@ -6,11 +6,10 @@ pub struct DocumentChunk {
     pub content: String,
     pub page_range: (u32, u32),
     pub section_path: String,
-    pub is_player_visible: bool,
 }
 
 pub async fn chunk_document(
-    pages: Vec<PageExtraction>,
+    pages: &[PageExtraction],
     chunk_max_chars: usize,
     chunk_overlap_chars: usize,
 ) -> Result<Vec<DocumentChunk>> {
@@ -26,11 +25,9 @@ pub async fn chunk_document(
     let mut current_lines: Vec<String> = Vec::new();
     let mut current_page_start: u32 = 0;
     let mut current_page_end: u32 = 0;
-    let mut current_is_dm_only = false;
 
-    for page in &pages {
+    for page in pages {
         let page_num = page.page_num;
-        let is_dm_only = page.is_dm_only;
 
         for line in page.raw_text.lines() {
             let trimmed = line.trim();
@@ -41,7 +38,6 @@ pub async fn chunk_document(
                         content: current_lines.join("\n"),
                         page_range: (current_page_start, current_page_end),
                         section_path: section_path(&heading_stack),
-                        is_player_visible: !current_is_dm_only,
                     });
                     current_lines.clear();
                 }
@@ -62,13 +58,9 @@ pub async fn chunk_document(
 
                 current_page_start = page_num;
                 current_page_end = page_num;
-                current_is_dm_only = is_dm_only;
             } else {
                 current_lines.push(line.to_string());
                 current_page_end = page_num;
-                if is_dm_only {
-                    current_is_dm_only = true;
-                }
             }
         }
     }
@@ -78,7 +70,6 @@ pub async fn chunk_document(
             content: current_lines.join("\n"),
             page_range: (current_page_start, current_page_end),
             section_path: section_path(&heading_stack),
-            is_player_visible: !current_is_dm_only,
         });
     }
 
@@ -93,7 +84,6 @@ pub async fn chunk_document(
             content: all_text,
             page_range: (0, last_page),
             section_path: String::new(),
-            is_player_visible: !pages.iter().any(|p| p.is_dm_only),
         });
     }
 
@@ -109,7 +99,6 @@ pub async fn chunk_document(
                 content,
                 page_range: candidate.page_range,
                 section_path: candidate.section_path,
-                is_player_visible: candidate.is_player_visible,
             });
         } else {
             let sub_chunks = split_at_sentences(&candidate.content, chunk_max);
@@ -125,7 +114,6 @@ pub async fn chunk_document(
                     content,
                     page_range: candidate.page_range,
                     section_path: candidate.section_path.clone(),
-                    is_player_visible: candidate.is_player_visible,
                 });
             }
         }
@@ -138,7 +126,6 @@ struct SectionCandidate {
     content: String,
     page_range: (u32, u32),
     section_path: String,
-    is_player_visible: bool,
 }
 
 fn looks_like_heading(line: &str) -> bool {

@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::shared::{EventSignificance, EventType, Perspective};
+use super::shared::{EventSignificance, EventType};
 
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct Session {
@@ -26,7 +26,6 @@ pub struct SessionEvent {
     pub event_type: EventType,
     pub description: String,
     pub significance: EventSignificance,
-    pub is_player_visible: bool,
     pub involved_character_ids: Vec<Uuid>,
     pub occurred_at: DateTime<Utc>,
 }
@@ -34,7 +33,6 @@ pub struct SessionEvent {
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct SessionSummary {
     pub session_id: Uuid,
-    pub perspective: Perspective,
     pub content: String,
     pub generated_at: DateTime<Utc>,
 }
@@ -50,7 +48,6 @@ pub struct CreateSessionEventRequest {
     pub event_type: EventType,
     pub description: String,
     pub significance: Option<EventSignificance>,
-    pub is_player_visible: Option<bool>,
     pub involved_character_ids: Option<Vec<Uuid>>,
 }
 

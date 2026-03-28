@@ -21,9 +21,9 @@ impl CampaignGlobalDocRepository {
 
         with_db(&self.pool, move |conn| {
             conn.execute(
-                "INSERT OR IGNORE INTO campaign_global_docs (campaign_id, global_doc_id) \
-                 VALUES (?, ?)",
-                duckdb::params![campaign_id_str, global_doc_id_str],
+                "INSERT OR IGNORE INTO campaign_global_docs (campaign_id, global_doc_id, added_at) \
+                 VALUES (?, ?, ?)",
+                duckdb::params![campaign_id_str, global_doc_id_str, Utc::now().to_rfc3339()],
             )
             .map_err(|e| GuideError::Internal(e.to_string()))?;
             Ok(())
@@ -141,6 +141,7 @@ impl CampaignGlobalDocRepository {
                         .unwrap_or(guide_core::models::DocumentKind::DmGuide),
                     ingestion_status,
                     ingestion_error,
+                    ingestion_progress: None,
                     uploaded_at: parse_dt(&uploaded_at_str),
                     ingested_at: ingested_at_str.as_deref().map(parse_dt),
                 });

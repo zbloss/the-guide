@@ -7,7 +7,7 @@ use guide_embed::LocalEmbedder;
 
 use crate::{
     client::{
-        AudioRequest, CompletionRequest, CompletionResponse, EmbeddingHint, EmbeddingRequest,
+        CompletionRequest, CompletionResponse, EmbeddingHint, EmbeddingRequest,
         LlmClient, LlmTask, VisionRequest,
     },
     CloudProvider, OllamaProvider,
@@ -57,7 +57,6 @@ impl LlmRouter {
             &config.default_model,
             &config.ocr_model,
             &config.embedding_model,
-            &config.whisper_model,
         );
         Self::new(
             RoutingStrategy::AlwaysLocal,
@@ -88,7 +87,6 @@ impl LlmRouter {
             &config.default_model,
             &config.ocr_model,
             &config.embedding_model,
-            &config.whisper_model,
         );
 
         let cloud: Option<Arc<dyn LlmClient>> = if needs_cloud {
@@ -125,17 +123,19 @@ impl LlmRouter {
                 story = story_uses_cloud,
                 "Cloud provider initialised"
             );
-            Some(Arc::new(CloudProvider::new(api_key, model, base_url, label)))
+            Some(Arc::new(CloudProvider::new(
+                api_key, model, base_url, label,
+            )))
         } else {
             None
         };
 
         // Initialise local embedder when embedding_provider = "local" (the default).
         let local_embedder = if config.embedding_provider == "local" {
-            match LocalEmbedder::from_pretrained(&config.local_embedding_model).await {
+            match LocalEmbedder::from_pretrained(&config.embedding_model).await {
                 Ok(e) => {
                     tracing::info!(
-                        model = %config.local_embedding_model,
+                        model = %config.embedding_model,
                         "Local embedder ready"
                     );
                     Some(Arc::new(e))
@@ -151,8 +151,7 @@ impl LlmRouter {
             None
         };
 
-        let embedding_uses_cloud =
-            config.embedding_provider == "cloud" && cloud.is_some();
+        let embedding_uses_cloud = config.embedding_provider == "cloud" && cloud.is_some();
 
         Self::new(
             RoutingStrategy::AlwaysLocal,
@@ -183,9 +182,11 @@ impl LlmRouter {
 
         match &self.strategy {
             RoutingStrategy::AlwaysLocal => Arc::clone(&self.local),
-            RoutingStrategy::AlwaysCloud { .. } => {
-                self.cloud.as_ref().map(Arc::clone).unwrap_or_else(|| Arc::clone(&self.local))
-            }
+            RoutingStrategy::AlwaysCloud { .. } => self
+                .cloud
+                .as_ref()
+                .map(Arc::clone)
+                .unwrap_or_else(|| Arc::clone(&self.local)),
         }
     }
 
@@ -239,18 +240,11 @@ impl LlmClient for LlmRouter {
     async fn complete_with_vision(&self, req: VisionRequest) -> Result<CompletionResponse> {
         if self.ocr_uses_cloud {
             let cloud = self.cloud.as_ref().ok_or_else(|| {
-                GuideError::Internal(
-                    "Cloud provider required for OCR but not initialised".into(),
-                )
+                GuideError::Internal("Cloud provider required for OCR but not initialised".into())
             })?;
             return cloud.complete_with_vision(req).await;
         }
         self.local.complete_with_vision(req).await
-    }
-
-    async fn transcribe(&self, req: AudioRequest) -> Result<String> {
-        // Transcription is always local — Whisper runs via Ollama.
-        self.local.transcribe(req).await
     }
 
     fn provider_name(&self) -> &str {

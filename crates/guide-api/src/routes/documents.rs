@@ -48,6 +48,10 @@ pub fn router() -> Router<AppState> {
             "/campaigns/{campaign_id}/documents/{doc_id}/story-extraction-status",
             get(story_extraction_status),
         )
+        .route(
+            "/campaigns/{campaign_id}/documents/{doc_id}/re-extract-story",
+            post(re_extract_story),
+        )
         // Campaign ↔ GlobalDoc associations
         .route(
             "/campaigns/{campaign_id}/global-docs",
@@ -167,6 +171,7 @@ async fn upload_document(
         ingestion_error: None,
         story_extraction_status: "pending".to_string(),
         story_extraction_error: None,
+        ingestion_progress: None,
         uploaded_at: Utc::now(),
         ingested_at: None,
     };
@@ -235,6 +240,32 @@ async fn ingest_document(
             let repo = DocumentRepository::new(&db);
             let _ = repo
                 .update_status(doc_id, &IngestionStatus::Failed, Some(&e.to_string()))
+                .await;
+        }
+    });
+
+    Ok(StatusCode::ACCEPTED)
+}
+
+async fn re_extract_story(
+    State(state): State<AppState>,
+    Path((_campaign_id, doc_id)): Path<(Uuid, Uuid)>,
+) -> Result<impl IntoResponse, crate::error::AppError> {
+    let repo = DocumentRepository::new(&state.db);
+    let doc = repo.get_by_id(doc_id).await?;
+
+    let llm = state.llm.clone();
+    let config = state.config.as_ref().clone();
+    let db = state.db.clone();
+
+    tokio::spawn(async move {
+        let result =
+            guide_pdf::pipeline::re_extract_story_from_stored_ocr(&doc, llm, &db, &config).await;
+        if let Err(e) = result {
+            tracing::error!("Re-extract story failed for doc {doc_id}: {e}");
+            let repo = DocumentRepository::new(&db);
+            let _ = repo
+                .update_story_extraction_status(doc_id, "failed", Some(&e.to_string()))
                 .await;
         }
     });
@@ -326,6 +357,7 @@ async fn upload_global(
         document_kind,
         ingestion_status: IngestionStatus::Pending,
         ingestion_error: None,
+        ingestion_progress: None,
         uploaded_at: Utc::now(),
         ingested_at: None,
     };
@@ -545,7 +577,6 @@ async fn search_rules(
     let chunks = query_indexes(
         &params.q,
         None,
-        false,
         state.llm.as_ref(),
         &state.db,
     )
@@ -566,7 +597,6 @@ async fn search_campaign_document(
     let chunks = query_indexes(
         &params.q,
         Some(campaign_id),
-        false,
         state.llm.as_ref(),
         &state.db,
     )

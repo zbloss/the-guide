@@ -22,11 +22,15 @@ pub struct AppConfig {
     pub max_upload_bytes: u64,
     pub chunk_max_chars: usize,
     pub chunk_overlap_chars: usize,
-    pub whisper_model: String,
     /// Embedding provider: "local" | "ollama" | "cloud"  (default: "local")
     pub embedding_provider: String,
-    /// HuggingFace model ID used when embedding_provider = "local"
-    pub local_embedding_model: String,
+    /// Hard cap on characters sent per chapter in story extraction, independent
+    /// of context_window.  Prevents runaway prompts when context_window is
+    /// misconfigured (e.g. GUIDE__CONTEXT_WINDOW=1000000).  Default: 20 000.
+    pub max_chapter_chars: usize,
+    /// When false, skips vector embedding during ingestion and RAG retrieval during chat.
+    /// Set GUIDE__ENABLE_RAG=false to disable. Default: true.
+    pub enable_rag: bool,
 }
 
 impl Default for AppConfig {
@@ -37,7 +41,7 @@ impl Default for AppConfig {
             database_url: "./data/guide.db".into(),
             ollama_base_url: "http://localhost:11434/v1".into(),
             default_model: "qwen3.5:9b".into(),
-            embedding_model: "nomic-embed-text".into(),
+            embedding_model: "onnx-community/embeddinggemma-300m-ONNX".into(),
             ocr_model: "glm-ocr".into(),
             cloud_fallback: None,
             cloud_api_key: None,
@@ -48,9 +52,9 @@ impl Default for AppConfig {
             max_upload_bytes: 500 * 1024 * 1024,
             chunk_max_chars: 2048,
             chunk_overlap_chars: 64,
-            whisper_model: "whisper".into(),
             embedding_provider: "local".into(),
-            local_embedding_model: "onnx-community/embeddinggemma-300m-ONNX".into(),
+            max_chapter_chars: 20_000,
+            enable_rag: true,
         }
     }
 }
@@ -66,10 +70,12 @@ impl AppConfig {
 
     /// Max tokens to request as model output for story / JSON extraction calls.
     ///
-    /// Allocates 30 % of the context window, capped at 8 192 tokens (story
-    /// JSON rarely exceeds that even for large chapters).
+    /// Allocates 30 % of the context window, capped at 65 536 tokens.
+    /// Local models (8–16K context) produce 2 400–4 800 tokens.
+    /// Cloud models with large context windows (e.g. Gemini 2.5 Flash 1M)
+    /// can produce up to 65 536 tokens for richer per-chapter extraction.
     pub fn max_output_tokens(&self) -> u32 {
-        (self.context_window * 30 / 100).min(8192)
+        (self.context_window * 30 / 100).min(65536)
     }
 
     /// Max characters to sample for the document pre-analysis call.
@@ -102,9 +108,9 @@ impl AppConfig {
             .set_default("max_upload_bytes", defaults.max_upload_bytes as i64)?
             .set_default("chunk_max_chars", defaults.chunk_max_chars as i64)?
             .set_default("chunk_overlap_chars", defaults.chunk_overlap_chars as i64)?
-            .set_default("whisper_model", defaults.whisper_model)?
             .set_default("embedding_provider", defaults.embedding_provider)?
-            .set_default("local_embedding_model", defaults.local_embedding_model)?
+            .set_default("max_chapter_chars", defaults.max_chapter_chars as i64)?
+            .set_default("enable_rag", defaults.enable_rag)?
             .add_source(
                 config::Environment::with_prefix("GUIDE")
                     .separator("__")
@@ -112,6 +118,21 @@ impl AppConfig {
             )
             .build()?;
 
-        Ok(cfg.try_deserialize()?)
+        let parsed: Self = cfg.try_deserialize()?;
+
+        // Warn at startup if context_window is set far above typical Ollama model limits.
+        // Most local models support 8 192–32 768 tokens; values beyond 131 072 are almost
+        // certainly misconfigured and will cause silent prompt truncation.
+        if parsed.context_window > 131_072 {
+            eprintln!(
+                "[GUIDE WARNING] GUIDE__CONTEXT_WINDOW={} exceeds 131072 tokens. \
+                 Most Ollama models support at most 8192–32768 tokens. \
+                 Prompts may be silently truncated by the model. \
+                 Consider setting GUIDE__MAX_CHAPTER_CHARS=20000 as a safety cap.",
+                parsed.context_window
+            );
+        }
+
+        Ok(parsed)
     }
 }

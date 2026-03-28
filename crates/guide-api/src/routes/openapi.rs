@@ -63,7 +63,7 @@ use crate::routes::*;
             Character, AbilityScores, Backstory, PlotHook, HookPriority, CreateCharacterRequest, UpdateCharacterRequest, GenerateNpcRequest, CharacterType, Condition,
             TrackedPlotHook, PlotHookStatus, CreateTrackedPlotHookRequest, UpdateTrackedPlotHookRequest,
             CampaignWebhook, CreateWebhookRequest,
-            Session, SessionEvent, SessionSummary, CreateSessionRequest, CreateSessionEventRequest, ImprovPromptResponse, Perspective,
+            Session, SessionEvent, SessionSummary, CreateSessionRequest, CreateSessionEventRequest, ImprovPromptResponse,
             Encounter, CombatParticipant, ActionBudget, CreateEncounterRequest, AddParticipantRequest, UpdateParticipantRequest, EncounterStatus, EncounterSummary,
             CampaignDocument, GlobalDocument, DocumentKind, IngestionStatus, RankedChunk, DocSummary, MetaIndex,
             ChatMessage,

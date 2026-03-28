@@ -31,14 +31,37 @@ pub fn ocr_campaign_prompt(column_hint: &str) -> String {
     )
 }
 
-/// Strip a <think>...</think> reasoning block from an LLM response before JSON parsing.
-/// Returns a slice starting after the closing </think> tag, or the original string if not found.
+/// Strip reasoning and markdown noise from an LLM response before JSON parsing.
+///
+/// Handles:
+/// - `<think>...</think>` blocks (Qwen3, DeepSeek-R1 style)
+/// - Markdown code fences (` ```json ... ``` ` or ` ``` ... ``` `)
 pub fn strip_think_block(response: &str) -> &str {
-    if let Some(end) = response.find("</think>") {
-        let after = &response[end + "</think>".len()..];
-        after.trim()
+    let s = if let Some(end) = response.find("</think>") {
+        response[end + "</think>".len()..].trim()
     } else {
         response.trim()
+    };
+    strip_markdown_fences(s)
+}
+
+/// Remove ` ```json ``` ` or ` ``` ``` ` wrappers, returning the inner content.
+fn strip_markdown_fences(s: &str) -> &str {
+    // Match opening fence: ```json or ```
+    let after_open = if let Some(rest) = s.strip_prefix("```json") {
+        rest
+    } else if let Some(rest) = s.strip_prefix("```") {
+        rest
+    } else {
+        return s;
+    };
+    // Skip optional newline after opening fence
+    let body = after_open.strip_prefix('\n').unwrap_or(after_open);
+    // Strip trailing ``` and whitespace
+    if let Some(end) = body.rfind("```") {
+        body[..end].trim()
+    } else {
+        body.trim()
     }
 }
 
@@ -82,8 +105,7 @@ pub fn story_extraction_system() -> &'static str {
            \"location\": \"<location or null>\",\n\
            \"involved_characters\": [\"<name>\", ...],\n\
            \"event_order\": <int>,\n\
-           \"arc_title\": \"<arc title or null>\",\n\
-           \"is_dm_only\": false\n\
+           \"arc_title\": \"<arc title or null>\"\n\
          }\n\
        ],\n\
        \"subplots\": [\n\
@@ -110,13 +132,11 @@ pub fn story_extraction_system() -> &'static str {
      Guidelines:\n\
      - Extract 2-6 major story arcs\n\
      - Extract all key events in chronological order\n\
-     - Mark DM-only events with is_dm_only: true\n\
      - Use arc_title to link events/subplots to their arc\n\
      - Be specific: use actual names from the document"
 }
 
-/// Enhanced story extraction system prompt (v2) with chain-of-thought, expanded schema,
-/// and campaign context injection.
+/// Enhanced story extraction system prompt (v2) with expanded schema and campaign context.
 /// Parameters are plain strings derived from `DocumentContext` in the pipeline.
 pub fn story_extraction_system_v2(
     campaign_setting: &str,
@@ -126,29 +146,22 @@ pub fn story_extraction_system_v2(
     format!(
         "You are an expert D&D campaign story analyst.\n\
          Campaign context: setting={campaign_setting}, tone={tone}, themes={themes}.\n\n\
-         STEP 1 — REASONING (inside <think>...</think>):\n\
-         Before generating JSON, briefly reason through:\n\
-         1. What are the 2-5 major story arcs in this content?\n\
-         2. Which events are climactic/pivotal vs. minor/trivial?\n\
-         3. Who are the key NPCs and what do they want?\n\
-         4. What locations and factions are introduced?\n\n\
-         STEP 2 — OUTPUT: After </think>, return ONLY valid JSON matching this schema \
-         (no markdown fences, no extra text):\n\
+         Return ONLY valid JSON matching this schema (no markdown fences, no extra text, \
+         no prose before or after the JSON object):\n\
          {{\n\
            \"arcs\": [\n\
-             {{ \"title\": \"<arc name>\", \"description\": \"<2-3 sentences>\", \"arc_order\": <int> }}\n\
+             {{ \"title\": \"<arc name>\", \"description\": \"<2-3 sentences>\", \"arc_order\": 1 }}\n\
            ],\n\
            \"events\": [\n\
              {{\n\
                \"title\": \"<event name>\",\n\
                \"description\": \"<2-3 sentences>\",\n\
-               \"event_type\": \"combat|social|revelation|travel|rest|discovery|puzzle|trap|boss|quest_given|npc_interaction\",\n\
-               \"significance\": \"trivial|minor|moderate|major|pivotal|climax\",\n\
+               \"event_type\": \"<one of: combat, social, revelation, travel, rest, discovery, puzzle, trap, boss, quest_given, npc_interaction>\",\n\
+               \"significance\": \"<one of: trivial, minor, moderate, major, pivotal, climax>\",\n\
                \"location\": \"<location or null>\",\n\
-               \"involved_characters\": [\"<name>\", ...],\n\
-               \"event_order\": <int>,\n\
-               \"arc_title\": \"<arc title or null>\",\n\
-               \"is_dm_only\": false\n\
+               \"involved_characters\": [\"<name>\"],\n\
+               \"event_order\": 1,\n\
+               \"arc_title\": \"<arc title or null>\"\n\
              }}\n\
            ],\n\
            \"subplots\": [\n\
@@ -158,7 +171,7 @@ pub fn story_extraction_system_v2(
              {{\n\
                \"character_name\": \"<name>\",\n\
                \"description\": \"<arc description>\",\n\
-               \"arc_points\": [{{ \"description\": \"<point>\", \"order\": <int> }}]\n\
+               \"arc_points\": [{{ \"description\": \"<point>\", \"order\": 1 }}]\n\
              }}\n\
            ],\n\
            \"encounters\": [\n\
@@ -166,25 +179,24 @@ pub fn story_extraction_system_v2(
                \"name\": \"<encounter name>\",\n\
                \"description\": \"<description>\",\n\
                \"location\": \"<location or null>\",\n\
-               \"difficulty_hint\": \"easy|medium|hard|deadly or null\",\n\
-               \"monsters\": [{{ \"name\": \"<name>\", \"count\": <int or null>, \"cr\": \"<cr string or null>\" }}],\n\
+               \"difficulty_hint\": \"<easy, medium, hard, deadly, or null>\",\n\
+               \"monsters\": [{{ \"name\": \"<name>\", \"count\": 1, \"cr\": \"<cr or null>\" }}],\n\
                \"story_event_title\": \"<linked event title or null>\"\n\
              }}\n\
            ],\n\
            \"npcs\": [\n\
              {{\n\
                \"name\": \"<name>\",\n\
-               \"role\": \"villain|ally|neutral|questgiver|boss\",\n\
+               \"role\": \"<one of: villain, ally, neutral, questgiver, boss>\",\n\
                \"description\": \"<1-2 sentences: appearance, motivation>\",\n\
-               \"location\": \"<home location or null>\",\n\
-               \"is_dm_only\": false\n\
+               \"location\": \"<home location or null>\"\n\
              }}\n\
            ],\n\
            \"locations\": [\n\
              {{\n\
                \"name\": \"<name>\",\n\
                \"description\": \"<1-2 sentences>\",\n\
-               \"location_type\": \"dungeon|town|wilderness|stronghold|planar\"\n\
+               \"location_type\": \"<one of: dungeon, town, wilderness, stronghold, planar>\"\n\
              }}\n\
            ],\n\
            \"factions\": [\n\
@@ -195,14 +207,19 @@ pub fn story_extraction_system_v2(
              }}\n\
            ]\n\
          }}\n\n\
+         STRICT RULES:\n\
+         - arc_order MUST be a positive integer (1, 2, 3...). NEVER use null for arc_order.\n\
+         - event_type MUST be EXACTLY ONE value from this list: combat, social, revelation, \
+           travel, rest, discovery, puzzle, trap, boss, quest_given, npc_interaction. \
+           Do NOT use | as a separator. Do NOT invent new types.\n\
+         - event_order and arc_order are sequential integers starting at 1. Never null.\n\n\
          GUIDELINES:\n\
          - Extract 2-5 story arcs; mark the final confrontation arc clearly\n\
-         - significance='climax' for the campaign's final showdown; 'pivotal' for turning points; \
-           'moderate' for notable scenes; 'trivial' for minor filler events\n\
+         - significance=climax for the campaign's final showdown; pivotal for turning points; \
+           moderate for notable scenes; trivial for minor filler events\n\
          - Extract ALL named NPCs with speaking roles or plot significance\n\
          - Extract ALL named locations the party can visit or that appear in descriptions\n\
          - Only extract factions if explicitly named groups appear\n\
-         - Mark anything the players are not supposed to know as is_dm_only: true\n\
          - Use arc_title to link events, subplots, and NPCs to their primary arc\n\
          - Use actual names from the document — do NOT invent content"
     )

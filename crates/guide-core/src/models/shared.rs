@@ -91,9 +91,3 @@ pub enum IngestionStatus {
     Failed,
 }
 
-/// Who is viewing the information — controls spoiler filtering.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum Perspective {
-    Dm,
-}

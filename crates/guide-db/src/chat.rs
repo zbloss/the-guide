@@ -19,7 +19,6 @@ impl ChatRepository {
         campaign_id: Uuid,
         role: &str,
         content: &str,
-        perspective: &str,
     ) -> Result<ChatMessage> {
         let id = Uuid::new_v4();
         let now = Utc::now().to_rfc3339();
@@ -27,17 +26,15 @@ impl ChatRepository {
         let campaign_id_str = campaign_id.to_string();
         let role = role.to_string();
         let content = content.to_string();
-        let perspective = perspective.to_string();
         let role2 = role.clone();
         let content2 = content.clone();
-        let perspective2 = perspective.clone();
         let now2 = now.clone();
 
         with_db(&self.pool, move |conn| {
             conn.execute(
-                "INSERT INTO campaign_chat (id, campaign_id, role, content, perspective, created_at) \
-                 VALUES (?, ?, ?, ?, ?, ?)",
-                duckdb::params![id_str, campaign_id_str, role, content, perspective, now],
+                "INSERT INTO campaign_chat (id, campaign_id, role, content, created_at) \
+                 VALUES (?, ?, ?, ?, ?)",
+                duckdb::params![id_str, campaign_id_str, role, content, now],
             )
             .map_err(|e| GuideError::Internal(e.to_string()))?;
             Ok(())
@@ -49,7 +46,6 @@ impl ChatRepository {
             campaign_id,
             role: role2,
             content: content2,
-            perspective: perspective2,
             created_at: now2.parse().unwrap_or_else(|_| Utc::now()),
         })
     }
@@ -59,7 +55,7 @@ impl ChatRepository {
         let mut msgs: Vec<ChatMessage> = with_db(&self.pool, move |conn| {
             query_all(
                 conn,
-                "SELECT id, campaign_id, role, content, perspective, created_at \
+                "SELECT id, campaign_id, role, content, created_at \
                  FROM campaign_chat WHERE campaign_id = ? \
                  ORDER BY created_at DESC LIMIT ?",
                 duckdb::params![id_str, limit],
@@ -83,7 +79,6 @@ fn row_to_msg(row: &duckdb::Row) -> duckdb::Result<ChatMessage> {
             .map_err(|e| duckdb::Error::FromSqlConversionFailure(1, duckdb::types::Type::Text, Box::new(e)))?,
         role: row.get("role")?,
         content: row.get("content")?,
-        perspective: row.get("perspective")?,
         created_at: created_at_str.parse().unwrap_or_else(|_| Utc::now()),
     })
 }

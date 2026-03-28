@@ -107,14 +107,9 @@ async fn generate_session_recap(
         } else {
             for e in &events {
                 let sig = format!("{:?}", e.significance);
-                let vis = if e.is_player_visible {
-                    "player-visible"
-                } else {
-                    "dm-only"
-                };
                 sessions_data.push_str(&format!(
-                    "- [{}|{}] {}\n",
-                    sig, vis, e.description
+                    "- [{}] {}\n",
+                    sig, e.description
                 ));
             }
         }
@@ -230,7 +225,6 @@ async fn generate_story_so_far(
     let chunks = query_indexes(
         &query,
         Some(campaign_id),
-        false,
         state.llm.as_ref(),
         &state.db,
     )
@@ -341,7 +335,6 @@ async fn generate_story_ahead(
     let chunks = query_indexes(
         &query,
         Some(campaign_id),
-        false,
         state.llm.as_ref(),
         &state.db,
     )
@@ -514,7 +507,6 @@ async fn generate_character_roadmap(
     let chunks = query_indexes(
         &rag_query,
         Some(campaign_id),
-        false,
         state.llm.as_ref(),
         &state.db,
     )

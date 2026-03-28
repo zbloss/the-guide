@@ -29,6 +29,7 @@ pub struct CampaignDocument {
     pub ingestion_error: Option<String>,
     pub story_extraction_status: String,
     pub story_extraction_error: Option<String>,
+    pub ingestion_progress: Option<String>,
     pub uploaded_at: DateTime<Utc>,
     pub ingested_at: Option<DateTime<Utc>>,
 }
@@ -44,6 +45,7 @@ pub struct GlobalDocument {
     pub document_kind: DocumentKind,
     pub ingestion_status: IngestionStatus,
     pub ingestion_error: Option<String>,
+    pub ingestion_progress: Option<String>,
     pub uploaded_at: DateTime<Utc>,
     pub ingested_at: Option<DateTime<Utc>>,
 }
@@ -70,4 +72,22 @@ pub struct DocSummary {
 pub struct MetaIndex {
     pub scope: String,
     pub entries: Vec<DocSummary>,
+}
+
+/// A single entry from a document's Table of Contents.
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct TocEntry {
+    pub title: String,
+    /// 1-based page number as printed in the document.
+    pub page: u32,
+    /// Nesting depth: 0 = top-level chapter, 1 = section, 2 = subsection, …
+    pub depth: u8,
+}
+
+/// A single entry from a document's back-of-book Index.
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct IndexEntry {
+    pub term: String,
+    /// Page numbers where this term appears.
+    pub pages: Vec<u32>,
 }

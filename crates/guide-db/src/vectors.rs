@@ -16,7 +16,6 @@ pub struct LoreChunkInsert {
     pub lore_type: String,
     pub significance: String,
     pub entities: Vec<String>,
-    pub is_player_visible: bool,
     pub page_range: (u32, u32),
     pub section_path: String,
     pub doc_title: String,
@@ -87,9 +86,9 @@ pub async fn upsert_chunks(pool: &DuckDbPool, chunks: Vec<LoreChunkInsert>) -> R
             .prepare(
                 "INSERT INTO lore_chunks \
                  (id, campaign_id, source_document_id, document_kind, content, \
-                  lore_type, significance, entities, is_player_visible, \
+                  lore_type, significance, entities, \
                   page_start, page_end, section_path, doc_title, embedding, created_at) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .map_err(|e| GuideError::Internal(e.to_string()))?;
 
@@ -111,7 +110,6 @@ pub async fn upsert_chunks(pool: &DuckDbPool, chunks: Vec<LoreChunkInsert>) -> R
                 chunk.lore_type,
                 chunk.significance,
                 entities_json,
-                chunk.is_player_visible as i32,
                 chunk.page_range.0 as i64,
                 chunk.page_range.1 as i64,
                 chunk.section_path,
@@ -136,10 +134,8 @@ pub async fn query_chunks(
     campaign_id: Option<Uuid>,
     embedding: &[f32],
     limit: usize,
-    player_visible_only: bool,
 ) -> Result<Vec<RankedChunk>> {
     let embedding: Vec<f32> = embedding.to_vec();
-    let player_filter = player_visible_only as i32;
 
     with_db(pool, move |conn| {
         struct Row {
@@ -154,11 +150,10 @@ pub async fn query_chunks(
                 .prepare(
                     "SELECT content, section_path, doc_title, embedding \
                      FROM lore_chunks \
-                     WHERE campaign_id = ? \
-                       AND (? = 0 OR is_player_visible = 1)",
+                     WHERE campaign_id = ?",
                 )
                 .map_err(|e| GuideError::Internal(e.to_string()))?;
-            stmt.query_map(duckdb::params![cid.to_string(), player_filter], |row| {
+            stmt.query_map(duckdb::params![cid.to_string()], |row| {
                 Ok(Row {
                     content: row.get(0)?,
                     section_path: row.get(1)?,
@@ -174,11 +169,10 @@ pub async fn query_chunks(
                 .prepare(
                     "SELECT content, section_path, doc_title, embedding \
                      FROM lore_chunks \
-                     WHERE campaign_id IS NULL \
-                       AND (? = 0 OR is_player_visible = 1)",
+                     WHERE campaign_id IS NULL",
                 )
                 .map_err(|e| GuideError::Internal(e.to_string()))?;
-            stmt.query_map(duckdb::params![player_filter], |row| {
+            stmt.query_map(duckdb::params![], |row| {
                 Ok(Row {
                     content: row.get(0)?,
                     section_path: row.get(1)?,

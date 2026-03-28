@@ -138,6 +138,13 @@ async fn analyze_document_structure(
 
     match llm.complete(req).await {
         Ok(resp) => {
+            tracing::info!(
+                prompt_tokens = resp.prompt_tokens,
+                completion_tokens = resp.completion_tokens,
+                model = %resp.model,
+                phase = "pre_analysis",
+                "LLM token usage"
+            );
             let cleaned = guide_llm::prompts::strip_think_block(&resp.content);
             serde_json::from_str::<DocumentContext>(cleaned).unwrap_or_else(|e| {
                 tracing::debug!("Pre-analysis parse failed: {e}");
@@ -176,48 +183,49 @@ pub async fn ingest_campaign_document(
 
     // Persist raw OCR text before chunking so the preview modal has data even
     // if chunking or embedding fails later.
-    let page_tuples: Vec<(u32, String, bool)> = pages
+    let page_tuples: Vec<(u32, String)> = pages
         .iter()
-        .map(|p| (p.page_num, p.raw_text.clone(), p.is_dm_only))
+        .map(|p| (p.page_num, p.raw_text.clone()))
         .collect();
     doc_repo.save_page_ocr(doc.id, &page_tuples).await?;
 
-    let chunks = chunker::chunk_document(pages, config.chunk_max_chars, config.chunk_overlap_chars)
+    let chunks = chunker::chunk_document(&pages, config.chunk_max_chars, config.chunk_overlap_chars)
         .await?;
 
     let chunk_count = chunks.len();
 
-    let mut lore_chunks = Vec::with_capacity(chunks.len());
-    for chunk in &chunks {
-        let embed_text = truncate_for_embed(&chunk.content);
-        let embedding = match llm.embed(EmbeddingRequest { text: embed_text, model_override: None, hint: EmbeddingHint::Document }).await {
-            Ok(v) => v,
-            Err(e) => { tracing::warn!("Embed skipped for chunk in {}: {e}", chunk.section_path); continue; }
-        };
+    if config.enable_rag {
+        let mut lore_chunks = Vec::with_capacity(chunks.len());
+        for chunk in &chunks {
+            let embed_text = truncate_for_embed(&chunk.content);
+            let embedding = match llm.embed(EmbeddingRequest { text: embed_text, model_override: None, hint: EmbeddingHint::Document }).await {
+                Ok(v) => v,
+                Err(e) => { tracing::warn!("Embed skipped for chunk in {}: {e}", chunk.section_path); continue; }
+            };
 
-        // Deterministic UUID v5: namespace = doc_id, name = section_path + content hash
-        let chunk_id = Uuid::new_v5(
-            &doc.id,
-            format!("{}:{}", chunk.section_path, &chunk.content[..chunk.content.floor_char_boundary(64)]).as_bytes(),
-        );
+            // Deterministic UUID v5: namespace = doc_id, name = section_path + content hash
+            let chunk_id = Uuid::new_v5(
+                &doc.id,
+                format!("{}:{}", chunk.section_path, &chunk.content[..chunk.content.floor_char_boundary(64)]).as_bytes(),
+            );
 
-        lore_chunks.push(LoreChunkInsert {
-            id: chunk_id,
-            campaign_id: Some(doc.campaign_id),
-            source_document_id: doc.id,
-            document_kind: doc.document_kind.clone(),
-            content: chunk.content.clone(),
-            lore_type: "plot".to_string(),
-            significance: "minor".to_string(),
-            entities: Vec::new(),
-            is_player_visible: chunk.is_player_visible,
-            page_range: chunk.page_range,
-            section_path: chunk.section_path.clone(),
-            doc_title: doc.filename.clone(),
-            vector: embedding,
-        });
+            lore_chunks.push(LoreChunkInsert {
+                id: chunk_id,
+                campaign_id: Some(doc.campaign_id),
+                source_document_id: doc.id,
+                document_kind: doc.document_kind.clone(),
+                content: chunk.content.clone(),
+                lore_type: "plot".to_string(),
+                significance: "minor".to_string(),
+                entities: Vec::new(),
+                page_range: chunk.page_range,
+                section_path: chunk.section_path.clone(),
+                doc_title: doc.filename.clone(),
+                vector: embedding,
+            });
+        }
+        vectors::upsert_chunks(db, lore_chunks).await?;
     }
-    vectors::upsert_chunks(db, lore_chunks).await?;
 
     doc_repo.update_ingested(doc.id, Some(page_count)).await?;
 
@@ -243,7 +251,7 @@ pub async fn ingest_campaign_document(
         doc.document_kind,
         DocumentKind::Campaign | DocumentKind::Supplemental
     ) {
-        if let Err(e) = extract_story(doc, &chunks, llm.clone(), db, config).await {
+        if let Err(e) = extract_story(doc, &chunks, &pages, llm.clone(), db, config).await {
             tracing::error!("Story extraction failed for doc {}: {e}", doc.id);
             let _ = DocumentRepository::new(db)
                 .update_story_extraction_status(doc.id, "failed", Some(&e.to_string()))
@@ -277,41 +285,42 @@ pub async fn ingest_global_document(
 
     let page_count = pages.len() as i32;
 
-    let chunks = chunker::chunk_document(pages, config.chunk_max_chars, config.chunk_overlap_chars)
+    let chunks = chunker::chunk_document(&pages, config.chunk_max_chars, config.chunk_overlap_chars)
         .await?;
 
     let chunk_count = chunks.len();
 
-    let mut lore_chunks = Vec::with_capacity(chunks.len());
-    for chunk in &chunks {
-        let embed_text = truncate_for_embed(&chunk.content);
-        let embedding = match llm.embed(EmbeddingRequest { text: embed_text, model_override: None, hint: EmbeddingHint::Document }).await {
-            Ok(v) => v,
-            Err(e) => { tracing::warn!("Embed skipped for chunk in {}: {e}", chunk.section_path); continue; }
-        };
+    if config.enable_rag {
+        let mut lore_chunks = Vec::with_capacity(chunks.len());
+        for chunk in &chunks {
+            let embed_text = truncate_for_embed(&chunk.content);
+            let embedding = match llm.embed(EmbeddingRequest { text: embed_text, model_override: None, hint: EmbeddingHint::Document }).await {
+                Ok(v) => v,
+                Err(e) => { tracing::warn!("Embed skipped for chunk in {}: {e}", chunk.section_path); continue; }
+            };
 
-        let chunk_id = Uuid::new_v5(
-            &doc.id,
-            format!("{}:{}", chunk.section_path, &chunk.content[..chunk.content.floor_char_boundary(64)]).as_bytes(),
-        );
+            let chunk_id = Uuid::new_v5(
+                &doc.id,
+                format!("{}:{}", chunk.section_path, &chunk.content[..chunk.content.floor_char_boundary(64)]).as_bytes(),
+            );
 
-        lore_chunks.push(LoreChunkInsert {
-            id: chunk_id,
-            campaign_id: None,
-            source_document_id: doc.id,
-            document_kind: DocumentKind::DmGuide,
-            content: chunk.content.clone(),
-            lore_type: "mechanic".to_string(),
-            significance: "minor".to_string(),
-            entities: Vec::new(),
-            is_player_visible: true,
-            page_range: chunk.page_range,
-            section_path: chunk.section_path.clone(),
-            doc_title: doc.title.clone(),
-            vector: embedding,
-        });
+            lore_chunks.push(LoreChunkInsert {
+                id: chunk_id,
+                campaign_id: None,
+                source_document_id: doc.id,
+                document_kind: DocumentKind::DmGuide,
+                content: chunk.content.clone(),
+                lore_type: "mechanic".to_string(),
+                significance: "minor".to_string(),
+                entities: Vec::new(),
+                page_range: chunk.page_range,
+                section_path: chunk.section_path.clone(),
+                doc_title: doc.title.clone(),
+                vector: embedding,
+            });
+        }
+        vectors::upsert_chunks(db, lore_chunks).await?;
     }
-    vectors::upsert_chunks(db, lore_chunks).await?;
 
     doc_repo.update_ingested(doc.id, Some(page_count)).await?;
 
@@ -336,7 +345,6 @@ pub async fn ingest_global_document(
 pub async fn query_indexes(
     query: &str,
     campaign_id: Option<Uuid>,
-    player_visible_only: bool,
     llm: &dyn LlmClient,
     db: &DuckDbPool,
 ) -> Result<Vec<guide_core::models::RankedChunk>> {
@@ -352,11 +360,11 @@ pub async fn query_indexes(
 
     if let Some(cid) = campaign_id {
         let mut campaign_chunks =
-            vectors::query_chunks(db, Some(cid), &embedding, 5, player_visible_only).await?;
+            vectors::query_chunks(db, Some(cid), &embedding, 5).await?;
         results.append(&mut campaign_chunks);
     }
 
-    let mut global_chunks = vectors::query_chunks(db, None, &embedding, 3, false).await?;
+    let mut global_chunks = vectors::query_chunks(db, None, &embedding, 3).await?;
     results.append(&mut global_chunks);
 
     results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
@@ -532,6 +540,14 @@ async fn extract_story_for_chapter(
     };
 
     let resp = llm.complete(req).await?;
+    tracing::info!(
+        chapter = chapter_name,
+        prompt_tokens = resp.prompt_tokens,
+        completion_tokens = resp.completion_tokens,
+        model = %resp.model,
+        phase = "chapter_extraction",
+        "LLM token usage"
+    );
     let cleaned = guide_llm::prompts::strip_think_block(&resp.content);
     if let Err(ref e) = serde_json::from_str::<StoryExtractionResult>(cleaned) {
         tracing::warn!(
@@ -652,12 +668,12 @@ fn merge_story_extractions(chapter_results: Vec<(usize, StoryExtractionResult)>)
 pub async fn extract_story(
     doc: &CampaignDocument,
     chunks: &[crate::chunker::DocumentChunk],
+    pages: &[extractor::PageExtraction],
     llm: Arc<dyn LlmClient>,
     db: &DuckDbPool,
     config: &AppConfig,
 ) -> Result<()> {
     use guide_llm::{CompletionRequest, LlmTask, Message, MessageRole};
-    use std::collections::HashMap;
 
     let doc_repo = DocumentRepository::new(db);
     doc_repo
@@ -685,6 +701,38 @@ pub async fn extract_story(
 
     let chapter_groups = group_chunks_by_chapter(chunks);
 
+    // Build DocumentData for the agent (only when a ToC is detected).
+    let agent_doc_data: Option<Arc<crate::agent::DocumentData>> = {
+        use crate::navigation::{detect_document_navigation, detect_page_offset};
+        use crate::agent::DocumentData;
+
+        let (toc_entries, index_entries) = detect_document_navigation(pages);
+        if toc_entries.is_empty() {
+            None
+        } else {
+            let pages_map: std::collections::HashMap<u32, String> =
+                pages.iter().map(|p| (p.page_num, p.raw_text.clone())).collect();
+            let page_offset = detect_page_offset(&pages_map, &toc_entries);
+            let index_map: std::collections::HashMap<String, Vec<u32>> = index_entries
+                .into_iter()
+                .map(|e| (e.term.to_lowercase(), e.pages))
+                .collect();
+            tracing::info!(
+                doc_id = %doc.id,
+                toc_entries = toc_entries.len(),
+                index_terms = index_map.len(),
+                page_offset,
+                "Document navigation detected — agent path enabled"
+            );
+            Some(Arc::new(DocumentData {
+                pages: pages_map,
+                toc: toc_entries,
+                index: index_map,
+                page_offset,
+            }))
+        }
+    };
+
     let extraction: StoryExtractionResult = if chapter_groups.len() < 2 {
         // Fallback: single-call path with v2 prompt and context.
         let full_text = join_and_truncate(&chunks.iter().collect::<Vec<_>>(), max_input_chars);
@@ -711,6 +759,13 @@ pub async fn extract_story(
             json_mode: true,
         };
         let resp = llm.complete(req).await?;
+        tracing::info!(
+            prompt_tokens = resp.prompt_tokens,
+            completion_tokens = resp.completion_tokens,
+            model = %resp.model,
+            phase = "single_call_extraction",
+            "LLM token usage"
+        );
         let cleaned = guide_llm::prompts::strip_think_block(&resp.content);
         if let Err(ref e) = serde_json::from_str::<StoryExtractionResult>(cleaned) {
             tracing::warn!(
@@ -737,17 +792,43 @@ pub async fn extract_story(
                 } else {
                     chapter_name.clone()
                 };
-                match extract_story_for_chapter(
-                    &text,
-                    &doc.filename,
-                    chapter_name,
-                    &doc_ctx,
-                    prev_chapter_summary.as_deref(),
-                    llm.as_ref(),
-                    max_output_tokens,
-                )
-                .await
-                {
+
+                // Try the agent path first when navigation data is available.
+                let agent_result: Option<StoryExtractionResult> =
+                    if let Some(ref doc_data) = agent_doc_data {
+                        crate::agent::extract_chapter_with_agent(
+                            &text,
+                            chapter_name,
+                            &doc.filename,
+                            &doc_ctx,
+                            prev_chapter_summary.as_deref(),
+                            doc_data.clone(),
+                            config,
+                        )
+                        .await
+                        .unwrap_or(None)
+                    } else {
+                        None
+                    };
+
+                let extraction_result: Result<StoryExtractionResult> =
+                    if let Some(r) = agent_result {
+                        tracing::info!(chapter = %label, "Agent story extraction succeeded");
+                        Ok(r)
+                    } else {
+                        extract_story_for_chapter(
+                            &text,
+                            &doc.filename,
+                            chapter_name,
+                            &doc_ctx,
+                            prev_chapter_summary.as_deref(),
+                            llm.as_ref(),
+                            max_output_tokens,
+                        )
+                        .await
+                    };
+
+                match extraction_result {
                     Ok(r) => {
                         // Build summary for next chapter only on the last window of each chapter.
                         if w_idx + 1 == window_count {
@@ -786,78 +867,79 @@ pub async fn extract_story(
     }
 
     let story_repo = StoryRepository::new(db);
-    story_repo.delete_all_for_doc(doc.id).await?;
-
-    let mut arc_title_to_id: HashMap<String, Uuid> = HashMap::new();
-    for arc_input in extraction.arcs {
-        let arc = story_repo
-            .insert_arc(doc.campaign_id, doc.id, arc_input.clone())
-            .await?;
-        arc_title_to_id.insert(arc.title.to_lowercase(), arc.id);
-    }
-
-    let mut event_title_to_id: HashMap<String, Uuid> = HashMap::new();
-    for event_input in extraction.events {
-        let arc_id = event_input
-            .arc_title
-            .as_ref()
-            .and_then(|t| arc_title_to_id.get(&t.to_lowercase()))
-            .copied();
-        let event = story_repo
-            .insert_event(doc.campaign_id, doc.id, arc_id, event_input.clone())
-            .await?;
-        event_title_to_id.insert(event.title.to_lowercase(), event.id);
-    }
-
-    for subplot_input in extraction.subplots {
-        let arc_id = subplot_input
-            .arc_title
-            .as_ref()
-            .and_then(|t| arc_title_to_id.get(&t.to_lowercase()))
-            .copied();
-        story_repo
-            .insert_subplot(doc.campaign_id, doc.id, arc_id, subplot_input)
-            .await?;
-    }
-
-    for char_arc_input in extraction.character_arcs {
-        story_repo
-            .insert_character_arc(doc.campaign_id, doc.id, char_arc_input)
-            .await?;
-    }
-
-    for enc_input in extraction.encounters {
-        let story_event_id = enc_input
-            .story_event_title
-            .as_ref()
-            .and_then(|t| event_title_to_id.get(&t.to_lowercase()))
-            .copied();
-        story_repo
-            .insert_prepopulated_encounter(doc.campaign_id, doc.id, story_event_id, enc_input)
-            .await?;
-    }
-
-    for npc_input in extraction.npcs {
-        if let Err(e) = story_repo.insert_npc(doc.campaign_id, doc.id, npc_input).await {
-            tracing::warn!("NPC insert failed: {e}");
-        }
-    }
-
-    for location_input in extraction.locations {
-        if let Err(e) = story_repo.insert_location(doc.campaign_id, doc.id, location_input).await {
-            tracing::warn!("Location insert failed: {e}");
-        }
-    }
-
-    for faction_input in extraction.factions {
-        if let Err(e) = story_repo.insert_faction(doc.campaign_id, doc.id, faction_input).await {
-            tracing::warn!("Faction insert failed: {e}");
-        }
-    }
+    story_repo
+        .persist_story_batch(doc.campaign_id, doc.id, extraction)
+        .await?;
 
     doc_repo
         .update_story_extraction_status(doc.id, "completed", None)
         .await?;
 
     Ok(())
+}
+
+/// Extract the first complete `{...}` JSON object from an LLM response string.
+/// Returns the extracted slice, or the original string if no braces are found.
+pub fn extract_first_json_object_pub(s: &str) -> &str {
+    let bytes = s.as_bytes();
+    let Some(start) = bytes.iter().position(|&b| b == b'{') else {
+        return s;
+    };
+    let mut depth = 0usize;
+    let mut in_str = false;
+    let mut escape = false;
+    for (i, &b) in bytes[start..].iter().enumerate() {
+        if escape {
+            escape = false;
+            continue;
+        }
+        match b {
+            b'\\' if in_str => escape = true,
+            b'"' => in_str = !in_str,
+            b'{' if !in_str => depth += 1,
+            b'}' if !in_str => {
+                depth -= 1;
+                if depth == 0 {
+                    return &s[start..start + i + 1];
+                }
+            }
+            _ => {}
+        }
+    }
+    s
+}
+
+/// Re-run story extraction on an already-ingested document without repeating OCR.
+///
+/// Loads the stored page OCR text from the database, re-chunks it, and runs the
+/// full story extraction pipeline. Useful for re-testing with a different LLM model
+/// without re-processing the PDF.
+pub async fn re_extract_story_from_stored_ocr(
+    doc: &CampaignDocument,
+    llm: Arc<dyn LlmClient>,
+    db: &DuckDbPool,
+    config: &AppConfig,
+) -> Result<()> {
+    let doc_repo = DocumentRepository::new(db);
+
+    let rows = doc_repo.list_page_ocr(doc.id).await?;
+    if rows.is_empty() {
+        return Err(GuideError::Internal(
+            "No stored OCR text found — run a full ingest first".to_string(),
+        ));
+    }
+
+    // Reconstruct PageExtraction from stored rows (headings are not persisted; chunker doesn't need them).
+    let pages: Vec<extractor::PageExtraction> = rows
+        .into_iter()
+        .map(|r| extractor::PageExtraction {
+            page_num: r.page_num as u32,
+            raw_text: r.raw_text,
+            headings: Vec::new(),
+        })
+        .collect();
+
+    let chunks = chunker::chunk_document(&pages, config.chunk_max_chars, config.chunk_overlap_chars).await?;
+
+    extract_story(doc, &chunks, &pages, llm, db, config).await
 }

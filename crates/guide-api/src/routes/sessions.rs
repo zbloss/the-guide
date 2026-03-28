@@ -70,10 +70,6 @@ pub fn router() -> Router<AppState> {
             "/campaigns/{campaign_id}/sessions/{id}/map",
             post(upload_map),
         )
-        .route(
-            "/campaigns/{campaign_id}/sessions/{id}/transcribe",
-            post(transcribe_audio),
-        )
 }
 
 #[utoipa::path(
@@ -274,9 +270,7 @@ async fn delete_event(
 }
 
 #[derive(Deserialize, utoipa::ToSchema, utoipa::IntoParams)]
-pub struct SummaryQuery {
-    pub perspective: Option<String>,
-}
+pub struct SummaryQuery {}
 
 #[utoipa::path(
     get,
@@ -294,15 +288,9 @@ pub struct SummaryQuery {
 async fn get_summary(
     State(state): State<AppState>,
     Path((_campaign_id, session_id)): Path<(Uuid, Uuid)>,
-    axum::extract::Query(q): axum::extract::Query<SummaryQuery>,
+    axum::extract::Query(_q): axum::extract::Query<SummaryQuery>,
 ) -> Result<impl IntoResponse, crate::error::AppError> {
     use guide_llm::{prompts, CompletionRequest, LlmTask, Message, MessageRole};
-
-    if q.perspective.as_deref().map(str::to_lowercase).as_deref() == Some("player") {
-        return Err(
-            GuideError::InvalidInput("Player perspective is no longer supported".into()).into()
-        );
-    }
 
     let event_repo = SessionEventRepository::new(&state.db);
     let events = event_repo.list_by_session(session_id).await?;
@@ -343,7 +331,6 @@ async fn get_summary(
 
     Ok(Json(serde_json::json!({
         "session_id": session_id,
-        "perspective": "dm",
         "content": resp.content,
         "generated_at": chrono::Utc::now().to_rfc3339(),
     })))
@@ -351,7 +338,6 @@ async fn get_summary(
 
 #[derive(Deserialize, utoipa::ToSchema, utoipa::IntoParams)]
 pub struct ExportQuery {
-    pub perspective: Option<String>,
     pub format: Option<String>,
 }
 
@@ -371,15 +357,9 @@ pub struct ExportQuery {
 async fn export_summary(
     State(state): State<AppState>,
     Path((_campaign_id, session_id)): Path<(Uuid, Uuid)>,
-    axum::extract::Query(q): axum::extract::Query<ExportQuery>,
+    axum::extract::Query(_q): axum::extract::Query<ExportQuery>,
 ) -> Result<Response, crate::error::AppError> {
     use guide_llm::{prompts, CompletionRequest, LlmTask, Message, MessageRole};
-
-    if q.perspective.as_deref().map(str::to_lowercase).as_deref() == Some("player") {
-        return Err(
-            GuideError::InvalidInput("Player perspective is no longer supported".into()).into()
-        );
-    }
 
     let session_repo = SessionRepository::new(&state.db);
     let session = session_repo.get_by_id(session_id).await?;
@@ -718,37 +698,3 @@ async fn upload_map(
     Ok(Json(session))
 }
 
-async fn transcribe_audio(
-    State(state): State<AppState>,
-    Path((_campaign_id, _session_id)): Path<(Uuid, Uuid)>,
-    mut multipart: Multipart,
-) -> Result<impl IntoResponse, crate::error::AppError> {
-    let mut audio_bytes: Option<Vec<u8>> = None;
-
-    while let Some(field) = multipart.next_field().await.map_err(|e| {
-        crate::error::AppError(guide_core::GuideError::InvalidInput(e.to_string()))
-    })? {
-        if field.name() == Some("audio") {
-            audio_bytes = Some(
-                field
-                    .bytes()
-                    .await
-                    .map_err(|e| {
-                        crate::error::AppError(guide_core::GuideError::InvalidInput(e.to_string()))
-                    })?
-                    .to_vec(),
-            );
-        }
-    }
-
-    let bytes = audio_bytes.ok_or_else(|| {
-        crate::error::AppError(guide_core::GuideError::InvalidInput("No audio field".into()))
-    })?;
-
-    let req = guide_llm::AudioRequest {
-        audio_bytes: bytes,
-        mime_type: "audio/webm".to_string(),
-    };
-    let transcript = state.llm.transcribe(req).await.unwrap_or_default();
-    Ok(Json(serde_json::json!({ "transcript": transcript })))
-}

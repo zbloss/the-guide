@@ -171,7 +171,6 @@ impl SessionEventRepository {
         let event_type_str = event_type_to_str(&req.event_type).to_string();
         let significance = req.significance.unwrap_or_default();
         let significance_str = significance_to_str(&significance).to_string();
-        let is_player_visible = req.is_player_visible.unwrap_or(true) as i32;
         let involved_ids = req.involved_character_ids.unwrap_or_default();
         let involved_json = serde_json::to_string(
             &involved_ids.iter().map(|u| u.to_string()).collect::<Vec<_>>(),
@@ -185,11 +184,11 @@ impl SessionEventRepository {
             conn.execute(
                 "INSERT INTO session_events \
                  (id, session_id, campaign_id, event_type, description, significance, \
-                  is_player_visible, involved_character_ids, occurred_at) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                  involved_character_ids, occurred_at) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 duckdb::params![
                     id_str, session_id_str, campaign_id_str, event_type_str,
-                    desc, significance_str, is_player_visible, involved_json, now
+                    desc, significance_str, involved_json, now
                 ],
             )
             .map_err(|e| GuideError::Internal(e.to_string()))?;
@@ -206,7 +205,7 @@ impl SessionEventRepository {
             query_one(
                 conn,
                 "SELECT id, session_id, campaign_id, event_type, description, significance, \
-                 is_player_visible, involved_character_ids, occurred_at \
+                 involved_character_ids, occurred_at \
                  FROM session_events WHERE id = ?",
                 [&id_str],
                 row_to_event,
@@ -222,7 +221,7 @@ impl SessionEventRepository {
             query_all(
                 conn,
                 "SELECT id, session_id, campaign_id, event_type, description, significance, \
-                 is_player_visible, involved_character_ids, occurred_at \
+                 involved_character_ids, occurred_at \
                  FROM session_events WHERE session_id = ? ORDER BY occurred_at ASC",
                 [&id_str],
                 row_to_event,
@@ -251,8 +250,8 @@ impl SessionEventRepository {
             query_all(
                 conn,
                 "SELECT id, session_id, campaign_id, event_type, description, significance, \
-                 is_player_visible, involved_character_ids, occurred_at \
-                 FROM session_events WHERE session_id = ? AND is_player_visible = 1 \
+                 involved_character_ids, occurred_at \
+                 FROM session_events WHERE session_id = ? \
                  ORDER BY occurred_at ASC",
                 [&id_str],
                 row_to_event,
@@ -293,7 +292,6 @@ fn row_to_event(row: &duckdb::Row) -> duckdb::Result<SessionEvent> {
     let campaign_id_str: String = row.get("campaign_id")?;
     let event_type_str: String = row.get("event_type")?;
     let significance_str: String = row.get("significance")?;
-    let is_player_visible_int: i32 = row.get("is_player_visible")?;
     let involved_json: String = row.get("involved_character_ids")?;
     let occurred_at_str: String = row.get("occurred_at")?;
 
@@ -313,7 +311,6 @@ fn row_to_event(row: &duckdb::Row) -> duckdb::Result<SessionEvent> {
         event_type: parse_event_type(&event_type_str),
         description: row.get("description")?,
         significance: parse_significance(&significance_str),
-        is_player_visible: is_player_visible_int != 0,
         involved_character_ids,
         occurred_at: occurred_at_str.parse().unwrap_or_else(|_| Utc::now()),
     })

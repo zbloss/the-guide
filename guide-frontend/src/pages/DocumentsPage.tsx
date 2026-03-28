@@ -46,6 +46,7 @@ export function DocumentsPage() {
                   <IngestButton
                     docId={d.id}
                     currentStatus={d.ingestion_status}
+                    ingestionProgress={d.ingestion_progress}
                     onIngest={() => ingestCampaignDoc(campaignId!, d.id).then(() => {})}
                     onPoll={() => getCampaignDoc(campaignId!, d.id)}
                     onComplete={refetch}

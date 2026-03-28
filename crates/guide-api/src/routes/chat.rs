@@ -63,21 +63,22 @@ async fn chat(
         .into());
     }
 
-    let player_visible_only = false;
     let context_limit = req.context_limit.unwrap_or(5);
-    let perspective_str = "dm".to_string();
     let user_message = req.message.clone();
 
-    // Retrieve RAG context
-    let chunks = query_indexes(
-        &req.message,
-        Some(campaign_id),
-        player_visible_only,
-        state.llm.as_ref(),
-        &state.db,
-    )
-    .await
-    .unwrap_or_default();
+    // Retrieve RAG context (skipped when enable_rag = false)
+    let chunks = if state.config.enable_rag {
+        query_indexes(
+            &req.message,
+            Some(campaign_id),
+            state.llm.as_ref(),
+            &state.db,
+        )
+        .await
+        .unwrap_or_default()
+    } else {
+        vec![]
+    };
 
     let context = chunks
         .iter()
@@ -129,10 +130,10 @@ async fn chat(
         if !full_response.is_empty() {
             let chat_repo = ChatRepository::new(&db);
             let _ = chat_repo
-                .append(campaign_id, "user", &user_message, &perspective_str)
+                .append(campaign_id, "user", &user_message)
                 .await;
             let _ = chat_repo
-                .append(campaign_id, "assistant", &full_response, &perspective_str)
+                .append(campaign_id, "assistant", &full_response)
                 .await;
         }
     });

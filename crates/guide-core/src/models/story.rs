@@ -58,8 +58,22 @@ pub struct ArcPoint {
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct MonsterHint {
     pub name: String,
+    /// LLMs sometimes output dice strings like "1d8" — deserialize those as None.
+    #[serde(default, deserialize_with = "deserialize_monster_count")]
     pub count: Option<i32>,
     pub cr: Option<String>,
+}
+
+fn deserialize_monster_count<'de, D>(de: D) -> std::result::Result<Option<i32>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let v: Option<serde_json::Value> = Option::deserialize(de)?;
+    Ok(match v {
+        None => None,
+        Some(serde_json::Value::Number(n)) => n.as_i64().map(|i| i as i32),
+        Some(_) => None, // string like "1d8", bool, etc. → treat as unknown
+    })
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
@@ -89,7 +103,6 @@ pub struct StoryEvent {
     pub location: Option<String>,
     pub involved_characters: Vec<String>,
     pub event_order: i32,
-    pub is_dm_only: bool,
     pub dm_notes: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -171,7 +184,6 @@ pub struct StoryNpc {
     pub role: String,
     pub description: String,
     pub location: Option<String>,
-    pub is_dm_only: bool,
     pub dm_notes: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -185,8 +197,6 @@ pub struct StoryNpcInput {
     #[serde(default)]
     pub description: String,
     pub location: Option<String>,
-    #[serde(default)]
-    pub is_dm_only: bool,
 }
 
 fn default_npc_role() -> String {
@@ -258,7 +268,6 @@ pub struct StoryEventInput {
     pub event_order: i32,
     /// Used to link to arc by title
     pub arc_title: Option<String>,
-    pub is_dm_only: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

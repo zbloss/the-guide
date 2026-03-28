@@ -30,7 +30,7 @@ utoipa-swagger-ui = { version = "9", features = ["axum"] }
 async-openai = "0.27"
 
 # Database
-duckdb = { version = "1.1", features = ["bundled", "r2d2"] }
+duckdb = { version = "1.2", features = ["bundled", "r2d2"] }
 r2d2 = "0.8"
 
 # Serialization
@@ -61,6 +61,9 @@ reqwest = { version = "0.12", features = ["json"] }
 # PDF
 pdfium-render = { version = "0.8", features = ["image"] }
 lopdf = "0.32"
+
+# AI agent framework
+rig-core = "0.33"
 
 # Workspace crates
 guide-core   = { path = "crates/guide-core" }

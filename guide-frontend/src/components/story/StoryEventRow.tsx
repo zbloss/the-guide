@@ -57,7 +57,6 @@ export function StoryEventRow({ event }: StoryEventRowProps) {
         <span style={{ fontWeight: 500, flex: 1 }}>{event.title}</span>
         <Badge label={event.event_type} variant={eventTypeBadgeVariant(event.event_type)} />
         <Badge label={event.significance} variant={significanceBadgeVariant(event.significance)} />
-        {event.is_dm_only && <Badge label="DM Only" variant="warning" />}
         {event.location && (
           <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted, #888)' }}>
             {event.location}

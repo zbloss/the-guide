@@ -29,15 +29,15 @@ Campaign PDF (bytes)
     │
     ▼
 Docling DocumentConverter
-    │  → structured pages: raw_text, headings, is_dm_only
+    │  → structured pages: raw_text, headings
     ▼
 PageIndex Tree Builder
-    │  → JSON index: {pages: [{page_number, raw_text, headings, is_dm_only}]}
+    │  → JSON index: {pages: [{page_number, raw_text, headings}]}
     ▼
 Disk storage: data/indexes/{scope}/{doc_id}.json
     │
     ▼
-query_indexes(scopes, doc_ids, query, player_visible_only, limit)
+query_indexes(scopes, doc_ids, query, limit)
     │  → list[{content, section_path, doc_id, page_number, score}]
     ▼
 LLM completion with context
@@ -50,17 +50,12 @@ LLM completion with context
 - `src/guide/db/documents.py` — `DocumentRepository`, `GlobalDocumentRepository`
 - `src/guide/api/routes/documents.py` — upload + async background ingestion
 
-## Spoiler Filter
-
-PageIndex respects the `is_dm_only` flag per page. When `player_visible_only=True`, pages with `is_dm_only=True` are excluded from retrieval results.
-
 ## Quality Control
 
 Before finalizing any pipeline component:
 1. Verify Docling is used for extraction (not any vision model)
 2. Confirm index files are written to the correct path
-3. Validate that `is_dm_only` filtering works for player-perspective queries
-4. Test that ingestion can be re-run idempotently
+3. Test that ingestion can be re-run idempotently
 
 ## Out of Scope
 

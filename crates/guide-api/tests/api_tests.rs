@@ -8,7 +8,7 @@ use guide_api::{routes::all_routes, state::AppState};
 use guide_core::AppConfig;
 use guide_llm::{
     client::{
-        AudioRequest, CompletionRequest, CompletionResponse, EmbeddingRequest, LlmClient,
+        CompletionRequest, CompletionResponse, EmbeddingRequest, LlmClient,
         VisionRequest,
     },
     LlmTask,
@@ -75,10 +75,6 @@ impl LlmClient for MockLlm {
         })
     }
 
-    async fn transcribe(&self, _req: AudioRequest) -> guide_core::Result<String> {
-        Ok("mock transcript".to_string())
-    }
-
     fn provider_name(&self) -> &str {
         "mock"
     }
@@ -94,7 +90,7 @@ async fn make_app() -> axum::Router {
         database_url: ":memory:".into(),
         ollama_base_url: "http://localhost:11434/v1".into(),
         default_model: "mock".into(),
-        embedding_model: "nomic-embed-text".into(),
+        embedding_model: "onnx-community/embeddinggemma-300m-ONNX".into(),
         ocr_model: "mock".into(),
         cloud_fallback: None,
         cloud_api_key: None,
@@ -105,9 +101,9 @@ async fn make_app() -> axum::Router {
         max_upload_bytes: 10 * 1024 * 1024,
         chunk_max_chars: 1600,
         chunk_overlap_chars: 200,
-        whisper_model: "whisper".into(),
         embedding_provider: "ollama".into(),
-        local_embedding_model: "".into(),
+        max_chapter_chars: 20_000,
+        enable_rag: false,
     });
 
     let state = AppState {
@@ -280,10 +276,7 @@ async fn test_delete_campaign() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::NO_CONTENT);
 
-    let resp = app
-        .oneshot(get(&format!("/campaigns/{id}")))
-        .await
-        .unwrap();
+    let resp = app.oneshot(get(&format!("/campaigns/{id}"))).await.unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
 
@@ -651,14 +644,17 @@ async fn test_replay_sse_format() {
         .unwrap();
 
     let resp = app
-        .oneshot(get(&format!(
-            "/campaigns/{cid}/encounters/{enc_id}/replay"
-        )))
+        .oneshot(get(&format!("/campaigns/{cid}/encounters/{enc_id}/replay")))
         .await
         .unwrap();
 
     assert_eq!(resp.status(), StatusCode::OK);
-    let ct = resp.headers().get("content-type").unwrap().to_str().unwrap();
+    let ct = resp
+        .headers()
+        .get("content-type")
+        .unwrap()
+        .to_str()
+        .unwrap();
     assert!(ct.contains("text/event-stream"));
 
     let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
@@ -700,9 +696,7 @@ async fn test_replay_snapshots_accumulate() {
         .unwrap();
 
     let resp = app
-        .oneshot(get(&format!(
-            "/campaigns/{cid}/encounters/{enc_id}/replay"
-        )))
+        .oneshot(get(&format!("/campaigns/{cid}/encounters/{enc_id}/replay")))
         .await
         .unwrap();
 
@@ -712,7 +706,10 @@ async fn test_replay_snapshots_accumulate() {
     let body_text = std::str::from_utf8(&body_bytes).unwrap();
 
     let snapshot_count = body_text.matches("event: snapshot").count();
-    assert_eq!(snapshot_count, 2, "expected 2 snapshots, got {snapshot_count}");
+    assert_eq!(
+        snapshot_count, 2,
+        "expected 2 snapshots, got {snapshot_count}"
+    );
 }
 
 // ── Generate Encounter ────────────────────────────────────────────────────────
@@ -766,7 +763,12 @@ async fn test_chat_success() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
-    let ct = resp.headers().get("content-type").unwrap().to_str().unwrap();
+    let ct = resp
+        .headers()
+        .get("content-type")
+        .unwrap()
+        .to_str()
+        .unwrap();
     assert!(ct.contains("text/event-stream"));
 }
 

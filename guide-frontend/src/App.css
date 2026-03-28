@@ -200,7 +200,6 @@ body { overflow: hidden; height: 100vh; }
 .summary-date { font-size: 11px; color: var(--text-dim); }
 .summary-content { font-size: 14px; line-height: 1.8; color: var(--text); white-space: pre-wrap; }
 .radio-label { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px; color: var(--text); }
-.perspective-selector { display: flex; gap: 14px; align-items: center; }
 .chat-page { height: 100%; display: flex; flex-direction: column; }
 .chat-panel { display: flex; flex-direction: column; height: calc(100vh - var(--header-height) - 80px); background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
 .chat-toolbar { display: flex; align-items: center; justify-content: space-between; padding: 12px 18px; border-bottom: 1px solid var(--border); background: rgba(255,255,255,0.02); }

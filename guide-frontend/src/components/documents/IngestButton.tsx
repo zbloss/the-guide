@@ -5,13 +5,15 @@ import type { IngestionStatus } from '../../api/types';
 interface IngestButtonProps {
   docId: string;
   currentStatus: IngestionStatus;
+  ingestionProgress?: string | null;
   onIngest: () => Promise<void>;
-  onPoll: () => Promise<{ ingestion_status: IngestionStatus }>;
+  onPoll: () => Promise<{ ingestion_status: IngestionStatus; ingestion_progress?: string | null }>;
   onComplete?: () => void;
 }
 
-export function IngestButton({ docId, currentStatus, onIngest, onPoll, onComplete }: IngestButtonProps) {
+export function IngestButton({ docId, currentStatus, ingestionProgress, onIngest, onPoll, onComplete }: IngestButtonProps) {
   const [status, setStatus] = useState<IngestionStatus>(currentStatus);
+  const [progress, setProgress] = useState<string | null | undefined>(ingestionProgress);
   const [error, setError] = useState('');
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const processingStartRef = useRef<number | null>(currentStatus === 'processing' ? Date.now() : null);
@@ -38,6 +40,7 @@ export function IngestButton({ docId, currentStatus, onIngest, onPoll, onComplet
       try {
         const doc = await onPoll();
         setStatus(doc.ingestion_status);
+        setProgress(doc.ingestion_progress);
         if (doc.ingestion_status === 'completed') {
           clearPoller();
           onComplete?.();
@@ -73,7 +76,7 @@ export function IngestButton({ docId, currentStatus, onIngest, onPoll, onComplet
     const elapsedSec = processingStartRef.current ? Math.floor((Date.now() - processingStartRef.current) / 1000) : 0;
     return (
       <>
-        <span className="ingest-status"><LoadingSpinner size={14} /> Processing…</span>
+        <span className="ingest-status"><LoadingSpinner size={14} /> {progress ?? 'Processing…'}</span>
         {elapsedSec > 60 && (
           <button className="btn btn-sm" onClick={handleIngest} style={{ marginLeft: 8 }}>Force Retry</button>
         )}

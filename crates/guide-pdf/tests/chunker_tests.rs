@@ -1,27 +1,25 @@
 use guide_pdf::{chunker::chunk_document, extractor::PageExtraction};
 
-fn page(num: u32, text: &str, dm_only: bool) -> PageExtraction {
+fn page(num: u32, text: &str, _dm_only: bool) -> PageExtraction {
     PageExtraction {
         page_num: num,
         raw_text: text.to_string(),
         headings: vec![],
-        is_dm_only: dm_only,
     }
 }
 
 #[tokio::test]
 async fn test_empty_pages_returns_empty() {
-    let chunks = chunk_document(vec![], 1600, 200).await.unwrap();
+    let chunks = chunk_document(&[], 1600, 200).await.unwrap();
     assert!(chunks.is_empty());
 }
 
 #[tokio::test]
 async fn test_single_page_no_headings() {
     let pages = vec![page(1, "This is some content without headings.", false)];
-    let chunks = chunk_document(pages, 1600, 200).await.unwrap();
+    let chunks = chunk_document(&pages, 1600, 200).await.unwrap();
     assert_eq!(chunks.len(), 1);
     assert!(chunks[0].content.contains("This is some content"));
-    assert!(chunks[0].is_player_visible);
     assert_eq!(chunks[0].section_path, "");
 }
 
@@ -29,7 +27,7 @@ async fn test_single_page_no_headings() {
 async fn test_section_split_on_headings() {
     let text = "## Chapter One\nContent of chapter one.\n### Section A\nSection A content.\n## Chapter Two\nContent of chapter two.";
     let pages = vec![page(1, text, false)];
-    let chunks = chunk_document(pages, 1600, 0).await.unwrap();
+    let chunks = chunk_document(&pages, 1600, 0).await.unwrap();
     // Each section becomes a chunk
     assert!(chunks.len() >= 3);
 }
@@ -38,7 +36,7 @@ async fn test_section_split_on_headings() {
 async fn test_section_path_set_correctly() {
     let text = "## Main Chapter\nIntro text.\n### Sub Section\nSub content here.";
     let pages = vec![page(1, text, false)];
-    let chunks = chunk_document(pages, 1600, 0).await.unwrap();
+    let chunks = chunk_document(&pages, 1600, 0).await.unwrap();
 
     // Find chunk with section path containing sub section
     let sub_chunk = chunks.iter().find(|c| c.section_path.contains("Sub Section"));
@@ -47,20 +45,12 @@ async fn test_section_path_set_correctly() {
 }
 
 #[tokio::test]
-async fn test_dm_only_pages_not_player_visible() {
-    let pages = vec![page(1, "DM only content here.", true)];
-    let chunks = chunk_document(pages, 1600, 200).await.unwrap();
-    assert_eq!(chunks.len(), 1);
-    assert!(!chunks[0].is_player_visible);
-}
-
-#[tokio::test]
 async fn test_long_section_gets_split() {
     // Create a section that's much longer than chunk_max
     let long_text = "## Long Section\n".to_string()
         + &(0..50).map(|i| format!("Sentence number {i} with some content.")).collect::<Vec<_>>().join(" ");
     let pages = vec![page(1, &long_text, false)];
-    let chunks = chunk_document(pages, 200, 50).await.unwrap();
+    let chunks = chunk_document(&pages, 200, 50).await.unwrap();
     // Should produce multiple sub-chunks
     assert!(chunks.len() > 1, "Expected multiple chunks for long section");
 }
@@ -70,7 +60,7 @@ async fn test_overlap_prepended_to_subsequent_chunks() {
     let long_sentence = "A".repeat(300);
     let text = format!("## Section\n{long_sentence}. {long_sentence}. {long_sentence}.");
     let pages = vec![page(1, &text, false)];
-    let chunks = chunk_document(pages, 400, 100).await.unwrap();
+    let chunks = chunk_document(&pages, 400, 100).await.unwrap();
 
     // Chunks after the first should have overlap marker
     if chunks.len() > 1 {
@@ -88,7 +78,7 @@ async fn test_multi_page_document() {
         page(2, "Continuation of chapter.", false),
         page(3, "## Chapter Two\nSecond chapter.", false),
     ];
-    let chunks = chunk_document(pages, 1600, 0).await.unwrap();
+    let chunks = chunk_document(&pages, 1600, 0).await.unwrap();
     assert!(chunks.len() >= 2);
 
     // Check that page ranges are tracked
@@ -101,7 +91,7 @@ async fn test_multi_page_document() {
 async fn test_section_path_resets_on_level2_heading() {
     let text = "## Chapter A\nContent A.\n### Sub of A\nSub content.\n## Chapter B\nContent B.";
     let pages = vec![page(1, text, false)];
-    let chunks = chunk_document(pages, 1600, 0).await.unwrap();
+    let chunks = chunk_document(&pages, 1600, 0).await.unwrap();
 
     let ch_b = chunks.iter().find(|c| c.section_path == "Chapter B");
     assert!(
@@ -118,7 +108,7 @@ async fn test_plain_text_chapter_heading_splits_sections() {
     // Plain "Chapter N: ..." lines (no ## prefix) should create separate chunks
     let text = "Intro content before any chapter.\nChapter 1: The Village of Barovia\nContent about the village.\nChapter 2: Castle Ravenloft\nContent about the castle.";
     let pages = vec![page(1, text, false)];
-    let chunks = chunk_document(pages, 1600, 0).await.unwrap();
+    let chunks = chunk_document(&pages, 1600, 0).await.unwrap();
 
     assert!(
         chunks.len() >= 2,
@@ -137,7 +127,7 @@ async fn test_all_caps_heading_splits_sections() {
     // All-caps short titles should be recognised as section boundaries
     let text = "Some preamble text here.\nTHE AMBER TEMPLE\nDescription of the temple.\nCASTLE RAVENLOFT\nDescription of the castle.";
     let pages = vec![page(1, text, false)];
-    let chunks = chunk_document(pages, 1600, 0).await.unwrap();
+    let chunks = chunk_document(&pages, 1600, 0).await.unwrap();
 
     let has_amber = chunks.iter().any(|c| c.section_path.contains("THE AMBER TEMPLE"));
     let has_castle = chunks.iter().any(|c| c.section_path.contains("CASTLE RAVENLOFT"));
@@ -149,7 +139,7 @@ async fn test_all_caps_heading_splits_sections() {
 async fn test_act_and_scene_headings_split_sections() {
     let text = "Prologue text.\nAct 1: A Dark Beginning\nAct content here.\nAct 2: The Long Road\nMore act content.";
     let pages = vec![page(1, text, false)];
-    let chunks = chunk_document(pages, 1600, 0).await.unwrap();
+    let chunks = chunk_document(&pages, 1600, 0).await.unwrap();
 
     let has_act1 = chunks.iter().any(|c| c.section_path.contains("Act 1"));
     let has_act2 = chunks.iter().any(|c| c.section_path.contains("Act 2"));
@@ -162,7 +152,7 @@ async fn test_short_dnd_abbreviations_not_treated_as_headings() {
     // 3-char all-caps D&D abbreviations must NOT split sections
     let text = "## Monster Stat Block\nSTR DEX CON INT WIS CHA\n10 10 10 10 10 10\nNPC encounters in this area.";
     let pages = vec![page(1, text, false)];
-    let chunks = chunk_document(pages, 1600, 0).await.unwrap();
+    let chunks = chunk_document(&pages, 1600, 0).await.unwrap();
 
     // All content after the ## heading should be in one chunk (not split by STR/NPC/etc.)
     let stat_block_chunks: Vec<_> = chunks.iter().filter(|c| c.section_path.contains("Monster Stat Block")).collect();
@@ -186,7 +176,7 @@ async fn test_chapter_keyword_without_trailing_space_not_a_heading() {
     // "Chapter" alone (no trailing space) must NOT trigger heading detection
     let text = "## Section One\nThis chapter contains information.\nThe chapter describes the area.";
     let pages = vec![page(1, text, false)];
-    let chunks = chunk_document(pages, 1600, 0).await.unwrap();
+    let chunks = chunk_document(&pages, 1600, 0).await.unwrap();
 
     // "This chapter contains..." and "The chapter describes..." should NOT create new sections
     let section_one_chunks: Vec<_> = chunks.iter().filter(|c| c.section_path.contains("Section One")).collect();
@@ -205,7 +195,7 @@ async fn test_chapter_keyword_without_trailing_space_not_a_heading() {
 async fn test_part_heading_splits_sections() {
     let text = "Introduction text.\nPart I: The Beginning\nContent of part one.\nPart II: The Middle\nContent of part two.";
     let pages = vec![page(1, text, false)];
-    let chunks = chunk_document(pages, 1600, 0).await.unwrap();
+    let chunks = chunk_document(&pages, 1600, 0).await.unwrap();
 
     let has_part1 = chunks.iter().any(|c| c.section_path.contains("Part I"));
     let has_part2 = chunks.iter().any(|c| c.section_path.contains("Part II"));

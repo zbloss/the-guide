@@ -9,6 +9,5 @@ pub struct ChatMessage {
     pub campaign_id: Uuid,
     pub role: String,
     pub content: String,
-    pub perspective: String,
     pub created_at: DateTime<Utc>,
 }

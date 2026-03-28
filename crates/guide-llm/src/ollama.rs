@@ -17,7 +17,7 @@ use tracing::{debug, instrument};
 use guide_core::{GuideError, Result};
 
 use crate::client::{
-    AudioRequest, CompletionRequest, CompletionResponse, EmbeddingRequest, LlmClient, LlmTask,
+    CompletionRequest, CompletionResponse, EmbeddingRequest, LlmClient, LlmTask,
     MessageRole, VisionRequest,
 };
 
@@ -35,7 +35,6 @@ pub struct OllamaProvider {
     default_model: String,
     ocr_model: String,
     embedding_model: String,
-    whisper_model: String,
 }
 
 impl OllamaProvider {
@@ -44,7 +43,6 @@ impl OllamaProvider {
         default_model: impl Into<String>,
         ocr_model: impl Into<String>,
         embedding_model: impl Into<String>,
-        whisper_model: impl Into<String>,
     ) -> Self {
         let base_url = base_url.into();
         let config = OpenAIConfig::new()
@@ -56,7 +54,6 @@ impl OllamaProvider {
             default_model: default_model.into(),
             ocr_model: ocr_model.into(),
             embedding_model: embedding_model.into(),
-            whisper_model: whisper_model.into(),
         }
     }
 
@@ -119,7 +116,9 @@ impl LlmClient for OllamaProvider {
         if req.json_mode {
             builder.response_format(ResponseFormat::JsonObject);
         }
-        let request = builder.build().map_err(|e| GuideError::Llm(e.to_string()))?;
+        let request = builder
+            .build()
+            .map_err(|e| GuideError::Llm(e.to_string()))?;
 
         let response = self
             .client
@@ -173,7 +172,9 @@ impl LlmClient for OllamaProvider {
         if let Some(temp) = req.temperature {
             builder.temperature(temp);
         }
-        let request = builder.build().map_err(|e| GuideError::Llm(e.to_string()))?;
+        let request = builder
+            .build()
+            .map_err(|e| GuideError::Llm(e.to_string()))?;
 
         let stream = self
             .client
@@ -186,8 +187,8 @@ impl LlmClient for OllamaProvider {
         // We accumulate content until we know whether we're in a <think> block.
         // Once past the </think> tag we emit normally.
         let mapped = stream
-            .map(|result: std::result::Result<CreateChatCompletionStreamResponse, _>| {
-                match result {
+            .map(
+                |result: std::result::Result<CreateChatCompletionStreamResponse, _>| match result {
                     Ok(resp) => {
                         let token = resp
                             .choices
@@ -198,8 +199,8 @@ impl LlmClient for OllamaProvider {
                         Ok(token)
                     }
                     Err(e) => Err(GuideError::Llm(e.to_string())),
-                }
-            })
+                },
+            )
             .scan(
                 (false, false, String::new()),
                 |state: &mut (bool, bool, String), result| {
@@ -227,7 +228,8 @@ impl LlmClient for OllamaProvider {
                                     *in_think = true;
                                     buf.clear();
                                     Some(Ok(String::new()))
-                                } else if buf.len() > 32 || (!buf.is_empty() && !buf.contains('<')) {
+                                } else if buf.len() > 32 || (!buf.is_empty() && !buf.contains('<'))
+                                {
                                     // No think tag coming — emit what we buffered
                                     *past_think = true;
                                     let out = buf.clone();
@@ -308,12 +310,14 @@ impl LlmClient for OllamaProvider {
         ]);
 
         let mut builder = CreateChatCompletionRequestArgs::default();
-        builder.model(model.clone()).messages(vec![ChatCompletionRequestMessage::User(
-            ChatCompletionRequestUserMessageArgs::default()
-                .content(content)
-                .build()
-                .map_err(|e| GuideError::Llm(e.to_string()))?,
-        )]);
+        builder
+            .model(model.clone())
+            .messages(vec![ChatCompletionRequestMessage::User(
+                ChatCompletionRequestUserMessageArgs::default()
+                    .content(content)
+                    .build()
+                    .map_err(|e| GuideError::Llm(e.to_string()))?,
+            )]);
         if let Some(temp) = req.temperature {
             builder.temperature(temp);
         }
@@ -323,7 +327,9 @@ impl LlmClient for OllamaProvider {
         if let Some(top_p) = req.top_p {
             builder.top_p(top_p);
         }
-        let request = builder.build().map_err(|e| GuideError::Llm(e.to_string()))?;
+        let request = builder
+            .build()
+            .map_err(|e| GuideError::Llm(e.to_string()))?;
 
         let response = self
             .client
@@ -351,32 +357,6 @@ impl LlmClient for OllamaProvider {
             prompt_tokens,
             completion_tokens,
         })
-    }
-
-    async fn transcribe(&self, req: AudioRequest) -> Result<String> {
-        use async_openai::types::{AudioInput, CreateTranscriptionRequestArgs, InputSource};
-
-        let audio_input = AudioInput {
-            source: InputSource::VecU8 {
-                filename: "audio.webm".to_string(),
-                vec: req.audio_bytes,
-            },
-        };
-
-        let transcription_req = CreateTranscriptionRequestArgs::default()
-            .file(audio_input)
-            .model(self.whisper_model.clone())
-            .build()
-            .map_err(|e| GuideError::Llm(e.to_string()))?;
-
-        let response = self
-            .client
-            .audio()
-            .transcribe(transcription_req)
-            .await
-            .map_err(|e| GuideError::Llm(e.to_string()))?;
-
-        Ok(response.text)
     }
 
     fn provider_name(&self) -> &str {

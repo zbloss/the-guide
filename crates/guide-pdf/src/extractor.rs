@@ -256,7 +256,6 @@ pub struct PageExtraction {
     pub page_num: u32,
     pub raw_text: String,
     pub headings: Vec<String>,
-    pub is_dm_only: bool,
 }
 
 #[derive(Deserialize)]
@@ -264,8 +263,6 @@ struct PageOcrResponse {
     raw_text: String,
     #[serde(default)]
     headings: Vec<String>,
-    #[serde(default)]
-    is_dm_only: bool,
 }
 
 pub async fn extract_pages(
@@ -407,7 +404,7 @@ enum PageData {
     /// Page rendered to JPEG bytes + detected layout hint for vision OCR
     NeedsOcr { page_num: u32, jpeg: Vec<u8>, layout: &'static str },
     /// Page text extracted directly from the PDF text layer (no LLM needed)
-    TextLayer { page_num: u32, text: String, headings: Vec<String>, is_dm_only: bool },
+    TextLayer { page_num: u32, text: String, headings: Vec<String> },
 }
 
 /// Detect the column layout of a PDF page by analyzing the x-coordinate distribution
@@ -612,7 +609,6 @@ fn render_pages_with_layout(pdf_path: &std::path::PathBuf) -> Result<Vec<PageDat
                 page_num,
                 text,
                 headings,
-                is_dm_only: false,
             });
             continue;
         }
@@ -675,8 +671,8 @@ async fn ocr_pages_campaign(
 
     for page_data in pages {
         match page_data {
-            PageData::TextLayer { page_num, text, headings, is_dm_only } => {
-                extractions.push(PageExtraction { page_num, raw_text: text, headings, is_dm_only });
+            PageData::TextLayer { page_num, text, headings } => {
+                extractions.push(PageExtraction { page_num, raw_text: text, headings });
             }
             PageData::NeedsOcr { page_num, jpeg, layout } => {
                 tracing::info!("Vision OCR page {page_num} ({} bytes, layout={layout})", jpeg.len());
@@ -701,14 +697,12 @@ async fn ocr_pages_campaign(
                                 PageOcrResponse {
                                     raw_text: resp.content.clone(),
                                     headings: Vec::new(),
-                                    is_dm_only: false,
                                 }
                             });
                         extractions.push(PageExtraction {
                             page_num,
                             raw_text: page_ocr.raw_text,
                             headings: page_ocr.headings,
-                            is_dm_only: page_ocr.is_dm_only,
                         });
                     }
                     Err(e) => {
@@ -717,7 +711,6 @@ async fn ocr_pages_campaign(
                             page_num,
                             raw_text: String::new(),
                             headings: Vec::new(),
-                            is_dm_only: false,
                         });
                     }
                 }
@@ -1500,13 +1493,11 @@ async fn ocr_pages(
                     .unwrap_or_else(|_| PageOcrResponse {
                         raw_text: vision_resp.content.clone(),
                         headings: Vec::new(),
-                        is_dm_only: false,
                     });
                 extractions.push(PageExtraction {
                     page_num,
                     raw_text: page_ocr.raw_text,
                     headings: page_ocr.headings,
-                    is_dm_only: page_ocr.is_dm_only,
                 });
             }
             Err(e) => {
@@ -1515,7 +1506,6 @@ async fn ocr_pages(
                     page_num,
                     raw_text: String::new(),
                     headings: Vec::new(),
-                    is_dm_only: false,
                 });
             }
         }

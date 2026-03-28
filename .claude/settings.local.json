@@ -57,7 +57,18 @@
       "WebFetch(domain:www.tigerdata.com)",
       "WebFetch(domain:www.zenml.io)",
       "WebFetch(domain:ollama.com)",
-      "Bash(tasklist)"
+      "Bash(tasklist)",
+      "WebFetch(domain:rig.rs)",
+      "Bash(./node_modules/.bin/tsc --noEmit)",
+      "Bash(bun --version)",
+      "Bash(bun install:*)",
+      "Bash(git merge:*)",
+      "Bash(git -C \"C:/Users/altoz/Projects/the-guide\" show HEAD:crates/guide-pdf/src/pipeline.rs)",
+      "Bash(git -C \"C:/Users/altoz/Projects/the-guide\" show HEAD:crates/guide-pdf/src/agent.rs)",
+      "Bash(git -C /c/Users/altoz/Projects/the-guide/.claude/worktrees/agent-ac912a15 log --oneline -5)",
+      "Bash(git -C /c/Users/altoz/Projects/the-guide/.claude/worktrees/agent-ac912a15 status)",
+      "Bash(git worktree:*)",
+      "Bash(git branch:*)"
     ]
   }
 }

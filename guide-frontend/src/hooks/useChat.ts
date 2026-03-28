@@ -1,7 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { startChatStream } from '../api/chat';
 import { getChatHistory } from '../api/campaigns';
-import type { Perspective } from '../api/types';
 
 export interface ChatMessage {
   role: 'user' | 'assistant';
@@ -63,7 +62,7 @@ export function useChat(campaignId: string) {
     }
   }, [messages, streaming, campaignId]);
 
-  const sendMessage = useCallback(async (message: string, perspective: Perspective) => {
+  const sendMessage = useCallback(async (message: string) => {
     if (streaming) return;
 
     setError(null);
@@ -76,7 +75,7 @@ export function useChat(campaignId: string) {
     abortRef.current = new AbortController();
 
     try {
-      const response = await startChatStream(campaignId, message, perspective, abortRef.current.signal);
+      const response = await startChatStream(campaignId, message, abortRef.current.signal);
 
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);

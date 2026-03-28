@@ -20,7 +20,7 @@ export function ChatPanel({ campaignId }: ChatPanelProps) {
     const text = input.trim();
     if (!text || streaming) return;
     setInput('');
-    sendMessage(text, 'dm');
+    sendMessage(text);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {

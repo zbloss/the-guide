@@ -17,6 +17,7 @@ chrono = { workspace = true }
 futures = { workspace = true }
 
 image = { version = "0.25", default-features = false, features = ["jpeg"] }
+rig-core = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 pdfium-render = { workspace = true }

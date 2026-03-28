@@ -304,25 +304,21 @@ async fn test_session_event_create_and_list() -> Result<(), Box<dyn std::error::
                 event_type: EventType::Combat,
                 description: "The party fought 3 goblins".into(),
                 significance: Some(EventSignificance::Minor),
-                is_player_visible: Some(true),
                 involved_character_ids: None,
             },
         )
         .await?;
 
     assert_eq!(event.description, "The party fought 3 goblins");
-    assert!(event.is_player_visible);
 
-    // DM-only event
     event_repo
         .create(
             session.id,
             campaign_id,
             CreateSessionEventRequest {
                 event_type: EventType::PlotRevealed,
-                description: "BBEG secret revealed (DM only)".into(),
+                description: "BBEG secret revealed".into(),
                 significance: Some(EventSignificance::Major),
-                is_player_visible: Some(false),
                 involved_character_ids: None,
             },
         )
@@ -330,9 +326,6 @@ async fn test_session_event_create_and_list() -> Result<(), Box<dyn std::error::
 
     let all_events = event_repo.list_by_session(session.id).await?;
     assert_eq!(all_events.len(), 2);
-
-    let visible = event_repo.list_visible_by_session(session.id).await?;
-    assert_eq!(visible.len(), 1);
 
     Ok(())
 }
